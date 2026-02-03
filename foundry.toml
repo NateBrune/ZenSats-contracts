@@ -1,0 +1,35 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+solc_version = "0.8.33"
+remappings = [
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/"
+]
+
+# Optimizer settings to reduce contract size
+optimizer = true
+optimizer_runs = 1  # Low runs optimizes for deployment size over runtime gas
+
+# Via IR for better optimization (reduces contract size significantly)
+via_ir = true
+
+# EVM version - cancun required for Curve Tricrypto pools
+evm_version = "cancun"
+
+[profile.ci]
+fuzz = { runs = 5000 }
+invariant = { runs = 1000 }
+
+[fmt]
+line_length = 100
+tab_width = 4
+bracket_spacing = true
+int_types = "long"
+
+[rpc_endpoints]
+mainnet = "${MAINNET_RPC_URL}"
+sepolia = "${SEPOLIA_RPC_URL}"
+
+[etherscan]
+mainnet = { key = "${ETHERSCAN_API_KEY}" }
