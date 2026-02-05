@@ -3,7 +3,7 @@ pragma solidity ^0.8.33;
 
 import { Test } from "forge-std/Test.sol";
 import { LlamaLoanManager } from "../src/LlamaLoanManager.sol";
-import { ILlamaLoanManager } from "../src/interfaces/ILlamaLoanManager.sol";
+import { ILoanManager } from "../src/interfaces/ILoanManager.sol";
 import { ILlamaLendController } from "../src/interfaces/ILlamaLendController.sol";
 import { ICurveTwoCrypto } from "../src/interfaces/ICurveTwoCrypto.sol";
 import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
@@ -292,32 +292,9 @@ contract LlamaLoanManagerTest is Test {
         assertEq(manager.getCurrentCollateral(), 1e8);
     }
 
-    function test_calculateBorrowAmount_and_quotes() public view {
+    function test_calculateBorrowAmount() public view {
         uint256 borrow = manager.calculateBorrowAmount(1e8, 7e17);
         assertGt(borrow, 0);
-
-        uint256 quote = manager.quoteWbtcForCrvUsd(20_000e18);
-        assertEq(quote, 1e8);
-    }
-
-    function test_quoteWbtcForCrvUsd_returnsZeroWhenRateZero() public {
-        pool.setRate(0);
-        uint256 quote = manager.quoteWbtcForCrvUsd(1e18);
-        assertEq(quote, 0);
-    }
-
-    function test_swapCollateralForDebt_and_swapDebtForCollateral() public {
-        wbtc.mint(address(manager), 1e8);
-        uint256 crvUsdBefore = crvUSD.balanceOf(address(manager));
-
-        manager.swapCollateralForDebt(1e8);
-        assertGt(crvUSD.balanceOf(address(manager)), crvUsdBefore);
-
-        crvUSD.mint(address(manager), 10_000e18);
-        uint256 wbtcBefore = wbtc.balanceOf(address(manager));
-
-        manager.swapDebtForCollateral(10_000e18);
-        assertGt(wbtc.balanceOf(address(manager)), wbtcBefore);
     }
 
     function test_getNetCollateralValue() public {
@@ -356,35 +333,35 @@ contract LlamaLoanManagerTest is Test {
 
     function test_checkOracleFreshness_revertsOnStale() public {
         oracle.setUpdatedAt(block.timestamp - 2 hours);
-        vm.expectRevert(ILlamaLoanManager.StaleOracle.selector);
+        vm.expectRevert(ILoanManager.StaleOracle.selector);
         manager.checkOracleFreshness();
     }
 
     function test_checkOracleFreshness_revertsOnInvalidPrice() public {
         oracle.setPrice(0);
-        vm.expectRevert(ILlamaLoanManager.InvalidPrice.selector);
+        vm.expectRevert(ILoanManager.InvalidPrice.selector);
         manager.checkOracleFreshness();
     }
 
     function test_checkOracleFreshness_revertsOnAnsweredInRound() public {
         oracle.setAnsweredInRound(0);
-        vm.expectRevert(ILlamaLoanManager.StaleOracle.selector);
+        vm.expectRevert(ILoanManager.StaleOracle.selector);
         manager.checkOracleFreshness();
     }
 
     function test_transfer_revertsOnNonVault() public {
         wbtc.mint(address(manager), 1e8);
         vm.prank(nonVault);
-        vm.expectRevert(ILlamaLoanManager.Unauthorized.selector);
-        manager.transferWbtc(nonVault, 1e8);
+        vm.expectRevert(ILoanManager.Unauthorized.selector);
+        manager.transferCollateral(nonVault, 1e8);
     }
 
-    function test_transferWbtc_and_transferCrvUsd_success() public {
+    function test_transferCollateral_and_transferDebt_success() public {
         wbtc.mint(address(manager), 1e8);
         crvUSD.mint(address(manager), 1e18);
 
-        manager.transferWbtc(vault, 1e8);
-        manager.transferCrvUsd(vault, 1e18);
+        manager.transferCollateral(vault, 1e8);
+        manager.transferDebt(vault, 1e18);
 
         assertEq(wbtc.balanceOf(vault), 1e8);
         assertEq(crvUSD.balanceOf(vault), 1e18);
@@ -394,33 +371,33 @@ contract LlamaLoanManagerTest is Test {
         wbtc.mint(address(manager), 1e8);
         crvUSD.mint(address(manager), 2e18);
 
-        assertEq(manager.getWbtcBalance(), 1e8);
-        assertEq(manager.getCrvUsdBalance(), 2e18);
+        assertEq(manager.getCollateralBalance(), 1e8);
+        assertEq(manager.getDebtBalance(), 2e18);
     }
 
-    function test_transferCrvUsd_revertsOnZeroAddress() public {
+    function test_transferDebt_revertsOnZeroAddress() public {
         crvUSD.mint(address(manager), 1e18);
-        vm.expectRevert(ILlamaLoanManager.InvalidAddress.selector);
-        manager.transferCrvUsd(address(0), 1e18);
+        vm.expectRevert(ILoanManager.InvalidAddress.selector);
+        manager.transferDebt(address(0), 1e18);
     }
 
     function test_createLoan_revertsOnStaleOracle() public {
         oracle.setUpdatedAt(block.timestamp - 2 hours);
-        vm.expectRevert(ILlamaLoanManager.StaleOracle.selector);
+        vm.expectRevert(ILoanManager.StaleOracle.selector);
         manager.createLoan(1e8, 10_000e18, 4);
     }
 
     function test_addCollateral_revertsOnStaleOracle() public {
         manager.createLoan(1e8, 10_000e18, 4);
         oracle.setUpdatedAt(block.timestamp - 2 hours);
-        vm.expectRevert(ILlamaLoanManager.StaleOracle.selector);
+        vm.expectRevert(ILoanManager.StaleOracle.selector);
         manager.addCollateral(1e7);
     }
 
     function test_borrowMore_revertsOnStaleOracle() public {
         manager.createLoan(1e8, 10_000e18, 4);
         oracle.setUpdatedAt(block.timestamp - 2 hours);
-        vm.expectRevert(ILlamaLoanManager.StaleOracle.selector);
+        vm.expectRevert(ILoanManager.StaleOracle.selector);
         manager.borrowMore(0, 100e18);
     }
 
@@ -428,39 +405,30 @@ contract LlamaLoanManagerTest is Test {
         manager.createLoan(1e8, 10_000e18, 4);
         crvUSD.mint(address(manager), 100e18);
         oracle.setUpdatedAt(block.timestamp - 2 hours);
-        vm.expectRevert(ILlamaLoanManager.StaleOracle.selector);
+        vm.expectRevert(ILoanManager.StaleOracle.selector);
         manager.repayDebt(100e18);
     }
 
-    function test_swaps_revertOnStaleOracle() public {
-        oracle.setUpdatedAt(block.timestamp - 2 hours);
-
-        vm.expectRevert(ILlamaLoanManager.StaleOracle.selector);
-        manager.swapCollateralForDebt(1e8);
-
-        vm.expectRevert(ILlamaLoanManager.StaleOracle.selector);
-        manager.swapDebtForCollateral(1e18);
-    }
 
     // ============ Coverage Boost Tests ============
 
     function test_addCollateral_zero() public {
-        vm.expectRevert(ILlamaLoanManager.ZeroAmount.selector);
+        vm.expectRevert(ILoanManager.ZeroAmount.selector);
         manager.addCollateral(0);
     }
 
     function test_removeCollateral_zero() public {
-        vm.expectRevert(ILlamaLoanManager.ZeroAmount.selector);
+        vm.expectRevert(ILoanManager.ZeroAmount.selector);
         manager.removeCollateral(0);
     }
 
     function test_repayDebt_zero() public {
-        vm.expectRevert(ILlamaLoanManager.ZeroAmount.selector);
+        vm.expectRevert(ILoanManager.ZeroAmount.selector);
         manager.repayDebt(0);
     }
 
     function test_borrowMore_zero() public {
-        vm.expectRevert(ILlamaLoanManager.ZeroAmount.selector);
+        vm.expectRevert(ILoanManager.ZeroAmount.selector);
         manager.borrowMore(0, 0);
     }
 
@@ -491,13 +459,13 @@ contract LlamaLoanManagerTest is Test {
 
     function test_onFlashLoan_unauthorizedInitiator() public {
         vm.startPrank(0x26dE7861e213A5351F6ED767d00e0839930e9eE1);
-        vm.expectRevert(ILlamaLoanManager.Unauthorized.selector);
+        vm.expectRevert(ILoanManager.Unauthorized.selector);
         manager.onFlashLoan(address(0xbad), address(crvUSD), 1000e18, 5e18, "");
     }
 
     function test_onFlashLoan_invalidToken() public {
         vm.startPrank(0x26dE7861e213A5351F6ED767d00e0839930e9eE1);
-        vm.expectRevert(ILlamaLoanManager.InvalidAddress.selector);
+        vm.expectRevert(ILoanManager.InvalidAddress.selector);
         manager.onFlashLoan(address(manager), address(0xbad), 1000e18, 5e18, "");
     }
 
@@ -584,7 +552,7 @@ contract LlamaLoanManagerTest is Test {
     function test_crvUsdOracle_stale_reverts() public {
         // crvUSD oracle has 7-hour staleness window (25200 seconds)
         crvUsdOracle.setUpdatedAt(block.timestamp - 25201);
-        vm.expectRevert(ILlamaLoanManager.StaleOracle.selector);
+        vm.expectRevert(ILoanManager.StaleOracle.selector);
         manager.checkOracleFreshness();
     }
 
@@ -596,19 +564,19 @@ contract LlamaLoanManagerTest is Test {
 
     function test_crvUsdOracle_invalidPrice_reverts() public {
         crvUsdOracle.setPrice(0);
-        vm.expectRevert(ILlamaLoanManager.InvalidPrice.selector);
+        vm.expectRevert(ILoanManager.InvalidPrice.selector);
         manager.checkOracleFreshness();
     }
 
     function test_crvUsdOracle_negativePrice_reverts() public {
         crvUsdOracle.setPrice(-1);
-        vm.expectRevert(ILlamaLoanManager.InvalidPrice.selector);
+        vm.expectRevert(ILoanManager.InvalidPrice.selector);
         manager.checkOracleFreshness();
     }
 
     function test_crvUsdOracle_answeredInRound_stale() public {
         crvUsdOracle.setAnsweredInRound(0);
-        vm.expectRevert(ILlamaLoanManager.StaleOracle.selector);
+        vm.expectRevert(ILoanManager.StaleOracle.selector);
         manager.checkOracleFreshness();
     }
 
@@ -659,29 +627,29 @@ contract LlamaLoanManagerTest is Test {
 
     function test_onFlashLoan_unauthorizedCaller() public {
         vm.prank(address(0xbad));
-        vm.expectRevert(ILlamaLoanManager.Unauthorized.selector);
+        vm.expectRevert(ILoanManager.Unauthorized.selector);
         manager.onFlashLoan(address(manager), address(crvUSD), 1000e18, 0, "");
     }
 
-    // ============ Branch Coverage: transferWbtc zero address ============
+    // ============ Branch Coverage: transferCollateral zero address ============
 
-    function test_transferWbtc_revertsOnZeroAddress() public {
+    function test_transferCollateral_revertsOnZeroAddress() public {
         wbtc.mint(address(manager), 1e8);
-        vm.expectRevert(ILlamaLoanManager.InvalidAddress.selector);
-        manager.transferWbtc(address(0), 1e8);
+        vm.expectRevert(ILoanManager.InvalidAddress.selector);
+        manager.transferCollateral(address(0), 1e8);
     }
 
     // ============ Branch Coverage: onlyVault modifier ============
 
     function test_createLoan_revertsFromNonVault() public {
         vm.prank(nonVault);
-        vm.expectRevert(ILlamaLoanManager.Unauthorized.selector);
+        vm.expectRevert(ILoanManager.Unauthorized.selector);
         manager.createLoan(1e8, 10_000e18, 4);
     }
 
     function test_unwindPosition_revertsFromNonVault() public {
         vm.prank(nonVault);
-        vm.expectRevert(ILlamaLoanManager.Unauthorized.selector);
+        vm.expectRevert(ILoanManager.Unauthorized.selector);
         manager.unwindPosition(1e8);
     }
 
@@ -693,12 +661,6 @@ contract LlamaLoanManagerTest is Test {
 
     function test_getDebtValue_zero() public view {
         assertEq(manager.getDebtValue(0), 0, "Zero crvUSD should return 0 value");
-    }
-
-    // ============ Branch Coverage: quoteWbtcForCrvUsd zero ============
-
-    function test_quoteWbtcForCrvUsd_zero() public view {
-        assertEq(manager.quoteWbtcForCrvUsd(0), 0, "Zero amount should return 0");
     }
 
     // ============ Branch Coverage: getCurrentLTV no loan ============

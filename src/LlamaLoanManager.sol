@@ -5,7 +5,7 @@ import { IERC20 } from "./interfaces/IERC20.sol";
 import { ILlamaLendController } from "./interfaces/ILlamaLendController.sol";
 import { IChainlinkOracle } from "./interfaces/IChainlinkOracle.sol";
 import { ICurveTwoCrypto } from "./interfaces/ICurveTwoCrypto.sol";
-import { ILlamaLoanManager } from "./interfaces/ILlamaLoanManager.sol";
+import { ILoanManager } from "./interfaces/ILoanManager.sol";
 import { IERC3156FlashBorrower } from "@openzeppelin/contracts/interfaces/IERC3156FlashBorrower.sol";
 import { IERC3156FlashLender } from "@openzeppelin/contracts/interfaces/IERC3156FlashLender.sol";
 import { SafeTransferLib } from "./libraries/SafeTransferLib.sol";
@@ -13,8 +13,8 @@ import { SafeTransferLib } from "./libraries/SafeTransferLib.sol";
 /// @title LlamaLoanManager
 /// @notice Manages LlamaLend loan positions for the Zenji
 /// @dev Handles all interactions with LlamaLend: create, borrow, repay, remove collateral
-/// @dev Also handles WBTC <-> crvUSD swaps via TwoCrypto pool
-contract LlamaLoanManager is ILlamaLoanManager, IERC3156FlashBorrower {
+/// @dev Also handles collateral <-> debt swaps via TwoCrypto pool
+contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     using SafeTransferLib for IERC20;
 
     // ============ Constants ============
@@ -25,19 +25,19 @@ contract LlamaLoanManager is ILlamaLoanManager, IERC3156FlashBorrower {
     /// @notice Number of bands for LlamaLend loans
     uint256 public constant LLAMALEND_BANDS = 4;
 
-    /// @notice Minimum number of satoshis for LlamaLend loans
-    uint256 public constant MIN_SATS = (((LLAMALEND_BANDS * 1000) * 105) / 100); // 4 bands * 1000 sats + 5% buffer
+    /// @notice Minimum collateral units for LlamaLend loans
+    uint256 public constant MIN_COLLATERAL_UNITS = (((LLAMALEND_BANDS * 1000) * 105) / 100); // 4 bands * 1000 units + 5% buffer
 
     /// @notice Minimum health factor required (1.0 = 1e18)
     int256 public constant MIN_HEALTH = 1e17; // 10% - very conservative
 
-    /// @notice Maximum acceptable BTC/USD oracle staleness (1 hour)
+    /// @notice Maximum acceptable collateral/USD oracle staleness (1 hour)
     uint256 public constant MAX_ORACLE_STALENESS = 3600;
 
-    /// @notice Maximum acceptable crvUSD/USD oracle staleness (7 hours — heartbeat is 6 hours)
-    uint256 public constant MAX_CRVUSD_ORACLE_STALENESS = 25200;
+    /// @notice Maximum acceptable debt/USD oracle staleness (7 hours — heartbeat is 6 hours)
+    uint256 public constant MAX_DEBT_ORACLE_STALENESS = 25200;
 
-    /// @notice Dust threshold in crvUSD (1 USD) - below this we leave position with safe collateral
+    /// @notice Dust threshold in debt asset (1 USD) - below this we leave position with safe collateral
     uint256 public constant DUST_THRESHOLD = 1e18;
 
     /// @notice Safety multiplier for dust collateral (4x debt = 25% LTV)
@@ -52,46 +52,48 @@ contract LlamaLoanManager is ILlamaLoanManager, IERC3156FlashBorrower {
     /// @notice Buffer for swap amount calculation (105% = swap slightly more to cover slippage)
     uint256 public constant SWAP_AMOUNT_BUFFER = 105;
 
-    /// @notice Small dust buffer to handle rounding (100 satoshis)
+    /// @notice Small dust buffer to handle rounding (100 units)
     uint256 public constant DUST_BUFFER = 100;
 
-    /// @notice WBTC/crvUSD TwoCrypto pool indices
-    uint256 public constant TWOCRYPTO_WBTC_INDEX = 1;
-    uint256 public constant TWOCRYPTO_CRVUSD_INDEX = 0;
+    /// @notice Collateral/debt TwoCrypto pool indices
+    uint256 public constant TWOCRYPTO_COLLATERAL_INDEX = 1;
+    uint256 public constant TWOCRYPTO_DEBT_INDEX = 0;
 
-    /// @notice crvUSD flash lender for underwater position unwinding
-    address public constant CRVUSD_FLASH_LENDER = 0x26dE7861e213A5351F6ED767d00e0839930e9eE1;
+    /// @notice Debt flash lender for underwater position unwinding
+    address public constant DEBT_FLASH_LENDER = 0x26dE7861e213A5351F6ED767d00e0839930e9eE1;
     bytes32 private constant FLASH_LOAN_CALLBACK = keccak256("ERC3156FlashBorrower.onFlashLoan");
 
     /// @notice Temporary state for flashloan callback
     struct UnwindContext {
-        uint256 wbtcNeeded;
+        uint256 collateralNeeded;
         bool fullyClose;
     }
 
     error InsufficientFlashloanRepayment();
 
-    event PositionUnwound(uint256 wbtcRequested, uint256 debtRepaid, uint256 collateralRemoved);
+    event PositionUnwound(uint256 collateralRequested, uint256 debtRepaid, uint256 collateralRemoved);
+    event CollateralSwapped(uint256 collateralIn, uint256 debtOut);
+    event DebtSwapped(uint256 debtIn, uint256 collateralOut);
 
     // ============ Immutables ============
 
-    /// @notice WBTC token (collateral)
-    IERC20 public immutable wbtc;
+    /// @notice Collateral token
+    IERC20 public immutable collateralToken;
 
-    /// @notice crvUSD token (borrowed asset)
-    IERC20 public immutable crvUSD;
+    /// @notice Debt token
+    IERC20 public immutable debtToken;
 
-    /// @notice LlamaLend controller for WBTC/crvUSD market
+    /// @notice LlamaLend controller for collateral/debt market
     ILlamaLendController public immutable llamaLend;
 
-    /// @notice WBTC/crvUSD TwoCrypto pool for collateral liquidation
-    ICurveTwoCrypto public immutable wbtcCrvUsdPool;
+    /// @notice Collateral/debt TwoCrypto pool for collateral liquidation
+    ICurveTwoCrypto public immutable collateralDebtPool;
 
-    /// @notice Chainlink BTC/USD oracle
-    IChainlinkOracle public immutable btcOracle;
+    /// @notice Chainlink collateral/USD oracle
+    IChainlinkOracle public immutable collateralOracle;
 
-    /// @notice Chainlink crvUSD/USD oracle
-    IChainlinkOracle public immutable crvUsdOracle;
+    /// @notice Chainlink debt/USD oracle
+    IChainlinkOracle public immutable debtOracle;
 
     /// @notice The vault that owns this loan manager
     address public immutable vault;
@@ -106,87 +108,87 @@ contract LlamaLoanManager is ILlamaLoanManager, IERC3156FlashBorrower {
     // ============ Constructor ============
 
     constructor(
-        address _wbtc,
-        address _crvUSD,
+        address _collateralAsset,
+        address _debtAsset,
         address _llamaLend,
-        address _wbtcCrvUsdPool,
-        address _btcOracle,
-        address _crvUsdOracle,
+        address _collateralDebtPool,
+        address _collateralOracle,
+        address _debtOracle,
         address _vault
     ) {
         if (
-            _wbtc == address(0) || _crvUSD == address(0) || _llamaLend == address(0)
-                || _wbtcCrvUsdPool == address(0) || _btcOracle == address(0)
-                || _crvUsdOracle == address(0) || _vault == address(0)
+            _collateralAsset == address(0) || _debtAsset == address(0) || _llamaLend == address(0)
+                || _collateralDebtPool == address(0) || _collateralOracle == address(0)
+                || _debtOracle == address(0) || _vault == address(0)
         ) {
             revert InvalidAddress();
         }
 
-        wbtc = IERC20(_wbtc);
-        crvUSD = IERC20(_crvUSD);
+        collateralToken = IERC20(_collateralAsset);
+        debtToken = IERC20(_debtAsset);
         llamaLend = ILlamaLendController(_llamaLend);
-        wbtcCrvUsdPool = ICurveTwoCrypto(_wbtcCrvUsdPool);
-        btcOracle = IChainlinkOracle(_btcOracle);
-        crvUsdOracle = IChainlinkOracle(_crvUsdOracle);
+        collateralDebtPool = ICurveTwoCrypto(_collateralDebtPool);
+        collateralOracle = IChainlinkOracle(_collateralOracle);
+        debtOracle = IChainlinkOracle(_debtOracle);
         vault = _vault;
     }
 
     // ============ Loan Management Functions ============
 
-    /// @inheritdoc ILlamaLoanManager
+    /// @inheritdoc ILoanManager
     function createLoan(uint256 collateral, uint256 debt, uint256 bands) external onlyVault {
         _checkOracleFreshness();
-        _ensureApprove(address(wbtc), address(llamaLend), collateral);
+        _ensureApprove(address(collateralToken), address(llamaLend), collateral);
         llamaLend.create_loan(collateral, debt, bands);
         emit LoanCreated(collateral, debt, bands);
     }
 
-    /// @inheritdoc ILlamaLoanManager
+    /// @inheritdoc ILoanManager
     function addCollateral(uint256 collateral) external onlyVault {
         if (collateral == 0) revert ZeroAmount();
         _checkOracleFreshness();
-        _ensureApprove(address(wbtc), address(llamaLend), collateral);
+        _ensureApprove(address(collateralToken), address(llamaLend), collateral);
         llamaLend.add_collateral(collateral);
         emit CollateralAdded(collateral);
     }
 
-    /// @inheritdoc ILlamaLoanManager
+    /// @inheritdoc ILoanManager
     function borrowMore(uint256 collateral, uint256 debt) external onlyVault {
         if (collateral == 0 && debt == 0) revert ZeroAmount();
         _checkOracleFreshness();
         if (collateral > 0) {
-            _ensureApprove(address(wbtc), address(llamaLend), collateral);
+            _ensureApprove(address(collateralToken), address(llamaLend), collateral);
         }
         llamaLend.borrow_more(collateral, debt);
         emit LoanBorrowedMore(collateral, debt);
     }
 
-    /// @inheritdoc ILlamaLoanManager
+    /// @inheritdoc ILoanManager
     function repayDebt(uint256 amount) external onlyVault {
         if (amount == 0) revert ZeroAmount();
         _checkOracleFreshness();
-        _ensureApprove(address(crvUSD), address(llamaLend), amount);
+        _ensureApprove(address(debtToken), address(llamaLend), amount);
         llamaLend.repay(amount);
         emit LoanRepaid(amount);
     }
 
-    /// @inheritdoc ILlamaLoanManager
+    /// @inheritdoc ILoanManager
     function removeCollateral(uint256 amount) external onlyVault {
         if (amount == 0) revert ZeroAmount();
         llamaLend.remove_collateral(amount);
         emit CollateralRemoved(amount);
     }
 
-    /// @inheritdoc ILlamaLoanManager
-    function unwindPosition(uint256 wbtcNeeded) external onlyVault {
-        bool fullyClose = (wbtcNeeded == type(uint256).max);
+    /// @inheritdoc ILoanManager
+    function unwindPosition(uint256 collateralNeeded) external onlyVault {
+        bool fullyClose = (collateralNeeded == type(uint256).max);
         _checkOracleFreshness();
 
-        // 1. If no loan, just transfer any WBTC to vault and return
+        // 1. If no loan, just transfer any collateral to vault and return
         if (!llamaLend.loan_exists(address(this))) {
-            uint256 bal = wbtc.balanceOf(address(this));
+            uint256 bal = collateralToken.balanceOf(address(this));
             if (bal > 0) {
-                if (!wbtc.transfer(vault, bal)) revert TransferFailed();
+                if (!collateralToken.transfer(vault, bal)) revert TransferFailed();
             }
             return;
         }
@@ -194,16 +196,16 @@ contract LlamaLoanManager is ILlamaLoanManager, IERC3156FlashBorrower {
         // 2. Get position state and calculate pro-rata debt
         (uint256 collateral, uint256 debt) = _getPositionValues();
         uint256 debtToRepay =
-            fullyClose ? debt : (collateral > 0 ? (debt * wbtcNeeded) / collateral : 0);
+            fullyClose ? debt : (collateral > 0 ? (debt * collateralNeeded) / collateral : 0);
 
-        // 3. Repay with available crvUSD (min of: balance, currentDebt, debtToRepay)
-        uint256 crvUsdBalance = crvUSD.balanceOf(address(this));
+        // 3. Repay with available debt asset (min of: balance, currentDebt, debtToRepay)
+        uint256 debtBalance = debtToken.balanceOf(address(this));
         uint256 currentDebt = llamaLend.debt(address(this));
         uint256 repayNow = debtToRepay < currentDebt ? debtToRepay : currentDebt;
-        repayNow = repayNow < crvUsdBalance ? repayNow : crvUsdBalance;
+        repayNow = repayNow < debtBalance ? repayNow : debtBalance;
 
         if (repayNow > 0) {
-            _ensureApprove(address(crvUSD), address(llamaLend), repayNow);
+            _ensureApprove(address(debtToken), address(llamaLend), repayNow);
             llamaLend.repay(repayNow);
         }
 
@@ -218,9 +220,9 @@ contract LlamaLoanManager is ILlamaLoanManager, IERC3156FlashBorrower {
         if (needFlashloan) {
             // 5. Debt remains → flashloan the shortfall (+ 0.5% buffer)
             uint256 flashloanAmount = (remainingDebt * 10050) / 10000;
-            bytes memory data = abi.encode(wbtcNeeded, fullyClose);
-            IERC3156FlashLender(CRVUSD_FLASH_LENDER).flashLoan(
-                IERC3156FlashBorrower(address(this)), address(crvUSD), flashloanAmount, data
+            bytes memory data = abi.encode(collateralNeeded, fullyClose);
+            IERC3156FlashLender(DEBT_FLASH_LENDER).flashLoan(
+                IERC3156FlashBorrower(address(this)), address(debtToken), flashloanAmount, data
             );
         } else {
             // 6. No meaningful debt remains → remove collateral directly
@@ -229,16 +231,16 @@ contract LlamaLoanManager is ILlamaLoanManager, IERC3156FlashBorrower {
                 if (collAvail > 0) {
                     // Repay any dust debt to free all collateral
                     if (remainingDebt > 0) {
-                        uint256 dustCrvUsd = crvUSD.balanceOf(address(this));
-                        if (dustCrvUsd >= remainingDebt) {
-                            _ensureApprove(address(crvUSD), address(llamaLend), remainingDebt);
+                        uint256 dustDebt = debtToken.balanceOf(address(this));
+                        if (dustDebt >= remainingDebt) {
+                            _ensureApprove(address(debtToken), address(llamaLend), remainingDebt);
                             llamaLend.repay(remainingDebt);
                         }
                     }
                     // Re-check after dust repay
                     if (llamaLend.loan_exists(address(this))) {
                         (collAvail,) = _getPositionValues();
-                        uint256 toRemove = wbtcNeeded < collAvail ? wbtcNeeded : collAvail;
+                        uint256 toRemove = collateralNeeded < collAvail ? collateralNeeded : collAvail;
                         if (toRemove > 0) {
                             llamaLend.remove_collateral(toRemove);
                         }
@@ -247,36 +249,28 @@ contract LlamaLoanManager is ILlamaLoanManager, IERC3156FlashBorrower {
             }
         }
 
-        // 7. Swap any remaining crvUSD → WBTC
-        _swapRemainingCrvUsd();
+        // 7. Swap any remaining debt → collateral
+        _swapRemainingDebt();
 
         // 8. Enforce terminal state for full close
         if (fullyClose && llamaLend.loan_exists(address(this))) {
-            revert ILlamaLoanManager.DebtNotFullyRepaid();
+            revert DebtNotFullyRepaid();
         }
 
-        // 9. Transfer ALL WBTC to vault
-        uint256 totalWbtc = wbtc.balanceOf(address(this));
+        // 9. Transfer ALL collateral to vault
+        uint256 totalCollateral = collateralToken.balanceOf(address(this));
         uint256 debtRepaid =
             debt - (llamaLend.loan_exists(address(this)) ? llamaLend.debt(address(this)) : 0);
-        emit PositionUnwound(wbtcNeeded, debtRepaid, totalWbtc);
+        emit PositionUnwound(collateralNeeded, debtRepaid, totalCollateral);
 
-        if (totalWbtc > 0) {
-            if (!wbtc.transfer(vault, totalWbtc)) revert TransferFailed();
-        }
-    }
-
-    /// @notice Swap remaining crvUSD to WBTC
-    function _swapRemainingCrvUsd() internal {
-        uint256 crvUsdBal = crvUSD.balanceOf(address(this));
-        if (crvUsdBal > 1000) {
-            _swapDebtForCollateral(crvUsdBal);
+        if (totalCollateral > 0) {
+            if (!collateralToken.transfer(vault, totalCollateral)) revert TransferFailed();
         }
     }
 
     /// @notice ERC3156 flashloan callback for position unwinding
-    /// @dev Called during unwindPosition when available crvUSD can't cover the debt.
-    ///      Repays remaining debt, removes collateral, swaps WBTC→crvUSD for repayment.
+    /// @dev Called during unwindPosition when available debt can't cover the debt.
+    ///      Repays remaining debt, removes collateral, swaps collateral→debt for repayment.
     function onFlashLoan(
         address initiator,
         address token,
@@ -284,18 +278,18 @@ contract LlamaLoanManager is ILlamaLoanManager, IERC3156FlashBorrower {
         uint256 fee,
         bytes calldata data
     ) external override returns (bytes32) {
-        if (msg.sender != CRVUSD_FLASH_LENDER) revert Unauthorized();
+        if (msg.sender != DEBT_FLASH_LENDER) revert Unauthorized();
         if (initiator != address(this)) revert Unauthorized();
-        if (token != address(crvUSD)) revert InvalidAddress();
+        if (token != address(debtToken)) revert InvalidAddress();
 
         uint256 repaymentNeeded = amount + fee;
         UnwindContext memory ctx = abi.decode(data, (UnwindContext));
 
         // Step 1: Repay remaining LlamaLend debt
-        _ensureApprove(address(crvUSD), address(llamaLend), type(uint256).max);
+        _ensureApprove(address(debtToken), address(llamaLend), type(uint256).max);
         uint256 debt = llamaLend.debt(address(this));
-        uint256 crvUsdBal = crvUSD.balanceOf(address(this));
-        uint256 toRepay = debt < crvUsdBal ? debt : crvUsdBal;
+        uint256 debtBal = debtToken.balanceOf(address(this));
+        uint256 toRepay = debt < debtBal ? debt : debtBal;
         if (toRepay > 0) {
             llamaLend.repay(toRepay);
         }
@@ -303,67 +297,57 @@ contract LlamaLoanManager is ILlamaLoanManager, IERC3156FlashBorrower {
         // Step 2: Handle residual debt from rounding/interest
         if (llamaLend.loan_exists(address(this))) {
             uint256 residual = llamaLend.debt(address(this));
-            uint256 remaining = crvUSD.balanceOf(address(this));
+            uint256 remaining = debtToken.balanceOf(address(this));
             if (residual > 0 && remaining >= residual) {
                 llamaLend.repay(residual);
             }
         }
 
-        // Step 3: Remove collateral — all if fullyClose, wbtcNeeded if partial
+        // Step 3: Remove collateral — all if fullyClose, collateralNeeded if partial
         if (llamaLend.loan_exists(address(this))) {
             (uint256 collAvail,) = _getPositionValues();
             uint256 toRemove = ctx.fullyClose
                 ? collAvail
-                : (ctx.wbtcNeeded < collAvail ? ctx.wbtcNeeded : collAvail);
+                : (ctx.collateralNeeded < collAvail ? ctx.collateralNeeded : collAvail);
             if (toRemove > 0) {
                 llamaLend.remove_collateral(toRemove);
             }
         }
 
-        // Step 4: Swap enough WBTC → crvUSD to cover flashloan repayment
-        uint256 crvUsdAvailable = crvUSD.balanceOf(address(this));
-        if (crvUsdAvailable < repaymentNeeded) {
-            uint256 shortfall = repaymentNeeded - crvUsdAvailable;
-            uint256 wbtcEstimate = _getDebtValue(shortfall);
-            uint256 wbtcToSwap = (wbtcEstimate * SWAP_AMOUNT_BUFFER) / 100 + DUST_BUFFER;
-            uint256 wbtcBal = wbtc.balanceOf(address(this));
-            uint256 toSwap = wbtcToSwap < wbtcBal ? wbtcToSwap : wbtcBal;
+        // Step 4: Swap enough collateral → debt to cover flashloan repayment
+        uint256 debtAvailable = debtToken.balanceOf(address(this));
+        if (debtAvailable < repaymentNeeded) {
+            uint256 shortfall = repaymentNeeded - debtAvailable;
+            uint256 collateralEstimate = _getDebtValue(shortfall);
+            uint256 collateralToSwap = (collateralEstimate * SWAP_AMOUNT_BUFFER) / 100 + DUST_BUFFER;
+            uint256 collateralBal = collateralToken.balanceOf(address(this));
+            uint256 toSwap = collateralToSwap < collateralBal ? collateralToSwap : collateralBal;
             if (toSwap > 0) {
                 _swapCollateralForDebt(toSwap);
             }
 
-            // If still short, swap all remaining WBTC
-            crvUsdAvailable = crvUSD.balanceOf(address(this));
-            if (crvUsdAvailable < repaymentNeeded) {
-                uint256 remainingWbtc = wbtc.balanceOf(address(this));
-                if (remainingWbtc > 0) {
-                    _swapCollateralForDebt(remainingWbtc);
+            // If still short, swap all remaining collateral
+            debtAvailable = debtToken.balanceOf(address(this));
+            if (debtAvailable < repaymentNeeded) {
+                uint256 remainingCollateral = collateralToken.balanceOf(address(this));
+                if (remainingCollateral > 0) {
+                    _swapCollateralForDebt(remainingCollateral);
                 }
             }
         }
 
         // Step 5: Verify and transfer repayment to flash lender
-        if (crvUSD.balanceOf(address(this)) < repaymentNeeded) {
+        if (debtToken.balanceOf(address(this)) < repaymentNeeded) {
             revert InsufficientFlashloanRepayment();
         }
-        if (!crvUSD.transfer(msg.sender, repaymentNeeded)) revert TransferFailed();
+        if (!debtToken.transfer(msg.sender, repaymentNeeded)) revert TransferFailed();
 
         return FLASH_LOAN_CALLBACK;
     }
 
-    /// @inheritdoc ILlamaLoanManager
-    function swapCollateralForDebt(uint256 wbtcAmount) external onlyVault returns (uint256) {
-        return _swapCollateralForDebt(wbtcAmount);
-    }
-
-    /// @inheritdoc ILlamaLoanManager
-    function swapDebtForCollateral(uint256 crvUsdAmount) external onlyVault returns (uint256) {
-        return _swapDebtForCollateral(crvUsdAmount);
-    }
-
     // ============ View Functions ============
 
-    /// @inheritdoc ILlamaLoanManager
+    /// @inheritdoc ILoanManager
     function getCurrentLTV() external view returns (uint256 ltv) {
         if (!llamaLend.loan_exists(address(this))) return 0;
 
@@ -375,52 +359,42 @@ contract LlamaLoanManager is ILlamaLoanManager, IERC3156FlashBorrower {
         ltv = (debt * PRECISION) / collateralValue;
     }
 
-    /// @inheritdoc ILlamaLoanManager
+    /// @inheritdoc ILoanManager
     function getCurrentCollateral() external view returns (uint256 collateral) {
         if (!llamaLend.loan_exists(address(this))) return 0;
         uint256[4] memory state = llamaLend.user_state(address(this));
         collateral = state[0];
     }
 
-    /// @inheritdoc ILlamaLoanManager
+    /// @inheritdoc ILoanManager
     function getCurrentDebt() external view returns (uint256 debt) {
         if (!llamaLend.loan_exists(address(this))) return 0;
         return llamaLend.debt(address(this));
     }
 
-    /// @inheritdoc ILlamaLoanManager
+    /// @inheritdoc ILoanManager
     function getHealth() external view returns (int256 health) {
         if (!llamaLend.loan_exists(address(this))) return type(int256).max;
         // Use full=true to account for price differences above highest band
         return llamaLend.health(address(this), true);
     }
 
-    /// @inheritdoc ILlamaLoanManager
+    /// @inheritdoc ILoanManager
     function loanExists() external view returns (bool exists) {
         return llamaLend.loan_exists(address(this));
     }
 
-    /// @inheritdoc ILlamaLoanManager
-    function getCollateralValue(uint256 wbtcAmount) external view returns (uint256 value) {
-        return _getCollateralValue(wbtcAmount);
+    /// @inheritdoc ILoanManager
+    function getCollateralValue(uint256 collateralAmount) external view returns (uint256 value) {
+        return _getCollateralValue(collateralAmount);
     }
 
-    /// @inheritdoc ILlamaLoanManager
-    function getDebtValue(uint256 crvUsdAmount) external view returns (uint256 value) {
-        return _getDebtValue(crvUsdAmount);
+    /// @inheritdoc ILoanManager
+    function getDebtValue(uint256 debtAmount) external view returns (uint256 value) {
+        return _getDebtValue(debtAmount);
     }
 
-    /// @inheritdoc ILlamaLoanManager
-    function quoteWbtcForCrvUsd(uint256 crvUsdAmount) external view returns (uint256 wbtcNeeded) {
-        if (crvUsdAmount == 0) return 0;
-        uint256 wbtcUnit = 1e8;
-        uint256 crvUsdPerWbtc =
-            wbtcCrvUsdPool.get_dy(TWOCRYPTO_WBTC_INDEX, TWOCRYPTO_CRVUSD_INDEX, wbtcUnit);
-        if (crvUsdPerWbtc == 0) return 0;
-        wbtcNeeded = (crvUsdAmount * wbtcUnit + crvUsdPerWbtc - 1) / crvUsdPerWbtc;
-    }
-
-    /// @inheritdoc ILlamaLoanManager
+    /// @inheritdoc ILoanManager
     function calculateBorrowAmount(uint256 collateral, uint256 targetLtv)
         external
         view
@@ -430,7 +404,7 @@ contract LlamaLoanManager is ILlamaLoanManager, IERC3156FlashBorrower {
         return (collateralValue * targetLtv) / PRECISION;
     }
 
-    /// @inheritdoc ILlamaLoanManager
+    /// @notice Calculate health after hypothetical changes
     function healthCalculator(int256 dCollateral, int256 dDebt)
         external
         view
@@ -439,12 +413,12 @@ contract LlamaLoanManager is ILlamaLoanManager, IERC3156FlashBorrower {
         return llamaLend.health_calculator(address(this), dCollateral, dDebt, true);
     }
 
-    /// @inheritdoc ILlamaLoanManager
+    /// @notice Get minimum collateral required for a debt amount
     function minCollateral(uint256 debt_, uint256 bands) external view returns (uint256) {
         return llamaLend.min_collateral(debt_, bands);
     }
 
-    /// @inheritdoc ILlamaLoanManager
+    /// @inheritdoc ILoanManager
     function getPositionValues()
         external
         view
@@ -453,45 +427,55 @@ contract LlamaLoanManager is ILlamaLoanManager, IERC3156FlashBorrower {
         return _getPositionValues();
     }
 
-    /// @inheritdoc ILlamaLoanManager
+    /// @inheritdoc ILoanManager
     function checkOracleFreshness() external view {
         _checkOracleFreshness();
     }
 
-    /// @inheritdoc ILlamaLoanManager
-    function getWbtcBalance() external view returns (uint256 balance) {
-        return wbtc.balanceOf(address(this));
+    /// @inheritdoc ILoanManager
+    function getCollateralBalance() external view returns (uint256 balance) {
+        return collateralToken.balanceOf(address(this));
     }
 
-    /// @inheritdoc ILlamaLoanManager
-    function getCrvUsdBalance() external view returns (uint256 balance) {
-        return crvUSD.balanceOf(address(this));
+    /// @inheritdoc ILoanManager
+    function getDebtBalance() external view returns (uint256 balance) {
+        return debtToken.balanceOf(address(this));
     }
 
-    /// @inheritdoc ILlamaLoanManager
+    /// @inheritdoc ILoanManager
     function getNetCollateralValue() external view returns (uint256 value) {
         if (!llamaLend.loan_exists(address(this))) {
             return 0;
         }
 
         (uint256 collateral, uint256 debt) = _getPositionValues();
-        uint256 debtInWbtc = _getDebtValue(debt);
+        uint256 debtInCollateral = _getDebtValue(debt);
 
-        return collateral > debtInWbtc ? collateral - debtInWbtc : 0;
+        return collateral > debtInCollateral ? collateral - debtInCollateral : 0;
     }
 
     // ============ Token Transfer Functions ============
 
-    /// @inheritdoc ILlamaLoanManager
-    function transferWbtc(address to, uint256 amount) external onlyVault {
+    /// @inheritdoc ILoanManager
+    function transferCollateral(address to, uint256 amount) external onlyVault {
         if (to == address(0)) revert InvalidAddress();
-        if (!wbtc.transfer(to, amount)) revert TransferFailed();
+        if (!collateralToken.transfer(to, amount)) revert TransferFailed();
     }
 
-    /// @inheritdoc ILlamaLoanManager
-    function transferCrvUsd(address to, uint256 amount) external onlyVault {
+    /// @inheritdoc ILoanManager
+    function transferDebt(address to, uint256 amount) external onlyVault {
         if (to == address(0)) revert InvalidAddress();
-        if (!crvUSD.transfer(to, amount)) revert TransferFailed();
+        if (!debtToken.transfer(to, amount)) revert TransferFailed();
+    }
+
+    /// @inheritdoc ILoanManager
+    function collateralAsset() external view returns (address) {
+        return address(collateralToken);
+    }
+
+    /// @inheritdoc ILoanManager
+    function debtAsset() external view returns (address) {
+        return address(debtToken);
     }
 
     // ============ Internal Functions ============
@@ -503,62 +487,61 @@ contract LlamaLoanManager is ILlamaLoanManager, IERC3156FlashBorrower {
         view
         returns (uint256 collateralValue, uint256 debtValue)
     {
-        if (!llamaLend.loan_exists(address(this))) return (0, 0);
         uint256[4] memory state = llamaLend.user_state(address(this));
         collateralValue = state[0];
         debtValue = llamaLend.debt(address(this)); // Use debt() to include accrued interest
     }
 
-    /// @notice Get validated BTC price from Chainlink oracle
-    function _getValidatedPrice() internal view returns (uint256) {
+    /// @notice Get validated collateral price from Chainlink oracle
+    function _getValidatedCollateralPrice() internal view returns (uint256) {
         (uint80 roundId, int256 price,, uint256 updatedAt, uint80 answeredInRound) =
-            btcOracle.latestRoundData();
+            collateralOracle.latestRoundData();
         if (price <= 0) revert InvalidPrice();
         if (answeredInRound < roundId) revert StaleOracle();
         if (block.timestamp - updatedAt > MAX_ORACLE_STALENESS) revert StaleOracle();
         return uint256(price);
     }
 
-    /// @notice Get validated crvUSD/USD price from Chainlink oracle
-    function _getValidatedCrvUsdPrice() internal view returns (uint256) {
+    /// @notice Get validated debt/USD price from Chainlink oracle
+    function _getValidatedDebtPrice() internal view returns (uint256) {
         (uint80 roundId, int256 price,, uint256 updatedAt, uint80 answeredInRound) =
-            crvUsdOracle.latestRoundData();
+            debtOracle.latestRoundData();
         if (price <= 0) revert InvalidPrice();
         if (answeredInRound < roundId) revert StaleOracle();
-        if (block.timestamp - updatedAt > MAX_CRVUSD_ORACLE_STALENESS) revert StaleOracle();
+        if (block.timestamp - updatedAt > MAX_DEBT_ORACLE_STALENESS) revert StaleOracle();
         return uint256(price);
     }
 
-    /// @notice Get collateral value in crvUSD terms using Chainlink oracles
-    /// @dev Accounts for crvUSD/USD peg deviation: value = (WBTC_USD) / (crvUSD_USD)
-    function _getCollateralValue(uint256 wbtcAmount) internal view returns (uint256) {
-        if (wbtcAmount == 0) return 0;
-        uint256 btcPrice = _getValidatedPrice();
-        uint256 crvUsdPrice = _getValidatedCrvUsdPrice();
-        uint8 btcOracleDecimals = btcOracle.decimals();
-        uint8 crvUsdOracleDecimals = crvUsdOracle.decimals();
-        uint8 wbtcDecimals = wbtc.decimals();
-        return (wbtcAmount * btcPrice * 1e18 * (10 ** crvUsdOracleDecimals))
-            / ((10 ** btcOracleDecimals) * (10 ** wbtcDecimals) * crvUsdPrice);
+    /// @notice Get collateral value in debt terms using Chainlink oracles
+    /// @dev Accounts for debt/USD peg deviation: value = (COLLATERAL_USD) / (DEBT_USD)
+    function _getCollateralValue(uint256 collateralAmount) internal view returns (uint256) {
+        if (collateralAmount == 0) return 0;
+        uint256 collateralPrice = _getValidatedCollateralPrice();
+        uint256 debtPrice = _getValidatedDebtPrice();
+        uint8 collateralOracleDecimals = collateralOracle.decimals();
+        uint8 debtOracleDecimals = debtOracle.decimals();
+        uint8 collateralDecimals = collateralToken.decimals();
+        return (collateralAmount * collateralPrice * 1e18 * (10 ** debtOracleDecimals))
+            / ((10 ** collateralOracleDecimals) * (10 ** collateralDecimals) * debtPrice);
     }
 
-    /// @notice Get crvUSD value in collateral terms using Chainlink oracles
-    /// @dev Accounts for crvUSD/USD peg deviation: value = (crvUSD_amount * crvUSD_USD) / BTC_USD
-    function _getDebtValue(uint256 crvUsdAmount) internal view returns (uint256) {
-        if (crvUsdAmount == 0) return 0;
-        uint256 btcPrice = _getValidatedPrice();
-        uint256 crvUsdPrice = _getValidatedCrvUsdPrice();
-        uint8 btcOracleDecimals = btcOracle.decimals();
-        uint8 crvUsdOracleDecimals = crvUsdOracle.decimals();
-        uint8 wbtcDecimals = wbtc.decimals();
-        return (crvUsdAmount * crvUsdPrice * (10 ** btcOracleDecimals) * (10 ** wbtcDecimals))
-            / ((10 ** crvUsdOracleDecimals) * btcPrice * 1e18);
+    /// @notice Get debt value in collateral terms using Chainlink oracles
+    /// @dev Accounts for debt/USD peg deviation: value = (debt_amount * debt_USD) / collateral_USD
+    function _getDebtValue(uint256 debtAmount) internal view returns (uint256) {
+        if (debtAmount == 0) return 0;
+        uint256 collateralPrice = _getValidatedCollateralPrice();
+        uint256 debtPrice = _getValidatedDebtPrice();
+        uint8 collateralOracleDecimals = collateralOracle.decimals();
+        uint8 debtOracleDecimals = debtOracle.decimals();
+        uint8 collateralDecimals = collateralToken.decimals();
+        return (debtAmount * debtPrice * (10 ** collateralOracleDecimals) * (10 ** collateralDecimals))
+            / ((10 ** debtOracleDecimals) * collateralPrice * 1e18);
     }
 
-    /// @notice Check oracle freshness (both BTC/USD and crvUSD/USD)
+    /// @notice Check oracle freshness (both collateral/USD and debt/USD)
     function _checkOracleFreshness() internal view {
-        _getValidatedPrice();
-        _getValidatedCrvUsdPrice();
+        _getValidatedCollateralPrice();
+        _getValidatedDebtPrice();
     }
 
     /// @notice Canonical dust definition for partial unwinds
@@ -566,40 +549,53 @@ contract LlamaLoanManager is ILlamaLoanManager, IERC3156FlashBorrower {
         return debt <= DUST_THRESHOLD;
     }
 
-    /// @notice Swap WBTC to crvUSD
-    function _swapCollateralForDebt(uint256 wbtcAmount) internal returns (uint256) {
+    /// @notice Swap collateral to debt
+    function _swapCollateralForDebt(uint256 collateralAmount) internal returns (uint256) {
         _checkOracleFreshness();
-        uint256 expectedOut =
-            wbtcCrvUsdPool.get_dy(TWOCRYPTO_WBTC_INDEX, TWOCRYPTO_CRVUSD_INDEX, wbtcAmount);
+        uint256 expectedOut = collateralDebtPool.get_dy(
+            TWOCRYPTO_COLLATERAL_INDEX, TWOCRYPTO_DEBT_INDEX, collateralAmount
+        );
         uint256 minOut = (expectedOut * (PRECISION - COLLATERAL_SWAP_SLIPPAGE)) / PRECISION;
 
-        uint256 crvUsdBefore = crvUSD.balanceOf(address(this));
+        uint256 debtBefore = debtToken.balanceOf(address(this));
 
-        _ensureApprove(address(wbtc), address(wbtcCrvUsdPool), wbtcAmount);
-        wbtcCrvUsdPool.exchange(TWOCRYPTO_WBTC_INDEX, TWOCRYPTO_CRVUSD_INDEX, wbtcAmount, minOut);
+        _ensureApprove(address(collateralToken), address(collateralDebtPool), collateralAmount);
+        collateralDebtPool.exchange(
+            TWOCRYPTO_COLLATERAL_INDEX, TWOCRYPTO_DEBT_INDEX, collateralAmount, minOut
+        );
 
-        uint256 crvUsdAfter = crvUSD.balanceOf(address(this));
-        uint256 received = crvUsdAfter - crvUsdBefore;
-        emit CollateralSwapped(wbtcAmount, received);
+        uint256 debtAfter = debtToken.balanceOf(address(this));
+        uint256 received = debtAfter - debtBefore;
+        emit CollateralSwapped(collateralAmount, received);
         return received;
     }
 
-    /// @notice Swap crvUSD to WBTC
+    /// @notice Swap debt to collateral
     function _swapDebtForCollateral(uint256 debtAmount) internal returns (uint256) {
         _checkOracleFreshness();
         uint256 expectedOut =
-            wbtcCrvUsdPool.get_dy(TWOCRYPTO_CRVUSD_INDEX, TWOCRYPTO_WBTC_INDEX, debtAmount);
+            collateralDebtPool.get_dy(TWOCRYPTO_DEBT_INDEX, TWOCRYPTO_COLLATERAL_INDEX, debtAmount);
         uint256 minOut = (expectedOut * (PRECISION - COLLATERAL_SWAP_SLIPPAGE)) / PRECISION;
 
-        uint256 wbtcBefore = wbtc.balanceOf(address(this));
+        uint256 collateralBefore = collateralToken.balanceOf(address(this));
 
-        _ensureApprove(address(crvUSD), address(wbtcCrvUsdPool), debtAmount);
-        wbtcCrvUsdPool.exchange(TWOCRYPTO_CRVUSD_INDEX, TWOCRYPTO_WBTC_INDEX, debtAmount, minOut);
+        _ensureApprove(address(debtToken), address(collateralDebtPool), debtAmount);
+        collateralDebtPool.exchange(
+            TWOCRYPTO_DEBT_INDEX, TWOCRYPTO_COLLATERAL_INDEX, debtAmount, minOut
+        );
 
-        uint256 wbtcAfter = wbtc.balanceOf(address(this));
-        uint256 received = wbtcAfter - wbtcBefore;
+        uint256 collateralAfter = collateralToken.balanceOf(address(this));
+        uint256 received = collateralAfter - collateralBefore;
         emit DebtSwapped(debtAmount, received);
         return received;
+    }
+
+    /// @notice Swap any remaining debt to collateral
+    function _swapRemainingDebt() internal {
+        uint256 debtBal = debtToken.balanceOf(address(this));
+        if (debtBal > 1000) {
+            _swapDebtForCollateral(debtBal);
+        }
     }
 
     /// @notice Ensure token approval for spender

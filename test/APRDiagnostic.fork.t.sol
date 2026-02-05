@@ -3,9 +3,11 @@ pragma solidity ^0.8.33;
 
 import { Test, console } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
+import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
+import { LlamaLoanManager } from "../src/LlamaLoanManager.sol";
 import { VaultTracker } from "../src/VaultTracker.sol";
 import { IporYieldStrategy } from "../src/strategies/IporYieldStrategy.sol";
-import { ILlamaLoanManager } from "../src/interfaces/ILlamaLoanManager.sol";
+import { ILoanManager } from "../src/interfaces/ILoanManager.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 
 interface IYieldVault {
@@ -49,6 +51,7 @@ contract APRDiagnosticForkTest is Test {
     Zenji vault;
     VaultTracker tracker;
     IporYieldStrategy strategy;
+    ZenjiViewHelper viewHelper;
 
     address owner = makeAddr("owner");
     address user1 = makeAddr("user1");
@@ -76,6 +79,8 @@ contract APRDiagnosticForkTest is Test {
         crvUSD = IERC20(CRVUSD);
         iporVault = IYieldVault(IPOR_VAULT);
 
+        viewHelper = new ZenjiViewHelper();
+
         vm.prank(WBTC_WHALE);
         wbtc.transfer(user1, 5e8);
     }
@@ -102,17 +107,25 @@ contract APRDiagnosticForkTest is Test {
 
         // Deploy vault
         uint64 nonce = vm.getNonce(address(this));
-        address predictedVault = vm.computeCreateAddress(address(this), nonce + 1);
+        address predictedVault = vm.computeCreateAddress(address(this), nonce + 2);
         strategy = new IporYieldStrategy(CRVUSD, predictedVault, IPOR_VAULT);
-        vault = new Zenji(
+        LlamaLoanManager loanManager = new LlamaLoanManager(
             WBTC,
             CRVUSD,
             LLAMALEND_WBTC,
-            address(strategy),
             WBTC_CRVUSD_POOL,
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
-            owner
+            predictedVault
+        );
+
+        vault = new Zenji(
+            WBTC,
+            CRVUSD,
+            address(loanManager),
+            address(strategy),
+            owner,
+            address(viewHelper)
         );
         tracker = new VaultTracker(address(vault));
 
@@ -122,7 +135,7 @@ contract APRDiagnosticForkTest is Test {
         // User deposits
         vm.startPrank(user1);
         wbtc.approve(address(vault), type(uint256).max);
-        vault.deposit(1e8);
+        vault.deposit(1e8, address(this));
         vm.stopPrank();
 
         // === INITIAL STATE ===
@@ -135,8 +148,8 @@ contract APRDiagnosticForkTest is Test {
         // Store initial values
         uint256 initialStrategyShares = iporVault.balanceOf(address(strategy));
         uint256 initialStrategyAssets = strategy.balanceOf();
-        uint256 initialVaultWbtc = vault.getTotalWbtc();
-        uint256 initialVaultValue = vault.getTotalValue();
+        uint256 initialVaultWbtc = vault.getTotalCollateral();
+        uint256 initialVaultValue = viewHelper.getTotalDebtValue(address(vault));
 
         // Take initial snapshot
         tracker.update();
@@ -156,8 +169,8 @@ contract APRDiagnosticForkTest is Test {
         // Get new values
         uint256 newStrategyShares = iporVault.balanceOf(address(strategy));
         uint256 newStrategyAssets = strategy.balanceOf();
-        uint256 newVaultWbtc = vault.getTotalWbtc();
-        uint256 newVaultValue = vault.getTotalValue();
+        uint256 newVaultWbtc = vault.getTotalCollateral();
+        uint256 newVaultValue = viewHelper.getTotalDebtValue(address(vault));
 
         // Take new snapshot
         tracker.update();
@@ -236,7 +249,7 @@ contract APRDiagnosticForkTest is Test {
         }
 
         // Loan manager state
-        ILlamaLoanManager lm = vault.loanManager();
+        ILoanManager lm = vault.loanManager();
         if (lm.loanExists()) {
             (uint256 collateral, uint256 debt) = lm.getPositionValues();
             console.log("LlamaLend collateral (WBTC):", collateral);
@@ -244,8 +257,11 @@ contract APRDiagnosticForkTest is Test {
         }
 
         // Vault totals
-        console.log("Vault getTotalValue (crvUSD):", vault.getTotalValue());
-        console.log("Vault getTotalWbtc:", vault.getTotalWbtc());
+        console.log(
+            "Vault getTotalValue (debt):",
+            viewHelper.getTotalDebtValue(address(vault))
+        );
+        console.log("Vault getTotalCollateral:", vault.getTotalCollateral());
         console.log("Tracker sharePrice:", tracker.sharePrice());
     }
 

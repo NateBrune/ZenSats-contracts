@@ -3,9 +3,12 @@ pragma solidity ^0.8.33;
 
 import { Test, console } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
+import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
+import { CurveTwoCryptoSwapper } from "../src/CurveTwoCryptoSwapper.sol";
+import { LlamaLoanManager } from "../src/LlamaLoanManager.sol";
 import { VaultTracker } from "../src/VaultTracker.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
-import { ILlamaLoanManager } from "../src/interfaces/ILlamaLoanManager.sol";
+import { ILoanManager } from "../src/interfaces/ILoanManager.sol";
 import { ILlamaLendController } from "../src/interfaces/ILlamaLendController.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
 import { IporYieldStrategy } from "../src/strategies/IporYieldStrategy.sol";
@@ -321,6 +324,7 @@ contract ZenjiTest is Test {
     address constant WBTC_WHALE = 0x5Ee5bf7ae06D1Be5997A1A72006FE6C607eC6DE8;
 
     Zenji vault;
+    ZenjiViewHelper viewHelper;
     VaultTracker tracker;
     IERC20 wbtc;
     IERC20 crvUSD;
@@ -366,22 +370,40 @@ contract ZenjiTest is Test {
 
         // Compute the address the vault will be deployed to
         address expectedVaultAddress =
-            computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
+            computeCreateAddress(address(this), vm.getNonce(address(this)) + 2);
 
         // Deploy the mock strategy pointing to the expected vault address
         mockStrategy = new MockYieldStrategy(CRVUSD, expectedVaultAddress, address(mockYield));
+
+        LlamaLoanManager loanManager = new LlamaLoanManager(
+            WBTC,
+            CRVUSD,
+            LLAMALEND_WBTC,
+            WBTC_CRVUSD_POOL,
+            BTC_USD_ORACLE,
+            CRVUSD_USD_ORACLE,
+            expectedVaultAddress
+        );
 
         // Redeploy the vault with the mock strategy
         vault = new Zenji(
             WBTC,
             CRVUSD,
-            LLAMALEND_WBTC,
+            address(loanManager),
             address(mockStrategy),
-            WBTC_CRVUSD_POOL,
-            BTC_USD_ORACLE,
-            CRVUSD_USD_ORACLE,
-            owner
+            owner,
+            address(viewHelper)
         );
+
+        CurveTwoCryptoSwapper swapper = new CurveTwoCryptoSwapper(
+            WBTC,
+            CRVUSD,
+            WBTC_CRVUSD_POOL,
+            1,
+            0
+        );
+        vm.prank(owner);
+        vault.setSwapper(address(swapper));
 
         // Verify the addresses match
         require(address(vault) == expectedVaultAddress, "Vault address mismatch");
@@ -437,6 +459,8 @@ contract ZenjiTest is Test {
         wbtc.transfer(user3, 10e8); // 10 WBTC
         vm.stopPrank();
 
+        viewHelper = new ZenjiViewHelper();
+
         // Deploy mock yield strategy (IPOR PlasmaVault is at capacity)
         increaseIporVaultCap();
 
@@ -453,18 +477,18 @@ contract ZenjiTest is Test {
         uint256 balanceBefore = wbtc.balanceOf(user1);
 
         vm.prank(user1);
-        uint256 shares = vault.deposit(depositAmount);
+        uint256 shares = vault.deposit(depositAmount, user1);
 
         assertEq(shares, depositAmount, "Shares should equal deposit for first depositor");
-        assertEq(vault.shares(user1), shares, "User share balance mismatch");
-        assertEq(vault.totalShares(), shares, "Total shares mismatch");
+        assertEq(vault.balanceOf(user1), shares, "User share balance mismatch");
+        assertEq(vault.totalSupply(), shares, "Total shares mismatch");
         assertEq(wbtc.balanceOf(user1), balanceBefore - depositAmount, "WBTC balance mismatch");
     }
 
     function test_withdraw() public {
         // Deposit first
         vm.prank(user1);
-        uint256 shares = vault.deposit(1e8);
+        uint256 shares = vault.deposit(1e8, user1);
 
         // Wait for redemption delay (vault has 1 second delay)
         warpAndMock(block.timestamp + 2);
@@ -474,33 +498,33 @@ contract ZenjiTest is Test {
 
         // Withdraw all shares
         vm.prank(user1);
-        uint256 wbtcReceived = vault.withdraw(shares);
+        uint256 wbtcReceived = vault.redeem(shares, user1, user1);
 
         assertGt(wbtcReceived, 0, "Should receive WBTC");
-        assertEq(vault.shares(user1), 0, "Shares should be zero after full withdrawal");
-        assertEq(vault.totalShares(), 0, "Total shares should be zero");
+        assertEq(vault.balanceOf(user1), 0, "Shares should be zero after full withdrawal");
+        assertEq(vault.totalSupply(), 0, "Total shares should be zero");
         assertGt(wbtc.balanceOf(user1), balanceBefore, "User should have more WBTC");
     }
 
     function test_multipleDepositors() public {
         // User 1 deposits
         vm.prank(user1);
-        uint256 shares1 = vault.deposit(2e8);
+        uint256 shares1 = vault.deposit(2e8, user1);
 
         // User 2 deposits
         vm.prank(user2);
-        uint256 shares2 = vault.deposit(3e8);
+        uint256 shares2 = vault.deposit(3e8, user2);
 
-        assertEq(vault.totalShares(), shares1 + shares2, "Total shares mismatch");
-        assertEq(vault.shares(user1), shares1, "User1 shares mismatch");
-        assertEq(vault.shares(user2), shares2, "User2 shares mismatch");
+        assertEq(vault.totalSupply(), shares1 + shares2, "Total shares mismatch");
+        assertEq(vault.balanceOf(user1), shares1, "User1 shares mismatch");
+        assertEq(vault.balanceOf(user2), shares2, "User2 shares mismatch");
     }
 
     // ============ Emergency Withdraw Tests ============
 
     function test_emergencyMode_blocksBeforeLiquidation() public {
         vm.prank(user1);
-        uint256 shares = vault.deposit(1e8);
+        uint256 shares = vault.deposit(1e8, user1);
 
         vm.prank(owner);
         vault.enterEmergencyMode();
@@ -512,7 +536,7 @@ contract ZenjiTest is Test {
 
     function test_postLiquidation_redeemWorks() public {
         vm.prank(user1);
-        uint256 shares = vault.deposit(1e8);
+        uint256 shares = vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(85000e8);
@@ -527,13 +551,13 @@ contract ZenjiTest is Test {
         vm.prank(user1);
         uint256 wbtcReceived = vault.redeem(shares, user1, user1);
 
-        assertEq(vault.shares(user1), 0, "Shares should be zero");
+        assertEq(vault.balanceOf(user1), 0, "Shares should be zero");
         assertEq(wbtc.balanceOf(user1), balanceBefore + wbtcReceived, "WBTC balance mismatch");
     }
 
     function test_postLiquidation_withdrawWorks() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(85000e8);
@@ -558,9 +582,9 @@ contract ZenjiTest is Test {
 
     function test_postLiquidation_proRataFairness() public {
         vm.prank(user1);
-        uint256 shares1 = vault.deposit(1e8);
+        uint256 shares1 = vault.deposit(1e8, user1);
         vm.prank(user2);
-        uint256 shares2 = vault.deposit(3e8);
+        uint256 shares2 = vault.deposit(3e8, user2);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(85000e8);
@@ -590,7 +614,7 @@ contract ZenjiTest is Test {
 
     function test_rebalance_notNeeded() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         // Rebalance should revert if within deadband
         vm.expectRevert(Zenji.RebalanceNotNeeded.selector);
@@ -615,13 +639,13 @@ contract ZenjiTest is Test {
         vault.setIdle(true);
 
         vm.prank(user1);
-        uint256 shares = vault.deposit(1e8);
+        uint256 shares = vault.deposit(1e8, user1);
         assertGt(shares, 0, "Deposit should succeed in idle mode");
     }
 
     function test_setIdle_withdrawsWork() public {
         vm.prank(user1);
-        uint256 shares = vault.deposit(1e8);
+        uint256 shares = vault.deposit(1e8, user1);
 
         vm.prank(owner);
         vault.setIdle(true);
@@ -630,7 +654,7 @@ contract ZenjiTest is Test {
         mockOracle(89238e8);
 
         vm.prank(user1);
-        uint256 wbtcReceived = vault.withdraw(shares);
+        uint256 wbtcReceived = vault.redeem(shares, user1, user1);
         assertGt(wbtcReceived, 0, "Withdraw should succeed in idle mode");
     }
 
@@ -663,7 +687,7 @@ contract ZenjiTest is Test {
 
     function test_maxWithdraw_and_maxRedeem_zeroInEmergencyMode() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         vm.prank(owner);
         vault.enterEmergencyMode();
@@ -681,7 +705,7 @@ contract ZenjiTest is Test {
 
         vm.prank(user1);
         vm.expectRevert(Zenji.DepositCapExceeded.selector);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
     }
 
     function test_getTotalValue_whenYieldDisabled() public {
@@ -689,10 +713,10 @@ contract ZenjiTest is Test {
         vault.toggleYield(false);
 
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
-        uint256 totalWbtc = vault.getTotalWbtc();
-        uint256 totalValue = vault.getTotalValue();
+        uint256 totalWbtc = vault.getTotalCollateral();
+        uint256 totalValue = viewHelper.getTotalDebtValue(address(vault));
 
         assertEq(totalWbtc, 1e8);
         assertGt(totalValue, 0);
@@ -713,7 +737,7 @@ contract ZenjiTest is Test {
 
     function test_pauseStrategy_unwindsAndPauses() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         uint256 strategyBalanceBefore = yieldStrategy.balanceOf();
         assertGt(strategyBalanceBefore, 0, "Strategy should have balance");
@@ -752,15 +776,24 @@ contract ZenjiTest is Test {
 
     function test_setInitialStrategy_onlyOnce() public {
         // Deploy a vault with no initial strategy
-        Zenji freshVault = new Zenji(
+        uint64 nonce = vm.getNonce(address(this));
+        address predictedVault = vm.computeCreateAddress(address(this), nonce + 1);
+        LlamaLoanManager loanManager = new LlamaLoanManager(
             WBTC,
             CRVUSD,
             LLAMALEND_WBTC,
-            address(0),
             WBTC_CRVUSD_POOL,
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
-            owner
+            predictedVault
+        );
+        Zenji freshVault = new Zenji(
+            WBTC,
+            CRVUSD,
+            address(loanManager),
+            address(0),
+            owner,
+            address(viewHelper)
         );
 
         MockYieldVault localYield = new MockYieldVault(CRVUSD);
@@ -776,15 +809,24 @@ contract ZenjiTest is Test {
     }
 
     function test_setInitialStrategy_revertsOnZero() public {
-        Zenji freshVault = new Zenji(
+        uint64 nonce = vm.getNonce(address(this));
+        address predictedVault = vm.computeCreateAddress(address(this), nonce + 1);
+        LlamaLoanManager loanManager = new LlamaLoanManager(
             WBTC,
             CRVUSD,
             LLAMALEND_WBTC,
-            address(0),
             WBTC_CRVUSD_POOL,
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
-            owner
+            predictedVault
+        );
+        Zenji freshVault = new Zenji(
+            WBTC,
+            CRVUSD,
+            address(loanManager),
+            address(0),
+            owner,
+            address(viewHelper)
         );
 
         vm.prank(owner);
@@ -834,79 +876,38 @@ contract ZenjiTest is Test {
         assertEq(vault.accumulatedFees(), 0);
     }
 
-    // ============ Timelock Tests ============
+    // ============ Setter Tests ============
 
-    function test_proposeFeeRate() public {
+    function test_setFeeRate() public {
         uint256 newFeeRate = 5e16; // 5%
 
         vm.prank(owner);
-        vault.proposeFeeRate(newFeeRate);
-
-        assertEq(vault.pendingFeeRate(), newFeeRate, "Pending fee rate mismatch");
-        assertGt(vault.pendingFeeRateTimestamp(), block.timestamp, "Timestamp should be in future");
-    }
-
-    function test_proposeFeeRate_revertsIfTooHigh() public {
-        vm.startPrank(owner);
-        vm.expectRevert(Zenji.InvalidFeeRate.selector);
-        vault.proposeFeeRate(type(uint256).max);
-        vm.stopPrank();
-    }
-
-    function test_executeFeeRate_revertsIfNoPending() public {
-        vm.prank(owner);
-        vm.expectRevert(TimelockLib.NoTimelockPending.selector);
-        vault.executeFeeRate();
-    }
-
-    function test_cancelFeeRate_revertsIfNoPending() public {
-        vm.prank(owner);
-        vm.expectRevert(TimelockLib.NoTimelockPending.selector);
-        vault.cancelFeeRate();
-    }
-
-    function test_executeFeeRate() public {
-        uint256 newFeeRate = 5e16;
-
-        vm.startPrank(owner);
-        vault.proposeFeeRate(newFeeRate);
-
-        // Warp past timelock
-        warpAndMock(block.timestamp + vault.TIMELOCK_DELAY() + 1);
-        mockOracle(95000e8);
-
-        vault.executeFeeRate();
-        vm.stopPrank();
+        vault.setFeeRate(newFeeRate);
 
         assertEq(vault.feeRate(), newFeeRate, "Fee rate should be updated");
     }
 
-    function test_proposeTargetLtv() public {
-        uint256 newLtv = 25e16; // 25%
-
-        vm.prank(owner);
-        vault.proposeTargetLtv(newLtv);
-
-        assertEq(vault.pendingTargetLtv(), newLtv, "Pending LTV mismatch");
-    }
-
-    function test_proposeTargetLtv_revertsIfOutOfRange() public {
+    function test_setFeeRate_revertsIfTooHigh() public {
         vm.startPrank(owner);
-        vm.expectRevert(Zenji.InvalidTargetLtv.selector);
-        vault.proposeTargetLtv(0);
+        vm.expectRevert(Zenji.InvalidFeeRate.selector);
+        vault.setFeeRate(type(uint256).max);
         vm.stopPrank();
     }
 
-    function test_executeTargetLtv_revertsIfNoPending() public {
+    function test_setTargetLtv() public {
+        uint256 newLtv = 25e16; // 25%
+
         vm.prank(owner);
-        vm.expectRevert(TimelockLib.NoTimelockPending.selector);
-        vault.executeTargetLtv();
+        vault.setTargetLtv(newLtv);
+
+        assertEq(vault.targetLtv(), newLtv, "Target LTV should be updated");
     }
 
-    function test_cancelTargetLtv_revertsIfNoPending() public {
-        vm.prank(owner);
-        vm.expectRevert(TimelockLib.NoTimelockPending.selector);
-        vault.cancelTargetLtv();
+    function test_setTargetLtv_revertsIfOutOfRange() public {
+        vm.startPrank(owner);
+        vm.expectRevert(Zenji.InvalidTargetLtv.selector);
+        vault.setTargetLtv(0);
+        vm.stopPrank();
     }
 
     // ============ Emergency Mode Tests ============
@@ -920,7 +921,7 @@ contract ZenjiTest is Test {
         // Deposits should fail (emergency mode)
         vm.prank(user1);
         vm.expectRevert(Zenji.EmergencyModeActive.selector);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         // Cannot enter emergency mode twice
         vm.prank(owner);
@@ -952,20 +953,38 @@ contract ZenjiTest is Test {
 
     function test_emergencyWithdraw_withBrickedStrategy_recoversSomeFunds() public {
         address expectedVaultAddress =
-            computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
+            computeCreateAddress(address(this), vm.getNonce(address(this)) + 2);
 
         MockBrickedStrategy bricked = new MockBrickedStrategy(CRVUSD, expectedVaultAddress);
+
+        LlamaLoanManager loanManager = new LlamaLoanManager(
+            WBTC,
+            CRVUSD,
+            LLAMALEND_WBTC,
+            WBTC_CRVUSD_POOL,
+            BTC_USD_ORACLE,
+            CRVUSD_USD_ORACLE,
+            expectedVaultAddress
+        );
 
         Zenji brickedVault = new Zenji(
             WBTC,
             CRVUSD,
-            LLAMALEND_WBTC,
+            address(loanManager),
             address(bricked),
-            WBTC_CRVUSD_POOL,
-            BTC_USD_ORACLE,
-            CRVUSD_USD_ORACLE,
-            owner
+            owner,
+            address(viewHelper)
         );
+
+        CurveTwoCryptoSwapper swapper = new CurveTwoCryptoSwapper(
+            WBTC,
+            CRVUSD,
+            WBTC_CRVUSD_POOL,
+            1,
+            0
+        );
+        vm.prank(owner);
+        brickedVault.setSwapper(address(swapper));
 
         require(address(brickedVault) == expectedVaultAddress, "Vault address mismatch");
 
@@ -973,7 +992,7 @@ contract ZenjiTest is Test {
         wbtc.approve(address(brickedVault), type(uint256).max);
 
         vm.prank(user1);
-        uint256 shares = brickedVault.deposit(1e8);
+        uint256 shares = brickedVault.deposit(1e8, user1);
 
         bricked.setBricked(true);
 
@@ -1009,7 +1028,7 @@ contract ZenjiTest is Test {
     function test_liquidateAllWithFlashloan() public {
         // Deposit first
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         // Wait for redemption delay
         warpAndMock(block.timestamp + 2);
@@ -1036,15 +1055,24 @@ contract ZenjiTest is Test {
     }
 
     function test_harvestYield_revertsWhenNoStrategy() public {
-        Zenji freshVault = new Zenji(
+        uint64 nonce = vm.getNonce(address(this));
+        address predictedVault = vm.computeCreateAddress(address(this), nonce + 1);
+        LlamaLoanManager loanManager = new LlamaLoanManager(
             WBTC,
             CRVUSD,
             LLAMALEND_WBTC,
-            address(0),
             WBTC_CRVUSD_POOL,
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
-            owner
+            predictedVault
+        );
+        Zenji freshVault = new Zenji(
+            WBTC,
+            CRVUSD,
+            address(loanManager),
+            address(0),
+            owner,
+            address(viewHelper)
         );
 
         vm.expectRevert(Zenji.InvalidStrategy.selector);
@@ -1055,9 +1083,9 @@ contract ZenjiTest is Test {
 
     function test_getTotalWbtc() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
-        uint256 totalWbtc = vault.getTotalWbtc();
+        uint256 totalWbtc = vault.getTotalCollateral();
         assertGt(totalWbtc, 0, "Total WBTC should be greater than 0");
     }
 
@@ -1082,14 +1110,14 @@ contract ZenjiTest is Test {
 
     function test_getUserValue() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
-        uint256 userValue = vault.getUserValue(user1);
+        uint256 userValue = viewHelper.getUserValue(address(vault), user1);
         assertGt(userValue, 0, "User value should be greater than 0");
     }
 
     function test_getLtvBounds() public view {
-        (uint256 lower, uint256 upper) = vault.getLtvBounds();
+        (uint256 lower, uint256 upper) = viewHelper.getLtvBounds(address(vault));
         assertEq(lower, vault.targetLtv() - vault.DEADBAND_SPREAD(), "Lower bound mismatch");
         assertEq(upper, vault.targetLtv() + vault.DEADBAND_SPREAD(), "Upper bound mismatch");
     }
@@ -1111,7 +1139,7 @@ contract ZenjiTest is Test {
 
         vm.prank(user1);
         vm.expectRevert(Zenji.DepositCapExceeded.selector);
-        vault.deposit(1e8); // Try to deposit 1 WBTC
+        vault.deposit(1e8, user1); // Try to deposit 1 WBTC
     }
 
     // ============ Edge Cases ============
@@ -1119,19 +1147,19 @@ contract ZenjiTest is Test {
     function test_minDeposit() public {
         vm.prank(user1);
         vm.expectRevert(Zenji.AmountTooSmall.selector);
-        vault.deposit(1e3); // Below MIN_DEPOSIT
+        vault.deposit(1e3, user1); // Below MIN_DEPOSIT
     }
 
     function test_zeroWithdraw() public {
         vm.prank(user1);
         vm.expectRevert(Zenji.ZeroAmount.selector);
-        vault.withdraw(0);
+        vault.redeem(0, user1, user1);
     }
 
     function test_insufficientShares() public {
         vm.prank(user1);
         vm.expectRevert(Zenji.InsufficientShares.selector);
-        vault.withdraw(1e8);
+        vault.redeem(1e8, user1, user1);
     }
 
     // ============ Fuzz Tests ============
@@ -1141,10 +1169,10 @@ contract ZenjiTest is Test {
         amount = bound(amount, vault.MIN_DEPOSIT(), 5e8);
 
         vm.prank(user1);
-        uint256 shares = vault.deposit(amount);
+        uint256 shares = vault.deposit(amount, user1);
 
         assertGt(shares, 0, "Should receive shares");
-        assertEq(vault.shares(user1), shares, "Share balance mismatch");
+        assertEq(vault.balanceOf(user1), shares, "Share balance mismatch");
     }
 
     function testFuzz_partialWithdraw(uint256 depositAmount, uint256 withdrawPercent) public {
@@ -1153,7 +1181,7 @@ contract ZenjiTest is Test {
         withdrawPercent = bound(withdrawPercent, 10, 90);
 
         vm.prank(user1);
-        uint256 shares = vault.deposit(depositAmount);
+        uint256 shares = vault.deposit(depositAmount, user1);
 
         // Wait for redemption delay
         warpAndMock(block.timestamp + 2);
@@ -1163,13 +1191,13 @@ contract ZenjiTest is Test {
         if (sharesToWithdraw == 0) sharesToWithdraw = 1;
 
         vm.prank(user1);
-        uint256 wbtcReceived = vault.withdraw(sharesToWithdraw);
+        uint256 wbtcReceived = vault.redeem(sharesToWithdraw, user1, user1);
 
         assertGt(wbtcReceived, 0, "Should receive WBTC");
 
         // Note: The vault has a "final withdrawal" mechanism that burns all shares
         // when remaining WBTC would be below MIN_DEPOSIT. This is expected behavior.
-        uint256 remainingShares = vault.shares(user1);
+        uint256 remainingShares = vault.balanceOf(user1);
         assertTrue(
             remainingShares == shares - sharesToWithdraw || remainingShares == 0,
             "Remaining shares should match expected or be zero (final withdrawal)"
@@ -1185,7 +1213,7 @@ contract ZenjiTest is Test {
 
     function test_tracker_sharePrice_afterDeposit() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         uint256 price = tracker.sharePrice();
         assertApproxEqRel(price, 1e8, 1e16, "Share price should be ~1e8");
@@ -1193,7 +1221,7 @@ contract ZenjiTest is Test {
 
     function test_tracker_takeSnapshot() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         tracker.takeSnapshot();
 
@@ -1206,7 +1234,7 @@ contract ZenjiTest is Test {
 
     function test_tracker_takeSnapshot_rateLimited() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         tracker.takeSnapshot();
 
@@ -1222,7 +1250,7 @@ contract ZenjiTest is Test {
 
     function test_tracker_update() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         tracker.update();
 
@@ -1232,7 +1260,7 @@ contract ZenjiTest is Test {
 
     function test_tracker_calculateAPR() public {
         vm.prank(user1);
-        vault.deposit(5e8);
+        vault.deposit(5e8, user1);
 
         tracker.takeSnapshot();
 
@@ -1247,7 +1275,7 @@ contract ZenjiTest is Test {
 
     function test_tracker_getPerformanceMetrics() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         tracker.update();
 
@@ -1268,7 +1296,7 @@ contract ZenjiTest is Test {
 
     function test_tracker_recordProfitLoss() public {
         vm.prank(user1);
-        vault.deposit(5e8);
+        vault.deposit(5e8, user1);
 
         tracker.recordProfitLoss();
         uint256 initialValue = tracker.lastRecordedValue();
@@ -1295,7 +1323,7 @@ contract ZenjiTest is Test {
         assertEq(vault.totalAssets(), 0, "Initial total assets should be 0");
 
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         assertGt(vault.totalAssets(), 0, "Total assets should increase after deposit");
     }
@@ -1307,7 +1335,7 @@ contract ZenjiTest is Test {
 
         // After deposit
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         shares = vault.convertToShares(1e8);
         assertGt(shares, 0, "Should return positive shares");
@@ -1318,7 +1346,7 @@ contract ZenjiTest is Test {
         assertEq(assets, 1e8, "Initial conversion should be 1:1");
 
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         assets = vault.convertToAssets(1e8);
         assertGt(assets, 0, "Should return positive assets");
@@ -1337,7 +1365,7 @@ contract ZenjiTest is Test {
         assertEq(max, 5e8, "Max deposit should equal cap");
 
         vm.prank(user1);
-        vault.deposit(2e8);
+        vault.deposit(2e8, user1);
 
         max = vault.maxDeposit(user1);
         assertLt(max, 5e8, "Max deposit should decrease after deposit");
@@ -1350,7 +1378,7 @@ contract ZenjiTest is Test {
 
     function test_erc4626_maxWithdraw() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(89238e8);
@@ -1361,7 +1389,7 @@ contract ZenjiTest is Test {
 
     function test_erc4626_maxRedeem() public {
         vm.prank(user1);
-        uint256 shares = vault.deposit(1e8);
+        uint256 shares = vault.deposit(1e8, user1);
 
         uint256 max = vault.maxRedeem(user1);
         assertEq(max, shares, "Max redeem should equal share balance");
@@ -1379,7 +1407,7 @@ contract ZenjiTest is Test {
 
     function test_erc4626_previewWithdraw() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         uint256 shares = vault.previewWithdraw(5e7);
         assertGt(shares, 0, "Preview withdraw should return positive shares");
@@ -1387,7 +1415,7 @@ contract ZenjiTest is Test {
 
     function test_previewWithdraw_postLiquidation() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(85000e8);
@@ -1407,7 +1435,7 @@ contract ZenjiTest is Test {
 
     function test_erc4626_previewRedeem() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         uint256 assets = vault.previewRedeem(5e7);
         assertGt(assets, 0, "Preview redeem should return positive assets");
@@ -1415,7 +1443,7 @@ contract ZenjiTest is Test {
 
     function test_previewRedeem_postLiquidation() public {
         vm.prank(user1);
-        uint256 shares = vault.deposit(1e8);
+        uint256 shares = vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(85000e8);
@@ -1460,7 +1488,7 @@ contract ZenjiTest is Test {
 
     function test_erc4626_withdraw_withReceiver() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(89238e8);
@@ -1475,7 +1503,7 @@ contract ZenjiTest is Test {
 
     function test_erc4626_redeem() public {
         vm.prank(user1);
-        uint256 shares = vault.deposit(1e8);
+        uint256 shares = vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(89238e8);
@@ -1492,7 +1520,7 @@ contract ZenjiTest is Test {
 
     function test_erc4626_redeem_withReceiver() public {
         vm.prank(user1);
-        uint256 shares = vault.deposit(1e8);
+        uint256 shares = vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(89238e8);
@@ -1510,69 +1538,69 @@ contract ZenjiTest is Test {
     function test_rebalance_decreaseLtv() public {
         // Deposit to create a position
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         // Simulate price drop (BTC price falls, LTV increases)
         warpAndMock(block.timestamp + 2);
         mockOracle(70000e8); // Price drops from ~89k to 70k
 
         // Check if rebalance is needed
-        bool needed = vault.isRebalanceNeeded();
+        bool needed = viewHelper.isRebalanceNeeded(address(vault));
         if (needed) {
             // Rebalance should decrease LTV
             vault.rebalance();
-            assertFalse(vault.isRebalanceNeeded(), "Rebalance should fix LTV");
+            assertFalse(viewHelper.isRebalanceNeeded(address(vault)), "Rebalance should fix LTV");
         }
     }
 
     function test_rebalance_increaseLtv() public {
         // Deposit to create a position
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         // Simulate price increase (BTC price rises, LTV decreases)
         warpAndMock(block.timestamp + 2);
-        mockOracle(95000e8); // Price rises significantly
+        mockOracle(85000e8); // Price rises significantly
 
-        bool needed = vault.isRebalanceNeeded();
+        bool needed = viewHelper.isRebalanceNeeded(address(vault));
         if (needed) {
             vault.rebalance();
-            assertFalse(vault.isRebalanceNeeded(), "Rebalance should fix LTV");
+            assertFalse(viewHelper.isRebalanceNeeded(address(vault)), "Rebalance should fix LTV");
         }
     }
 
     function test_getCurrentLTV() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
-        uint256 ltv = vault.getCurrentLTV();
+        uint256 ltv = vault.loanManager().getCurrentLTV();
         assertGt(ltv, 0, "LTV should be positive after deposit");
         assertLt(ltv, 1e18, "LTV should be less than 100%");
     }
 
     function test_getCurrentCollateral() public {
-        assertEq(vault.getCurrentCollateral(), 0, "Initial collateral should be 0");
+        assertEq(vault.loanManager().getCurrentCollateral(), 0, "Initial collateral should be 0");
 
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
-        assertGt(vault.getCurrentCollateral(), 0, "Collateral should increase after deposit");
+        assertGt(vault.loanManager().getCurrentCollateral(), 0, "Collateral should increase after deposit");
     }
 
     function test_getHealth() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
-        int256 health = vault.getHealth();
+        int256 health = viewHelper.getHealth(address(vault));
         assertGt(health, 0, "Health should be positive");
     }
 
     function test_isRebalanceNeeded() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         // Initially should not need rebalance (just deposited at target LTV)
-        bool needed = vault.isRebalanceNeeded();
+        bool needed = viewHelper.isRebalanceNeeded(address(vault));
         // Result depends on market conditions, just verify it doesn't revert
         if (needed) {
             assertTrue(needed, "isRebalanceNeeded returned true");
@@ -1585,7 +1613,7 @@ contract ZenjiTest is Test {
 
     function test_emergencyRedeemYield() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(89238e8);
@@ -1602,51 +1630,21 @@ contract ZenjiTest is Test {
     function test_withdrawFees() public {
         // Deposit and create some activity
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
-        // Set a fee rate
-        vm.startPrank(owner);
-        vault.proposeFeeRate(5e16); // 5%
-        warpAndMock(block.timestamp + vault.TIMELOCK_DELAY() + 1);
-        mockOracle(89238e8);
-        vault.executeFeeRate();
+        // Set a fee rate (instant now)
+        vm.prank(owner);
+        vault.setFeeRate(5e16); // 5%
 
         // Try to withdraw fees (may be 0 if no fees accumulated)
+        vm.prank(owner);
         vault.withdrawFees(owner);
-        vm.stopPrank();
     }
 
-    function test_cancelFeeRate() public {
-        vm.startPrank(owner);
-        vault.proposeFeeRate(5e16);
-
-        // Cancel before execution
-        vault.cancelFeeRate();
-
-        assertEq(vault.pendingFeeRate(), 0, "Pending fee rate should be cleared");
-        vm.stopPrank();
-    }
-
-    function test_executeTargetLtv() public {
-        vm.startPrank(owner);
-        vault.proposeTargetLtv(25e16); // 25%
-
-        warpAndMock(block.timestamp + vault.TIMELOCK_DELAY() + 1);
-        mockOracle(89238e8);
-
-        vault.executeTargetLtv();
-
-        assertEq(vault.targetLtv(), 25e16, "Target LTV should be updated");
-        vm.stopPrank();
-    }
-
-    function test_cancelTargetLtv() public {
-        vm.startPrank(owner);
-        vault.proposeTargetLtv(25e16);
-
-        vault.cancelTargetLtv();
-
-        assertEq(vault.pendingTargetLtv(), 0, "Pending LTV should be cleared");
+    function test_setFeeRate_onlyOwner() public {
+        vm.startPrank(user1);
+        vm.expectRevert(Zenji.Unauthorized.selector);
+        vault.setFeeRate(5e16);
         vm.stopPrank();
     }
 
@@ -1666,9 +1664,9 @@ contract ZenjiTest is Test {
         assertEq(vault.rebalanceBountyRate(), 1e16, "Bounty rate should be updated");
     }
 
-    function test_transferWbtc() public {
+    function test_transferCollateral() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(89238e8);
@@ -1678,12 +1676,12 @@ contract ZenjiTest is Test {
 
         // Transfer any WBTC in loan manager back to vault
         vm.prank(owner);
-        vault.transferWbtc();
+        vault.transferCollateral();
     }
 
-    function test_transferCrvUsd() public {
+    function test_transferDebt() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(89238e8);
@@ -1692,14 +1690,14 @@ contract ZenjiTest is Test {
         vault.enterEmergencyMode();
 
         vm.prank(owner);
-        vault.transferCrvUsd();
+        vault.transferDebt();
     }
 
     // ============ Phase 4: LlamaLoanManager View Functions ============
 
     function test_loanManager_getCurrentCollateral() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         uint256 collateral = vault.loanManager().getCurrentCollateral();
         assertGt(collateral, 0, "Collateral should be positive");
@@ -1707,7 +1705,7 @@ contract ZenjiTest is Test {
 
     function test_loanManager_getCurrentDebt() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         uint256 debt = vault.loanManager().getCurrentDebt();
         assertGt(debt, 0, "Debt should be positive");
@@ -1715,7 +1713,7 @@ contract ZenjiTest is Test {
 
     function test_loanManager_getHealth() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         int256 health = vault.loanManager().getHealth();
         assertGt(health, 0, "Health should be positive");
@@ -1723,7 +1721,7 @@ contract ZenjiTest is Test {
 
     function test_loanManager_healthCalculator() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         // Calculate health if we remove some collateral
         int256 health = vault.loanManager().healthCalculator(-1e6, 0);
@@ -1738,7 +1736,7 @@ contract ZenjiTest is Test {
 
     function test_loanManager_getNetCollateralValue() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         uint256 netValue = vault.loanManager().getNetCollateralValue();
         assertGt(netValue, 0, "Net collateral value should be positive");
@@ -1748,7 +1746,7 @@ contract ZenjiTest is Test {
 
     function test_maxRedeem_emergencyMode_preLiquidation() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         vm.prank(owner);
         vault.enterEmergencyMode();
@@ -1759,7 +1757,7 @@ contract ZenjiTest is Test {
 
     function test_maxRedeem_emergencyMode_postLiquidation() public {
         vm.prank(user1);
-        uint256 shares = vault.deposit(1e8);
+        uint256 shares = vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(85000e8);
@@ -1775,7 +1773,7 @@ contract ZenjiTest is Test {
 
     function test_maxWithdraw_emergencyMode_preLiquidation() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         vm.prank(owner);
         vault.enterEmergencyMode();
@@ -1786,7 +1784,7 @@ contract ZenjiTest is Test {
 
     function test_maxWithdraw_emergencyMode_postLiquidation() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(85000e8);
@@ -1811,15 +1809,15 @@ contract ZenjiTest is Test {
     function test_feeAccrual_costBasisTracking() public {
         // Deposit WBTC
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         // Check that cost basis was set
-        uint256 costBasis = vault.yieldCostBasis();
+        uint256 costBasis = viewHelper.yieldCostBasis(address(vault));
         assertGt(costBasis, 0, "Cost basis should be set after deposit");
 
         // Get yield vault stats (legacy function)
         (, uint256 currentValue, uint256 basis, uint256 unrealizedProfit) =
-            vault.getYieldVaultStats();
+            viewHelper.getYieldVaultStats(address(vault));
 
         assertGt(currentValue, 0, "Should have current value");
         assertEq(basis, costBasis, "Cost basis should match");
@@ -1830,9 +1828,9 @@ contract ZenjiTest is Test {
     function test_feeAccrual_withProfit() public {
         // Deposit WBTC
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
-        uint256 initialCostBasis = vault.yieldCostBasis();
+        uint256 initialCostBasis = viewHelper.yieldCostBasis(address(vault));
         assertGt(initialCostBasis, 0, "Cost basis should be set after deposit");
 
         // Skip time to simulate yield accrual
@@ -1840,7 +1838,7 @@ contract ZenjiTest is Test {
         mockOracle(89238e8);
 
         // Get pending fees
-        (uint256 totalFees, uint256 pendingFees) = vault.getPendingFees();
+        (uint256 totalFees, uint256 pendingFees) = viewHelper.getPendingFees(address(vault));
 
         // If yield vault has appreciated, pending fees should exist
         // Note: In a real test with fork, this depends on actual yield vault performance
@@ -1854,7 +1852,7 @@ contract ZenjiTest is Test {
     function test_feeAccrual_accrueYieldFees() public {
         // Deposit WBTC
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(89238e8);
@@ -1870,7 +1868,7 @@ contract ZenjiTest is Test {
     function test_feeAccrual_withdrawFeesRedeems() public {
         // Deposit WBTC
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(89238e8);
@@ -1891,7 +1889,7 @@ contract ZenjiTest is Test {
     function test_feeAccrual_rebalanceBountyFromFees() public {
         // Deposit WBTC
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         // Skip time and manipulate price to trigger rebalance
         warpAndMock(block.timestamp + 30 days);
@@ -1900,7 +1898,7 @@ contract ZenjiTest is Test {
         mockOracle(70000e8); // Lower BTC price increases LTV
 
         // Check if rebalance is needed
-        if (vault.isRebalanceNeeded()) {
+        if (viewHelper.isRebalanceNeeded(address(vault))) {
             uint256 keeperCrvUsdBefore = IERC20(CRVUSD).balanceOf(address(this));
 
             // Rebalance should accrue fees and pay bounty
@@ -1919,20 +1917,20 @@ contract ZenjiTest is Test {
     function test_feeAccrual_userValueExcludesFees() public {
         // Deposit WBTC
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(89238e8);
 
         // Get total value before fee accrual
-        uint256 totalWbtcBefore = vault.getTotalWbtc();
+        uint256 totalWbtcBefore = vault.getTotalCollateral();
 
         // Manually set accumulated fees to test exclusion
         // Note: In real scenario, fees are accrued from yield profit
         vault.accrueYieldFees();
 
         uint256 accFees = vault.accumulatedFees();
-        uint256 totalWbtcAfter = vault.getTotalWbtc();
+        uint256 totalWbtcAfter = vault.getTotalCollateral();
 
         // If fees were accrued, total WBTC (user value) should remain roughly the same
         // because fees are excluded from user value
@@ -1947,19 +1945,19 @@ contract ZenjiTest is Test {
     function test_feeAccrual_partialWithdrawalReducesBasis() public {
         // Deposit WBTC
         vm.prank(user1);
-        vault.deposit(2e8);
+        vault.deposit(2e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(89238e8);
 
-        uint256 initialBasis = vault.yieldCostBasis();
+        uint256 initialBasis = viewHelper.yieldCostBasis(address(vault));
 
         // Partial withdraw
         uint256 userShares = vault.balanceOf(user1);
         vm.prank(user1);
-        vault.withdraw(userShares / 2);
+        vault.redeem(userShares / 2, user1, user1);
 
-        uint256 newBasis = vault.yieldCostBasis();
+        uint256 newBasis = viewHelper.yieldCostBasis(address(vault));
 
         // Cost basis should be reduced (not necessarily by exactly half due to LTV rebalancing)
         assertLe(newBasis, initialBasis, "Cost basis should be reduced after withdrawal");
@@ -1968,12 +1966,12 @@ contract ZenjiTest is Test {
     function test_getPendingFees() public {
         // Deposit WBTC
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(89238e8);
 
-        (uint256 totalFees, uint256 pendingFees) = vault.getPendingFees();
+        (uint256 totalFees, uint256 pendingFees) = viewHelper.getPendingFees(address(vault));
 
         // Total fees = accumulated + pending
         assertEq(totalFees, vault.accumulatedFees() + pendingFees, "Total fees calculation");
@@ -1982,7 +1980,7 @@ contract ZenjiTest is Test {
     function test_getYieldVaultStats() public {
         // Before deposit
         (, uint256 currentValue, uint256 costBasis, uint256 unrealizedProfit) =
-            vault.getYieldVaultStats();
+            viewHelper.getYieldVaultStats(address(vault));
 
         assertEq(currentValue, 0, "No current value before deposit");
         assertEq(costBasis, 0, "No cost basis before deposit");
@@ -1990,9 +1988,10 @@ contract ZenjiTest is Test {
 
         // After deposit
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
-        (, currentValue, costBasis, unrealizedProfit) = vault.getYieldVaultStats();
+        (, currentValue, costBasis, unrealizedProfit) =
+            viewHelper.getYieldVaultStats(address(vault));
 
         assertGt(currentValue, 0, "Should have current value after deposit");
         assertGt(costBasis, 0, "Should have cost basis after deposit");
@@ -2008,15 +2007,12 @@ contract ZenjiTest is Test {
 
         vm.prank(owner);
         vault.proposeStrategy(address(newStrategy));
-
-        assertEq(vault.pendingStrategy(), address(newStrategy), "Pending strategy should be set");
-        assertGt(vault.pendingStrategyTimestamp(), block.timestamp, "Timestamp should be in future");
     }
 
     function test_executeStrategy() public {
         // Deposit first
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         // Deploy a new strategy
         MockYieldVault newYieldVault = new MockYieldVault(CRVUSD);
@@ -2034,7 +2030,6 @@ contract ZenjiTest is Test {
         vm.stopPrank();
 
         assertEq(address(vault.yieldStrategy()), address(newStrategy), "Strategy should be updated");
-        assertEq(vault.pendingStrategy(), address(0), "Pending strategy should be cleared");
     }
 
     function test_cancelStrategy() public {
@@ -2047,8 +2042,6 @@ contract ZenjiTest is Test {
         vault.proposeStrategy(address(newStrategy));
         vault.cancelStrategy();
         vm.stopPrank();
-
-        assertEq(vault.pendingStrategy(), address(0), "Pending strategy should be cleared");
     }
 
     function test_proposeStrategy_invalidAddress() public {
@@ -2084,7 +2077,7 @@ contract ZenjiTest is Test {
             uint256 currentValue,
             uint256 costBasis,
             uint256 unrealizedProfit
-        ) = vault.getYieldStrategyStats();
+        ) = viewHelper.getYieldStrategyStats(address(vault));
 
         assertEq(strategyName, "Mock Yield Strategy", "Strategy name should match");
         assertEq(currentValue, 0, "No current value before deposit");
@@ -2093,9 +2086,10 @@ contract ZenjiTest is Test {
 
         // After deposit
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
-        (strategyName, currentValue, costBasis, unrealizedProfit) = vault.getYieldStrategyStats();
+        (strategyName, currentValue, costBasis, unrealizedProfit) =
+            viewHelper.getYieldStrategyStats(address(vault));
 
         assertEq(strategyName, "Mock Yield Strategy", "Strategy name should match");
         assertGt(currentValue, 0, "Should have current value after deposit");
@@ -2108,13 +2102,13 @@ contract ZenjiTest is Test {
         deal(WBTC, user1, 10e8);
         vm.startPrank(user1);
         wbtc.approve(address(vault), 10e8);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
         vm.stopPrank();
 
         // Mock LTV to be high
         vm.mockCall(
             address(vault.loanManager()),
-            abi.encodeWithSelector(ILlamaLoanManager.getCurrentLTV.selector),
+            abi.encodeWithSelector(ILoanManager.getCurrentLTV.selector),
             abi.encode(uint256(8500))
         );
 
@@ -2129,13 +2123,13 @@ contract ZenjiTest is Test {
         deal(WBTC, user1, 10e8);
         vm.startPrank(user1);
         wbtc.approve(address(vault), 10e8);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
         vm.stopPrank();
 
         // Mock LTV to be low
         vm.mockCall(
             address(vault.loanManager()),
-            abi.encodeWithSelector(ILlamaLoanManager.getCurrentLTV.selector),
+            abi.encodeWithSelector(ILoanManager.getCurrentLTV.selector),
             abi.encode(uint256(7000))
         );
 
@@ -2147,7 +2141,7 @@ contract ZenjiTest is Test {
         deal(WBTC, user1, 10e8);
         vm.startPrank(user1);
         wbtc.approve(address(vault), 10e8);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
         vm.stopPrank();
 
         // 1. Set bounty rate and generate profit
@@ -2166,7 +2160,7 @@ contract ZenjiTest is Test {
         // 3. Trigger rebalance
         vm.mockCall(
             address(vault.loanManager()),
-            abi.encodeWithSelector(ILlamaLoanManager.getCurrentLTV.selector),
+            abi.encodeWithSelector(ILoanManager.getCurrentLTV.selector),
             abi.encode(uint256(8500))
         );
 
@@ -2182,7 +2176,7 @@ contract ZenjiTest is Test {
         deal(WBTC, user1, 1e8);
         vm.startPrank(user1);
         wbtc.approve(address(vault), 1e8);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
         vm.stopPrank();
 
         uint256 feesBefore = vault.accumulatedFees();
@@ -2194,7 +2188,7 @@ contract ZenjiTest is Test {
         deal(WBTC, user1, 1e8);
         vm.startPrank(user1);
         wbtc.approve(address(vault), 1e8);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
         vm.stopPrank();
 
         // Simulate strategy profit
@@ -2219,7 +2213,7 @@ contract ZenjiTest is Test {
         deal(WBTC, user1, 1e8);
         vm.startPrank(user1);
         wbtc.approve(address(vault), 1e8);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
         vm.stopPrank();
 
         // 1. First accrue to set lastStrategyBalance
@@ -2239,7 +2233,7 @@ contract ZenjiTest is Test {
 
     function test_postLiquidation_redeem_allowanceDelegation() public {
         vm.prank(user1);
-        uint256 shares = vault.deposit(1e8);
+        uint256 shares = vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(85000e8);
@@ -2264,7 +2258,7 @@ contract ZenjiTest is Test {
 
     function test_postLiquidation_withdraw_allowanceDelegation() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(85000e8);
@@ -2310,7 +2304,7 @@ contract ZenjiTest is Test {
     function test_postLiquidation_previewWithdraw_zeroWbtc() public {
         // Deposit, liquidate, then redeem all so vault has 0 WBTC
         vm.prank(user1);
-        uint256 shares = vault.deposit(1e8);
+        uint256 shares = vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(85000e8);
@@ -2333,9 +2327,9 @@ contract ZenjiTest is Test {
     function test_postLiquidation_redeem_zeroWbtcAmount() public {
         // Deposit from two users, liquidate, drain WBTC, second user gets 0
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
         vm.prank(user2);
-        uint256 shares2 = vault.deposit(1e8);
+        uint256 shares2 = vault.deposit(1e8, user2);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(85000e8);
@@ -2362,7 +2356,7 @@ contract ZenjiTest is Test {
     function test_setIdle_withActiveLoan() public {
         // Deposit to create a loan position
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         assertTrue(vault.loanManager().loanExists(), "Should have active loan");
 
@@ -2387,7 +2381,7 @@ contract ZenjiTest is Test {
 
         // Deposit in idle mode - _deployCapital returns early
         vm.prank(user1);
-        uint256 shares = vault.deposit(1e8);
+        uint256 shares = vault.deposit(1e8, user1);
         assertGt(shares, 0, "Should mint shares");
 
         // WBTC stays idle in the vault
@@ -2398,7 +2392,7 @@ contract ZenjiTest is Test {
 
     function test_rebalance_bountyPartialPayment() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         // Set bounty rate
         vm.prank(owner);
@@ -2420,7 +2414,7 @@ contract ZenjiTest is Test {
         warpAndMock(block.timestamp + 2);
         mockOracle(70000e8);
 
-        if (vault.isRebalanceNeeded()) {
+        if (viewHelper.isRebalanceNeeded(address(vault))) {
             uint256 keeperBefore = crvUSD.balanceOf(keeper);
             vm.prank(keeper);
             vault.rebalance();
@@ -2433,7 +2427,7 @@ contract ZenjiTest is Test {
 
     function test_rebalance_zeroBountyRate() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         // Set bounty rate to 0
         vm.prank(owner);
@@ -2442,7 +2436,7 @@ contract ZenjiTest is Test {
         warpAndMock(block.timestamp + 2);
         mockOracle(70000e8);
 
-        if (vault.isRebalanceNeeded()) {
+        if (viewHelper.isRebalanceNeeded(address(vault))) {
             uint256 keeperBefore = crvUSD.balanceOf(keeper);
             vm.prank(keeper);
             vault.rebalance();
@@ -2452,32 +2446,7 @@ contract ZenjiTest is Test {
         }
     }
 
-    // ============ Branch Coverage: Timelock Expiry ============
-
-    function test_executeFeeRate_revertsAfterExpiry() public {
-        vm.startPrank(owner);
-        vault.proposeFeeRate(5e16);
-
-        // Warp past timelock + expiry (7 days)
-        warpAndMock(block.timestamp + vault.TIMELOCK_DELAY() + 7 days + 1);
-        mockOracle(89238e8);
-
-        vm.expectRevert(TimelockLib.TimelockExpired.selector);
-        vault.executeFeeRate();
-        vm.stopPrank();
-    }
-
-    function test_executeTargetLtv_revertsAfterExpiry() public {
-        vm.startPrank(owner);
-        vault.proposeTargetLtv(25e16);
-
-        warpAndMock(block.timestamp + vault.TIMELOCK_DELAY() + 7 days + 1);
-        mockOracle(89238e8);
-
-        vm.expectRevert(TimelockLib.TimelockExpired.selector);
-        vault.executeTargetLtv();
-        vm.stopPrank();
-    }
+    // ============ Branch Coverage: Strategy Timelock Expiry ============
 
     function test_executeStrategy_revertsAfterExpiry() public {
         MockYieldVault newYieldVault = new MockYieldVault(CRVUSD);
@@ -2487,6 +2456,7 @@ contract ZenjiTest is Test {
         vm.startPrank(owner);
         vault.proposeStrategy(address(newStrategy));
 
+        // Warp past timelock + expiry (7 days)
         warpAndMock(block.timestamp + vault.TIMELOCK_DELAY() + 7 days + 1);
         mockOracle(89238e8);
 
@@ -2495,30 +2465,11 @@ contract ZenjiTest is Test {
         vm.stopPrank();
     }
 
-    function test_executeFeeRate_revertsBeforeReady() public {
-        vm.startPrank(owner);
-        vault.proposeFeeRate(5e16);
-
-        // Don't warp — try to execute immediately
-        vm.expectRevert(TimelockLib.TimelockNotReady.selector);
-        vault.executeFeeRate();
-        vm.stopPrank();
-    }
-
-    function test_executeTargetLtv_revertsBeforeReady() public {
-        vm.startPrank(owner);
-        vault.proposeTargetLtv(25e16);
-
-        vm.expectRevert(TimelockLib.TimelockNotReady.selector);
-        vault.executeTargetLtv();
-        vm.stopPrank();
-    }
-
     // ============ Branch Coverage: ERC4626 withdraw with allowance ============
 
     function test_erc4626_withdraw_withAllowance() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(89238e8);
@@ -2537,9 +2488,9 @@ contract ZenjiTest is Test {
     function test_erc4626_redeem_withAllowance() public {
         // Use 2 depositors so the redeeming user isn't the last one (avoids MIN_DEPOSIT final-withdraw)
         vm.prank(user1);
-        uint256 shares = vault.deposit(2e8);
+        uint256 shares = vault.deposit(2e8, user1);
         vm.prank(user2);
-        vault.deposit(2e8);
+        vault.deposit(2e8, user2);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(89238e8);
@@ -2560,7 +2511,7 @@ contract ZenjiTest is Test {
 
     function test_rescueAssets_blocksWbtcAfterLiquidation() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(85000e8);
@@ -2576,7 +2527,7 @@ contract ZenjiTest is Test {
 
     function test_rescueAssets_allowsNonWbtcAfterLiquidation() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(85000e8);
@@ -2594,7 +2545,7 @@ contract ZenjiTest is Test {
 
     function test_liquidateAllWithFlashloan_revertsIfAlreadyComplete() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(85000e8);
@@ -2611,15 +2562,24 @@ contract ZenjiTest is Test {
     // ============ Branch Coverage: pauseStrategy with no strategy ============
 
     function test_pauseStrategy_revertsWithNoStrategy() public {
-        Zenji freshVault = new Zenji(
+        uint64 nonce = vm.getNonce(address(this));
+        address predictedVault = vm.computeCreateAddress(address(this), nonce + 1);
+        LlamaLoanManager loanManager = new LlamaLoanManager(
             WBTC,
             CRVUSD,
             LLAMALEND_WBTC,
-            address(0),
             WBTC_CRVUSD_POOL,
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
-            owner
+            predictedVault
+        );
+        Zenji freshVault = new Zenji(
+            WBTC,
+            CRVUSD,
+            address(loanManager),
+            address(0),
+            owner,
+            address(viewHelper)
         );
 
         vm.prank(owner);
@@ -2638,7 +2598,7 @@ contract ZenjiTest is Test {
         vault.setDepositCap(1e8);
 
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         assertEq(vault.maxDeposit(user1), 0, "Max deposit should be 0 when cap reached");
     }
@@ -2647,7 +2607,7 @@ contract ZenjiTest is Test {
 
     function test_erc4626_withdraw_zeroAssets_reverts() public {
         vm.prank(user1);
-        vault.deposit(1e8);
+        vault.deposit(1e8, user1);
 
         vm.prank(user1);
         vm.expectRevert(Zenji.ZeroAmount.selector);
@@ -2658,7 +2618,7 @@ contract ZenjiTest is Test {
 
     function test_postLiquidation_withdraw_zeroAvailableWbtc_reverts() public {
         vm.prank(user1);
-        uint256 shares = vault.deposit(1e8);
+        uint256 shares = vault.deposit(1e8, user1);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(85000e8);
@@ -2688,13 +2648,13 @@ contract ZenjiTest is Test {
     // ============ Branch Coverage: getUserValue with zero supply ============
 
     function test_getUserValue_zeroSupply() public view {
-        assertEq(vault.getUserValue(user1), 0, "Should return 0 with no supply");
+        assertEq(viewHelper.getUserValue(address(vault), user1), 0, "Should return 0 with no supply");
     }
 
     // ============ Branch Coverage: isRebalanceNeeded no loan ============
 
     function test_isRebalanceNeeded_noLoan() public view {
-        assertFalse(vault.isRebalanceNeeded(), "Should be false with no loan");
+        assertFalse(viewHelper.isRebalanceNeeded(address(vault)), "Should be false with no loan");
     }
 
     // ============ Branch Coverage: rebalance no loan reverts ============
@@ -2704,25 +2664,25 @@ contract ZenjiTest is Test {
         vault.rebalance();
     }
 
-    // ============ Branch Coverage: transferWbtc/CrvUsd not emergency ============
+    // ============ Branch Coverage: transferCollateral/transferDebt not emergency ============
 
-    function test_transferWbtc_revertsWhenNotEmergency() public {
+    function test_transferCollateral_revertsWhenNotEmergency() public {
         vm.prank(owner);
         vm.expectRevert(Zenji.EmergencyModeNotActive.selector);
-        vault.transferWbtc();
+        vault.transferCollateral();
     }
 
-    function test_transferCrvUsd_revertsWhenNotEmergency() public {
+    function test_transferDebt_revertsWhenNotEmergency() public {
         vm.prank(owner);
         vm.expectRevert(Zenji.EmergencyModeNotActive.selector);
-        vault.transferCrvUsd();
+        vault.transferDebt();
     }
 
     // ============ Branch Coverage: VaultTracker ============
 
     function test_tracker_recordProfitLoss_lossPath() public {
         vm.prank(user1);
-        vault.deposit(5e8);
+        vault.deposit(5e8, user1);
 
         // First recording sets baseline
         tracker.recordProfitLoss();
@@ -2730,7 +2690,7 @@ contract ZenjiTest is Test {
         assertGt(initialValue, 0);
 
         // Simulate a loss by dealing away vault WBTC
-        // First set idle so getTotalWbtc just returns wbtc.balanceOf(vault)
+        // First set idle so getTotalCollateral just returns wbtc.balanceOf(vault)
         vm.prank(owner);
         vault.toggleYield(false);
 
@@ -2745,7 +2705,7 @@ contract ZenjiTest is Test {
 
     function test_tracker_update_lossPath() public {
         vm.prank(user1);
-        vault.deposit(5e8);
+        vault.deposit(5e8, user1);
 
         // First update sets baseline
         tracker.update();
@@ -2775,7 +2735,7 @@ contract ZenjiTest is Test {
 
     function test_tracker_calculateAPR_priceDecline() public {
         vm.prank(user1);
-        vault.deposit(5e8);
+        vault.deposit(5e8, user1);
 
         // Take first snapshot
         tracker.takeSnapshot();
@@ -2801,7 +2761,7 @@ contract ZenjiTest is Test {
 
     function test_tracker_snapshotRotation() public {
         vm.prank(user1);
-        vault.deposit(5e8);
+        vault.deposit(5e8, user1);
 
         // Fill up to MAX_SNAPSHOTS using update() which handles both snapshot + profit tracking
         uint256 startTime = block.timestamp;
@@ -2823,7 +2783,7 @@ contract ZenjiTest is Test {
 
     function test_tracker_update_noTimePassed_skipsSnapshot() public {
         vm.prank(user1);
-        vault.deposit(5e8);
+        vault.deposit(5e8, user1);
 
         tracker.update();
         assertEq(tracker.snapshotCount(), 1, "First update should take snapshot");
@@ -2835,7 +2795,7 @@ contract ZenjiTest is Test {
 
     function test_tracker_recordProfitLoss_noChange() public {
         vm.prank(user1);
-        vault.deposit(5e8);
+        vault.deposit(5e8, user1);
 
         tracker.recordProfitLoss();
         uint256 profit1 = tracker.cumulativeProfit();

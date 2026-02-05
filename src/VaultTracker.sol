@@ -2,8 +2,8 @@
 pragma solidity ^0.8.33;
 
 interface IVault {
-    function getTotalWbtc() external view returns (uint256);
-    function totalShares() external view returns (uint256);
+    function getTotalCollateral() external view returns (uint256);
+    function totalSupply() external view returns (uint256);
 }
 
 /// @title VaultTracker
@@ -66,9 +66,9 @@ contract VaultTracker {
 
     /// @notice Get current price per share (WBTC per share, 8 decimals)
     function sharePrice() public view returns (uint256) {
-        uint256 totalShares = vault.totalShares();
+        uint256 totalShares = vault.totalSupply();
         if (totalShares == 0) return 1e8;
-        return (vault.getTotalWbtc() * 1e8) / totalShares;
+        return (vault.getTotalCollateral() * 1e8) / totalShares;
     }
 
     /// @notice Get the number of snapshots
@@ -143,7 +143,7 @@ contract VaultTracker {
         }
 
         uint256 currentSharePrice = sharePrice();
-        uint256 currentTotalValue = vault.getTotalWbtc();
+        uint256 currentTotalValue = vault.getTotalCollateral();
 
         _pushSnapshot(currentSharePrice, currentTotalValue);
     }
@@ -151,7 +151,7 @@ contract VaultTracker {
     /// @notice Record profit/loss since last recording
     /// @dev Can be called by anyone, typically after harvest
     function recordProfitLoss() external {
-        uint256 currentValue = vault.getTotalWbtc();
+        uint256 currentValue = vault.getTotalCollateral();
 
         if (lastRecordedValue == 0) {
             lastRecordedValue = currentValue;
@@ -174,7 +174,7 @@ contract VaultTracker {
     /// @notice Take snapshot and record profit/loss in one call
     function update() external {
         // Record profit/loss
-        uint256 currentValue = vault.getTotalWbtc();
+        uint256 currentValue = vault.getTotalCollateral();
 
         if (lastRecordedValue == 0) {
             lastRecordedValue = currentValue;
@@ -215,7 +215,7 @@ contract VaultTracker {
             Snapshot({
                 timestamp: block.timestamp,
                 sharePrice: currentSharePrice,
-                totalShares: vault.totalShares(),
+                totalShares: vault.totalSupply(),
                 totalValue: currentTotalValue
             })
         );

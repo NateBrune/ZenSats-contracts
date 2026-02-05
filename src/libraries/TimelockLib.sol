@@ -52,4 +52,43 @@ library TimelockLib {
     function isReady(TimelockData storage data) internal view returns (bool) {
         return data.timestamp != 0 && block.timestamp >= data.timestamp;
     }
+
+    // ============ Address Timelock Functions ============
+
+    struct AddressTimelockData {
+        address pendingValue;
+        uint256 timestamp;
+    }
+
+    /// @notice Propose a new address value with timelock delay
+    function proposeAddress(AddressTimelockData storage data, address newValue, uint256 delay)
+        internal
+    {
+        data.pendingValue = newValue;
+        data.timestamp = block.timestamp + delay;
+    }
+
+    /// @notice Execute pending address change after timelock
+    /// @return newValue The new address that was set
+    function executeAddress(AddressTimelockData storage data) internal returns (address newValue) {
+        if (data.timestamp == 0) revert NoTimelockPending();
+        if (block.timestamp < data.timestamp) revert TimelockNotReady();
+        if (block.timestamp > data.timestamp + TIMELOCK_EXPIRY) revert TimelockExpired();
+
+        newValue = data.pendingValue;
+        data.pendingValue = address(0);
+        data.timestamp = 0;
+    }
+
+    /// @notice Cancel pending address change
+    /// @return cancelledValue The address that was cancelled
+    function cancelAddress(AddressTimelockData storage data)
+        internal
+        returns (address cancelledValue)
+    {
+        if (data.timestamp == 0) revert NoTimelockPending();
+        cancelledValue = data.pendingValue;
+        data.pendingValue = address(0);
+        data.timestamp = 0;
+    }
 }

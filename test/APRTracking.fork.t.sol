@@ -3,6 +3,8 @@ pragma solidity ^0.8.33;
 
 import { Test, console } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
+import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
+import { LlamaLoanManager } from "../src/LlamaLoanManager.sol";
 import { VaultTracker } from "../src/VaultTracker.sol";
 import { IporYieldStrategy } from "../src/strategies/IporYieldStrategy.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
@@ -50,6 +52,7 @@ contract APRTrackingForkTest is Test {
     Zenji vault;
     VaultTracker tracker;
     IporYieldStrategy strategy;
+    ZenjiViewHelper viewHelper;
 
     address owner = makeAddr("owner");
     address user1 = makeAddr("user1");
@@ -186,21 +189,30 @@ contract APRTrackingForkTest is Test {
             return;
         }
 
+        viewHelper = new ZenjiViewHelper();
+
         // Step 1: Deploy vault with IPOR strategy
         uint64 nonce = vm.getNonce(address(this));
-        address predictedVault = vm.computeCreateAddress(address(this), nonce + 1);
+        address predictedVault = vm.computeCreateAddress(address(this), nonce + 2);
 
         strategy = new IporYieldStrategy(CRVUSD, predictedVault, IPOR_VAULT);
+        LlamaLoanManager loanManager = new LlamaLoanManager(
+            WBTC,
+            CRVUSD,
+            LLAMALEND_WBTC,
+            WBTC_CRVUSD_POOL,
+            BTC_USD_ORACLE,
+            CRVUSD_USD_ORACLE,
+            predictedVault
+        );
 
         vault = new Zenji(
             WBTC,
             CRVUSD,
-            LLAMALEND_WBTC,
+            address(loanManager),
             address(strategy),
-            WBTC_CRVUSD_POOL,
-            BTC_USD_ORACLE,
-            CRVUSD_USD_ORACLE,
-            owner
+            owner,
+            address(viewHelper)
         );
         require(address(vault) == predictedVault, "Vault address mismatch");
 
@@ -216,13 +228,16 @@ contract APRTrackingForkTest is Test {
         vm.startPrank(user1);
         wbtc.approve(address(vault), type(uint256).max);
         uint256 depositAmount = 1e8; // 1 WBTC
-        uint256 shares = vault.deposit(depositAmount);
+        uint256 shares = vault.deposit(depositAmount, address(this));
         vm.stopPrank();
 
         console.log("=== After User Deposit ===");
         console.log("User shares:", shares);
-        console.log("Vault total WBTC:", vault.getTotalWbtc());
-        console.log("Vault total value (crvUSD):", vault.getTotalValue());
+        console.log("Vault total collateral:", vault.getTotalCollateral());
+        console.log(
+            "Vault total value (debt):",
+            viewHelper.getTotalDebtValue(address(vault))
+        );
         console.log("Strategy balance:", strategy.balanceOf());
         console.log("Strategy cost basis:", strategy.costBasis());
 
@@ -365,19 +380,26 @@ contract APRTrackingForkTest is Test {
 
         // Deploy full vault
         uint64 nonce = vm.getNonce(address(this));
-        address predictedVault = vm.computeCreateAddress(address(this), nonce + 1);
+        address predictedVault = vm.computeCreateAddress(address(this), nonce + 2);
 
         strategy = new IporYieldStrategy(CRVUSD, predictedVault, IPOR_VAULT);
+        LlamaLoanManager loanManager = new LlamaLoanManager(
+            WBTC,
+            CRVUSD,
+            LLAMALEND_WBTC,
+            WBTC_CRVUSD_POOL,
+            BTC_USD_ORACLE,
+            CRVUSD_USD_ORACLE,
+            predictedVault
+        );
 
         vault = new Zenji(
             WBTC,
             CRVUSD,
-            LLAMALEND_WBTC,
+            address(loanManager),
             address(strategy),
-            WBTC_CRVUSD_POOL,
-            BTC_USD_ORACLE,
-            CRVUSD_USD_ORACLE,
-            owner
+            owner,
+            address(viewHelper)
         );
 
         tracker = new VaultTracker(address(vault));
@@ -388,12 +410,12 @@ contract APRTrackingForkTest is Test {
         // User deposits
         vm.startPrank(user1);
         wbtc.approve(address(vault), type(uint256).max);
-        vault.deposit(1e8);
+        vault.deposit(1e8, address(this));
         vm.stopPrank();
 
         // Take initial snapshot
         tracker.update();
-        uint256 initialWbtc = vault.getTotalWbtc();
+        uint256 initialWbtc = vault.getTotalCollateral();
         uint256 initialSharePrice = tracker.sharePrice();
 
         console.log("=== Initial ===");
@@ -433,7 +455,7 @@ contract APRTrackingForkTest is Test {
         // Take new snapshot
         tracker.update();
 
-        uint256 newWbtc = vault.getTotalWbtc();
+        uint256 newWbtc = vault.getTotalCollateral();
         uint256 newSharePrice = tracker.sharePrice();
 
         console.log("=== After Simulated 5% Yield ===");

@@ -21,6 +21,10 @@ evm_version = "cancun"
 fuzz = { runs = 5000 }
 invariant = { runs = 1000 }
 
+[profile.coverage]
+via_ir = false
+optimizer = false
+
 [fmt]
 line_length = 100
 tab_width = 4
