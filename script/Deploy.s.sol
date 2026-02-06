@@ -3,9 +3,13 @@ pragma solidity ^0.8.33;
 
 import { Script, console } from "forge-std/Script.sol";
 import { Zenji } from "../src/Zenji.sol";
+import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { VaultTracker } from "../src/VaultTracker.sol";
+import { AaveLoanManager } from "../src/AaveLoanManager.sol";
+import { LlamaLoanManager } from "../src/LlamaLoanManager.sol";
 import { IporYieldStrategy } from "../src/strategies/IporYieldStrategy.sol";
 import { TokemakYieldStrategy } from "../src/strategies/TokemakYieldStrategy.sol";
+import { UsdtIporYieldStrategy } from "../src/strategies/UsdtIporYieldStrategy.sol";
 
 /// @title Deploy
 /// @notice Deployment script for SiloBooster contracts
@@ -18,6 +22,13 @@ contract Deploy is Script {
     address constant WBTC_CRVUSD_POOL = 0xD9FF8396554A0d18B2CFbeC53e1979b7ecCe8373;
     address constant BTC_USD_ORACLE = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
     address constant CRVUSD_USD_ORACLE = 0xEEf0C605546958c1f899b6fB336C20671f9cD49F;
+
+    // Aave mainnet addresses (v3)
+    address constant AAVE_POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
+    address constant AAVE_A_WBTC = 0x5Ee5bf7ae06D1Be5997A1A72006FE6C607eC6DE8;
+    address constant AAVE_VAR_DEBT_USDT = 0x6df1C1E379bC5a00a7b4C6e67A203333772f45A8;
+    address constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
+    address constant USDT_USD_ORACLE = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
 
     // Yield venues
     address constant IPOR_PLASMA_VAULT = 0xbfA9d6EC0E04B6691fCAE5F8b48838C3918eC117;
@@ -33,16 +44,29 @@ contract Deploy is Script {
     function deployVault(address owner) external returns (address vault, address tracker) {
         vm.startBroadcast();
 
+        uint64 nonce = vm.getNonce(msg.sender);
+        address predictedVault = vm.computeCreateAddress(msg.sender, nonce + 2);
+
+        ZenjiViewHelper viewHelper = new ZenjiViewHelper();
+
+        LlamaLoanManager loanManager = new LlamaLoanManager(
+            WBTC,
+            CRVUSD,
+            LLAMALEND_CONTROLLER,
+            WBTC_CRVUSD_POOL,
+            BTC_USD_ORACLE,
+            CRVUSD_USD_ORACLE,
+            predictedVault
+        );
+
         // Deploy vault with zero strategy
         Zenji siloVault = new Zenji(
             WBTC,
             CRVUSD,
-            LLAMALEND_CONTROLLER,
+            address(loanManager),
             address(0), // No strategy yet
-            WBTC_CRVUSD_POOL,
-            BTC_USD_ORACLE,
-            CRVUSD_USD_ORACLE,
-            owner
+            owner,
+            address(viewHelper)
         );
         vault = address(siloVault);
         console.log("Zenji deployed at:", vault);
@@ -133,28 +157,39 @@ contract Deploy is Script {
 
         // Step 1: Compute future vault address
         uint64 nonce = vm.getNonce(msg.sender);
-        address predictedVault = vm.computeCreateAddress(msg.sender, nonce + 1);
+        address predictedVault = vm.computeCreateAddress(msg.sender, nonce + 3);
+
+        ZenjiViewHelper viewHelper = new ZenjiViewHelper();
 
         // Step 2: Deploy strategy with predicted vault
         IporYieldStrategy iporStrategy =
             new IporYieldStrategy(CRVUSD, predictedVault, IPOR_PLASMA_VAULT);
         strategy = address(iporStrategy);
 
-        // Step 3: Deploy vault with strategy
-        Zenji siloVault = new Zenji(
+        // Step 3: Deploy loan manager with predicted vault address
+        LlamaLoanManager loanManager = new LlamaLoanManager(
             WBTC,
             CRVUSD,
             LLAMALEND_CONTROLLER,
-            strategy,
             WBTC_CRVUSD_POOL,
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
-            owner
+            predictedVault
+        );
+
+        // Step 4: Deploy vault with strategy
+        Zenji siloVault = new Zenji(
+            WBTC,
+            CRVUSD,
+            address(loanManager),
+            strategy,
+            owner,
+            address(viewHelper)
         );
         vault = address(siloVault);
         require(vault == predictedVault, "Vault address mismatch");
 
-        // Step 4: Deploy tracker
+        // Step 5: Deploy tracker
         VaultTracker vaultTracker = new VaultTracker(vault);
         tracker = address(vaultTracker);
 
@@ -176,7 +211,9 @@ contract Deploy is Script {
 
         // Step 1: Compute future vault address
         uint64 nonce = vm.getNonce(msg.sender);
-        address predictedVault = vm.computeCreateAddress(msg.sender, nonce + 1);
+        address predictedVault = vm.computeCreateAddress(msg.sender, nonce + 3);
+
+        ZenjiViewHelper viewHelper = new ZenjiViewHelper();
 
         // Step 2: Deploy strategy with predicted vault
         TokemakYieldStrategy tokemakStrategy = new TokemakYieldStrategy(
@@ -191,21 +228,30 @@ contract Deploy is Script {
         );
         strategy = address(tokemakStrategy);
 
-        // Step 3: Deploy vault with strategy
-        Zenji siloVault = new Zenji(
+        // Step 3: Deploy loan manager with predicted vault address
+        LlamaLoanManager loanManager = new LlamaLoanManager(
             WBTC,
             CRVUSD,
             LLAMALEND_CONTROLLER,
-            strategy,
             WBTC_CRVUSD_POOL,
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
-            owner
+            predictedVault
+        );
+
+        // Step 4: Deploy vault with strategy
+        Zenji siloVault = new Zenji(
+            WBTC,
+            CRVUSD,
+            address(loanManager),
+            strategy,
+            owner,
+            address(viewHelper)
         );
         vault = address(siloVault);
         require(vault == predictedVault, "Vault address mismatch");
 
-        // Step 4: Deploy tracker
+        // Step 5: Deploy tracker
         VaultTracker vaultTracker = new VaultTracker(vault);
         tracker = address(vaultTracker);
 
@@ -216,5 +262,90 @@ contract Deploy is Script {
         console.log("Strategy (Tokemak):", strategy);
         console.log("Tracker:", tracker);
         console.log("Owner:", owner);
+    }
+
+    // ============ Aave + USDT + IPOR Deployment ============
+
+    /// @notice Deploy Zenji + AaveLoanManager + UsdtIporYieldStrategy + Tracker
+    /// @dev Uses initializer-based vault wiring to avoid precomputed addresses.
+    function deployAllWithAaveUsdtIpor(
+        address owner,
+        address curvePool,
+        address iporVault,
+        int128 usdtIndex,
+        int128 crvUsdIndex,
+        address swapper
+    )
+        external
+        returns (address vault, address strategy, address tracker)
+    {
+        vm.startBroadcast();
+
+        ZenjiViewHelper viewHelper = new ZenjiViewHelper();
+
+        // 1) Deploy loan manager and strategy with vault unset (initializer = deployer)
+        AaveLoanManager loanManager = new AaveLoanManager(
+            WBTC,
+            USDT,
+            AAVE_A_WBTC,
+            AAVE_VAR_DEBT_USDT,
+            AAVE_POOL,
+            BTC_USD_ORACLE,
+            USDT_USD_ORACLE,
+            swapper,
+            7500,
+            8000,
+            address(0)
+        );
+
+        UsdtIporYieldStrategy usdtIporStrategy = new UsdtIporYieldStrategy(
+            USDT,
+            CRVUSD,
+            address(0),
+            curvePool,
+            iporVault,
+            usdtIndex,
+            crvUsdIndex
+        );
+        strategy = address(usdtIporStrategy);
+
+        // 2) Deploy vault pointing at loan manager + strategy
+        Zenji siloVault = new Zenji(
+            WBTC,
+            USDT,
+            address(loanManager),
+            address(0),
+            owner,
+            address(viewHelper)
+        );
+        vault = address(siloVault);
+
+        // 3) Initialize vault references
+        loanManager.initializeVault(vault);
+        usdtIporStrategy.initializeVault(vault);
+
+        // 4) Ensure strategy is set and enable yield (owner-only)
+        if (owner == msg.sender) {
+            Zenji(vault).setInitialStrategy(strategy);
+            Zenji(vault).toggleYield(true);
+        }
+
+        // 5) Deploy tracker
+        VaultTracker vaultTracker = new VaultTracker(vault);
+        tracker = address(vaultTracker);
+
+        vm.stopBroadcast();
+
+        console.log("=== Deployment Complete (Aave + USDT + IPOR) ===");
+        console.log("Vault:", vault);
+        console.log("LoanManager (Aave):", address(loanManager));
+        console.log("Strategy (USDT/IPOR):", strategy);
+        console.log("Tracker:", tracker);
+        console.log("Owner:", owner);
+        if (owner != msg.sender) {
+            console.log("Next steps (run as owner):");
+            console.log("- setInitialStrategy(", strategy, ")");
+            console.log("- toggleYield(true)");
+        }
     }
 }

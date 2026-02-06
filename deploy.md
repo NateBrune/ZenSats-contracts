@@ -292,3 +292,7 @@ cast call <VAULT> "yieldEnabled()(bool)" --rpc-url $MAINNET_RPC_URL
 | AaveLoanManagerV2 | `0x1efe6822C515B49c8C76B9e3C5E62c17a59298B3` |
 | UsdtIporYieldStrategy | `0x6AC9493C56fbAa8fD123F60372F8673bbb5e6A67` |
 | Zenji | `0xc35019FB4cb2CFA02B599c54a0898c5d119d4c2D` |
+| VaultTracker | `0x09d03014552519B44E0f74a45dB59Ffc9E3150c0` |
+
+### Scratch notes
+UsdtIpor Strat Balance day 0 - 4.6744 crvUSD in IPOR 10002

@@ -792,7 +792,7 @@ contract Zenji is ERC20, IERC4626 {
         if (!yieldEnabled) {
             return collateralAsset.balanceOf(address(this));
         }
-        return loanManager.getDebtValue(viewHelper.getTotalDebtValue(address(this)));
+        return viewHelper.getTotalCollateralValue(address(this));
     }
 
     // ============ Internal Functions ============

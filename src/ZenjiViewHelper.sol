@@ -71,6 +71,50 @@ contract ZenjiViewHelper {
         totalFees = v.accumulatedFees() + pendingFees;
     }
 
+    /// @notice Get total value in collateral asset units (e.g., WBTC satoshis)
+    /// @dev Computes all values natively in collateral terms to avoid double conversion errors
+    function getTotalCollateralValue(address vault) external view returns (uint256 totalValue) {
+        IZenjiView v = IZenjiView(vault);
+        ILoanManager lm = v.loanManager();
+
+        if (!v.yieldEnabled()) {
+            return v.collateralAsset().balanceOf(vault);
+        }
+
+        // Idle collateral in vault (native units)
+        totalValue = v.collateralAsset().balanceOf(vault);
+
+        // Net collateral value in loan manager (collateral - debt in collateral terms)
+        totalValue += lm.getNetCollateralValue();
+
+        // Yield strategy balance converted to collateral (excluding fees)
+        IYieldStrategy strategy = v.yieldStrategy();
+        if (address(strategy) != address(0)) {
+            uint256 strategyBalance = strategy.balanceOf();
+            uint256 accFees = v.accumulatedFees();
+            if (strategyBalance > accFees) {
+                totalValue += lm.getDebtValue(strategyBalance - accFees);
+            }
+        }
+
+        // Idle debt asset in vault converted to collateral
+        uint256 idleDebt = v.debtAsset().balanceOf(vault);
+        if (idleDebt > 0) {
+            totalValue += lm.getDebtValue(idleDebt);
+        }
+
+        // Raw collateral in loan manager (not yet supplied)
+        totalValue += lm.getCollateralBalance();
+
+        // Raw debt asset in loan manager converted to collateral
+        uint256 lmDebt = lm.getDebtBalance();
+        if (lmDebt > 0) {
+            totalValue += lm.getDebtValue(lmDebt);
+        }
+    }
+
+    /// @notice Get total value in debt asset units (for diagnostics/logging)
+    /// @dev This is a diagnostic function - use getTotalCollateralValue for actual accounting
     function getTotalDebtValue(address vault) external view returns (uint256 totalValue) {
         IZenjiView v = IZenjiView(vault);
         ILoanManager lm = v.loanManager();
@@ -80,22 +124,20 @@ contract ZenjiViewHelper {
             return lm.getCollateralValue(idleCollateral);
         }
 
-        // Idle collateral value
-        uint256 idleCollateralValue = v.collateralAsset().balanceOf(vault);
-        totalValue = lm.getCollateralValue(idleCollateralValue);
+        // Idle collateral converted to debt units
+        uint256 idleCollateral = v.collateralAsset().balanceOf(vault);
+        totalValue = lm.getCollateralValue(idleCollateral);
 
-        // Collateral in loan manager
+        // Position value in debt terms
         if (lm.loanExists()) {
             (uint256 collateral, uint256 debt) = lm.getPositionValues();
-            totalValue += lm.getCollateralValue(collateral);
-            if (debt < totalValue) {
-                totalValue -= debt;
-            } else {
-                totalValue = 0;
+            uint256 collateralInDebt = lm.getCollateralValue(collateral);
+            if (collateralInDebt > debt) {
+                totalValue += collateralInDebt - debt;
             }
         }
 
-        // Debt asset in yield strategy (excluding accumulated fees)
+        // Strategy balance (already in debt units, minus fees)
         IYieldStrategy strategy = v.yieldStrategy();
         if (address(strategy) != address(0)) {
             uint256 strategyBalance = strategy.balanceOf();
@@ -105,16 +147,16 @@ contract ZenjiViewHelper {
             }
         }
 
-        // Idle debt asset
+        // Idle debt in vault
         totalValue += v.debtAsset().balanceOf(vault);
 
-        // Collateral in loan manager
-        uint256 loanManagerCollateral = lm.getCollateralBalance();
-        if (loanManagerCollateral > 0) {
-            totalValue += lm.getCollateralValue(loanManagerCollateral);
+        // Raw collateral in loan manager converted to debt
+        uint256 lmCollateral = lm.getCollateralBalance();
+        if (lmCollateral > 0) {
+            totalValue += lm.getCollateralValue(lmCollateral);
         }
 
-        // Debt asset in loan manager
+        // Raw debt in loan manager
         totalValue += lm.getDebtBalance();
     }
 
