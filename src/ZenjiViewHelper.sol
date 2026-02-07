@@ -120,13 +120,11 @@ contract ZenjiViewHelper {
         ILoanManager lm = v.loanManager();
 
         if (!v.yieldEnabled()) {
-            uint256 idleCollateral = v.collateralAsset().balanceOf(vault);
-            return lm.getCollateralValue(idleCollateral);
+            return lm.getCollateralValue(v.collateralAsset().balanceOf(vault));
         }
 
         // Idle collateral converted to debt units
-        uint256 idleCollateral = v.collateralAsset().balanceOf(vault);
-        totalValue = lm.getCollateralValue(idleCollateral);
+        totalValue = lm.getCollateralValue(v.collateralAsset().balanceOf(vault));
 
         // Position value in debt terms
         if (lm.loanExists()) {

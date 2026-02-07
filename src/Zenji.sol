@@ -1,3 +1,5 @@
+    /// @notice Emitted when loan unwinding is attempted in emergency mode
+    event EmergencyLoanUnwound(uint256 collateralRecovered, uint256 debtRecovered);
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
@@ -26,7 +28,7 @@ contract Zenji is ERC20, IERC4626 {
     uint256 public constant PRECISION = 1e18;
     uint256 public constant DEADBAND_SPREAD = 3e16; // 3%
     uint256 public constant MIN_TARGET_LTV = 15e16; // 15%
-    uint256 public constant MAX_TARGET_LTV = 75e16; // 75%
+    uint256 public constant MAX_TARGET_LTV = 73e16; // 73%
     uint256 public constant DEFAULT_LOAN_BANDS = 4;
     uint256 public constant MIN_DEPOSIT = 1e4;
     uint256 public constant MAX_FEE_RATE = 2e17; // 20%
@@ -57,7 +59,6 @@ contract Zenji is ERC20, IERC4626 {
     uint256 private constant _NOT_ENTERED = 1;
     uint256 private constant _ENTERED = 2;
     address public pendingOwner;
-    IVaultTracker public tracker;
     uint256 public rebalanceBountyRate;
     uint256 public depositCap;
 
@@ -489,25 +490,30 @@ contract Zenji is ERC20, IERC4626 {
         } else {
             idle = false;
             emit IdleModeExited();
+            _deployCapital();
         }
     }
 
-    /// @notice Pause/unpause the yield strategy and unwind when pausing
-    function pauseStrategy() external onlyOwner nonReentrant returns (uint256 debtAssetReceived) {
-        if (address(yieldStrategy) == address(0)) revert InvalidStrategy();
+    /// @notice Pause/unpause the yield strategy
+    /// @dev When pausing: withdraws all from strategy. When unpausing: redeploys idle debt asset.
+    // function pauseStrategy() external onlyOwner nonReentrant returns (uint256 debtAssetReceived) {
+    //     if (address(yieldStrategy) == address(0)) revert InvalidStrategy();
 
-        _accrueYieldFees();
-        debtAssetReceived = yieldStrategy.pauseStrategy();
-        lastStrategyBalance = yieldStrategy.balanceOf();
+    //     _accrueYieldFees();
+    //     debtAssetReceived = yieldStrategy.pauseStrategy();
 
-        emit StrategyPauseToggled(yieldStrategy.paused(), debtAssetReceived);
-    }
+    //     // If we just unpaused, redeploy idle debt asset into the strategy
+    //     if (!yieldStrategy.paused()) {
+    //         uint256 idleDebt = debtAsset.balanceOf(address(this));
+    //         if (idleDebt > 0) {
+    //             _ensureApprove(address(debtAsset), address(yieldStrategy), idleDebt);
+    //             yieldStrategy.deposit(idleDebt);
+    //         }
+    //     }
 
-    /// @notice Set the tracker contract address
-    function setTracker(address tracker_) external onlyOwner {
-        tracker = IVaultTracker(tracker_);
-        emit TrackerUpdated(tracker_);
-    }
+    //     lastStrategyBalance = yieldStrategy.balanceOf();
+    //     emit StrategyPauseToggled(yieldStrategy.paused(), debtAssetReceived);
+    // }
 
     /// @notice Set swapper contract (optional)
     function setSwapper(address newSwapper) external onlyOwner {
@@ -575,18 +581,12 @@ contract Zenji is ERC20, IERC4626 {
         emit EmergencyModeEntered();
     }
 
-    /// @notice Atomically unwind all positions using loan manager flashloan logic
-    /// @dev Only callable in emergency mode. Leaves vault with only idle collateral.
-    ///      No nonReentrant: loan manager may use flashloans internally. Safety from onlyOwner +
-    ///      liquidationComplete one-shot.
-    function liquidateAllWithFlashloan() external onlyOwner {
+
+    /// @notice Step 1: Withdraw all from yield strategy (resilient if bricked)
+    /// @dev Can be called multiple times until successful. Does not set liquidationComplete.
+    function emergencyWithdrawYield() external onlyOwner {
         if (!emergencyMode) revert EmergencyModeNotActive();
         if (liquidationComplete) revert LiquidationAlreadyComplete();
-
-        // Step 1: Try to withdraw all from yield strategy (resilient if bricked)
-        // Skip _accrueYieldFees() — it calls yieldStrategy.balanceOf() which makes
-        // external calls that could revert and brick the entire emergency liquidation.
-        // Fees are irrelevant here: accumulatedFees is zeroed out below anyway.
         if (address(yieldStrategy) != address(0)) {
             try yieldStrategy.withdrawAll() { }
             catch {
@@ -595,17 +595,25 @@ contract Zenji is ERC20, IERC4626 {
         }
         lastStrategyBalance = 0;
         accumulatedFees = 0;
+        emit EmergencyYieldRedeemed();
+    }
 
-        // Step 2: If no active loan, just recover and finish
+
+    /// @notice Step 2: Unwind loan and recover all assets to vault. Does NOT set liquidationComplete.
+    /// @dev Can be called after yield is withdrawn. Allows manual asset recovery even if loan manager fails.
+    function emergencyUnwindLoanAndRecover() external onlyOwner {
+        if (!emergencyMode) revert EmergencyModeNotActive();
+        if (liquidationComplete) revert LiquidationAlreadyComplete();
+
+        // If no active loan, just recover and finish
         if (!loanManager.loanExists()) {
             _recoverLoanManagerFunds();
             _swapRemainingDebtToCollateral();
-            liquidationComplete = true;
-            emit LiquidationComplete(collateralAsset.balanceOf(address(this)), 0);
+            emit EmergencyLoanUnwound(collateralAsset.balanceOf(address(this)), 0);
             return;
         }
 
-        // Step 3: Calculate debt vs available debt asset
+        // Calculate debt vs available debt asset
         uint256 totalDebt = loanManager.getCurrentDebt();
         uint256 availableDebt = debtAsset.balanceOf(address(this));
 
@@ -613,20 +621,25 @@ contract Zenji is ERC20, IERC4626 {
             // Yield covers full debt - no flashloan needed
             debtAsset.safeTransfer(address(loanManager), totalDebt);
             loanManager.repayDebt(totalDebt);
-            _recoverLoanManagerFunds();
-            _swapRemainingDebtToCollateral();
-            liquidationComplete = true;
-            emit LiquidationComplete(collateralAsset.balanceOf(address(this)), 0);
         } else {
             if (availableDebt > 0) {
                 debtAsset.safeTransfer(address(loanManager), availableDebt);
             }
             loanManager.unwindPosition(type(uint256).max);
-            _recoverLoanManagerFunds();
-            _swapRemainingDebtToCollateral();
-            liquidationComplete = true;
-            emit LiquidationComplete(collateralAsset.balanceOf(address(this)), 0);
         }
+
+        _recoverLoanManagerFunds();
+        _swapRemainingDebtToCollateral();
+        emit EmergencyLoanUnwound(collateralAsset.balanceOf(address(this)), 0);
+    }
+
+    /// @notice Mark liquidation as complete, allowing withdrawals in emergency mode
+    /// @dev Can be called by anyone after asset recovery. One-way latch.
+    function setLiquidationComplete() external {
+        if (!emergencyMode) revert EmergencyModeNotActive();
+        if (liquidationComplete) revert LiquidationAlreadyComplete();
+        liquidationComplete = true;
+        emit LiquidationComplete(collateralAsset.balanceOf(address(this)), 0);
     }
 
     /// @notice Rescue stuck tokens from the vault (emergency mode only)

@@ -221,8 +221,6 @@ contract APRTrackingForkTest is Test {
         // Step 2: Enable yield
         vm.prank(owner);
         vault.toggleYield(true);
-        vm.prank(owner);
-        vault.setTracker(address(tracker));
 
         // Step 3: User deposits
         vm.startPrank(user1);
