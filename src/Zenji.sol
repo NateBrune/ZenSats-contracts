@@ -996,6 +996,7 @@ contract Zenji is ERC20, IERC4626 {
     ///      The checkpoint (lastStrategyBalance) always updates regardless of feeRate,
     ///      so changing feeRate from 0 to non-zero never retroactively charges old gains.
     function _accrueYieldFees() internal {
+        if (address(yieldStrategy) == address(0)) return;
         uint256 currentBalance = yieldStrategy.balanceOf();
         if (feeRate > 0 && currentBalance > lastStrategyBalance) {
             uint256 delta = currentBalance - lastStrategyBalance;
@@ -1030,6 +1031,7 @@ contract Zenji is ERC20, IERC4626 {
     function _withdrawFromYieldStrategy(
         uint256 debtNeeded
     ) internal returns (uint256) {
+        if (address(yieldStrategy) == address(0)) return 0;
         uint256 strategyBalance = yieldStrategy.balanceOf();
         if (strategyBalance == 0) return 0;
 
@@ -1058,8 +1060,11 @@ contract Zenji is ERC20, IERC4626 {
         uint256 debtBalance;
         if (fullyClose) {
             uint256 debtBefore = debtAsset.balanceOf(address(this));
-            uint256 withdrawn = yieldStrategy.withdrawAll();
-            lastStrategyBalance = 0;
+            uint256 withdrawn = 0;
+            if (address(yieldStrategy) != address(0)) {
+                withdrawn = yieldStrategy.withdrawAll();
+                lastStrategyBalance = 0;
+            }
             debtBalance = debtBefore + withdrawn;
         } else {
             if (loanManager.loanExists()) {

@@ -3140,4 +3140,70 @@ contract ZenjiTest is Test {
     function test_asset() public view {
         assertEq(vault.asset(), WBTC, "Asset should be WBTC");
     }
+
+    // ============ No Strategy (address(0)) Withdraw Tests ============
+
+    function test_withdrawWithNoStrategy() public {
+        // Deploy a vault with no yield strategy
+        uint64 nonce = vm.getNonce(address(this));
+        address predictedVault = vm.computeCreateAddress(address(this), nonce + 1);
+        LlamaLoanManager lm = new LlamaLoanManager(
+            WBTC, CRVUSD, LLAMALEND_WBTC, WBTC_CRVUSD_POOL, BTC_USD_ORACLE, CRVUSD_USD_ORACLE, address(0), predictedVault
+        );
+        Zenji noStratVault = new Zenji(WBTC, CRVUSD, address(lm), address(0), owner, address(viewHelper));
+        require(address(noStratVault) == predictedVault, "Address mismatch");
+
+        // Vault should be idle with no strategy
+        assertTrue(noStratVault.idle(), "Vault should be idle");
+
+        // Deposit WBTC
+        vm.prank(user1);
+        wbtc.approve(address(noStratVault), type(uint256).max);
+        vm.prank(user1);
+        uint256 shares = noStratVault.deposit(1e8, user1);
+        assertGt(shares, 0, "Should receive shares");
+
+        // WBTC should sit in the vault
+        assertEq(wbtc.balanceOf(address(noStratVault)), 1e8, "WBTC should be in vault");
+
+        // Withdraw — this would revert before the address(0) guards
+        warpAndMock(block.timestamp + 2);
+        vm.prank(user1);
+        uint256 received = noStratVault.redeem(shares, user1, user1);
+
+        assertEq(received, 1e8, "Should receive all WBTC back");
+        assertEq(noStratVault.balanceOf(user1), 0, "Shares should be zero");
+        assertEq(wbtc.balanceOf(address(noStratVault)), 0, "Vault should be empty");
+    }
+
+    function test_partialWithdrawWithNoStrategy() public {
+        // Deploy a vault with no yield strategy
+        uint64 nonce = vm.getNonce(address(this));
+        address predictedVault = vm.computeCreateAddress(address(this), nonce + 1);
+        LlamaLoanManager lm = new LlamaLoanManager(
+            WBTC, CRVUSD, LLAMALEND_WBTC, WBTC_CRVUSD_POOL, BTC_USD_ORACLE, CRVUSD_USD_ORACLE, address(0), predictedVault
+        );
+        Zenji noStratVault = new Zenji(WBTC, CRVUSD, address(lm), address(0), owner, address(viewHelper));
+        require(address(noStratVault) == predictedVault, "Address mismatch");
+
+        // Two users deposit
+        vm.prank(user1);
+        wbtc.approve(address(noStratVault), type(uint256).max);
+        vm.prank(user1);
+        noStratVault.deposit(2e8, user1);
+
+        vm.prank(user2);
+        wbtc.approve(address(noStratVault), type(uint256).max);
+        vm.prank(user2);
+        noStratVault.deposit(1e8, user2);
+
+        // User1 partial withdraw (should not trigger _unwindPosition since collateral is idle in vault)
+        warpAndMock(block.timestamp + 2);
+        uint256 halfShares = noStratVault.balanceOf(user1) / 2;
+        vm.prank(user1);
+        uint256 received = noStratVault.redeem(halfShares, user1, user1);
+
+        assertGt(received, 0, "Should receive WBTC");
+        assertGt(noStratVault.balanceOf(user1), 0, "Should still have remaining shares");
+    }
 }
