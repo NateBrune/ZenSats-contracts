@@ -272,8 +272,9 @@ contract IporYieldStrategyTest is Test {
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
         new IporYieldStrategy(address(0), vault, address(iporVault));
 
-        vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
-        new IporYieldStrategy(address(crvUSD), address(0), address(iporVault));
+        // vault == address(0) is valid (deferred init), so no revert expected
+        IporYieldStrategy deferredStrategy = new IporYieldStrategy(address(crvUSD), address(0), address(iporVault));
+        assertEq(deferredStrategy.vault(), address(0));
 
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
         new IporYieldStrategy(address(crvUSD), vault, address(0));

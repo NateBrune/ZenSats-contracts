@@ -10,9 +10,8 @@ library SafeTransferLib {
 
     /// @notice Safe transfer that reverts on failure
     function safeTransfer(IERC20 token, address to, uint256 amount) internal {
-        (bool success, bytes memory data) = address(token).call(
-            abi.encodeWithSelector(token.transfer.selector, to, amount)
-        );
+        (bool success, bytes memory data) =
+            address(token).call(abi.encodeWithSelector(token.transfer.selector, to, amount));
         if (!success || (data.length != 0 && !abi.decode(data, (bool)))) {
             revert TransferFailed();
         }
@@ -42,16 +41,14 @@ library SafeTransferLib {
     function safeApprove(IERC20 token, address spender, uint256 amount) internal {
         // For USDT: first reset to 0 if there's existing allowance and we're setting non-zero
         if (amount > 0 && token.allowance(address(this), spender) > 0) {
-            (bool resetSuccess, ) = address(token).call(
-                abi.encodeWithSelector(token.approve.selector, spender, 0)
-            );
+            (bool resetSuccess,) =
+                address(token).call(abi.encodeWithSelector(token.approve.selector, spender, 0));
             // Ignore return value for void-returning tokens like USDT
             if (!resetSuccess) revert TransferFailed();
         }
 
-        (bool success, bytes memory data) = address(token).call(
-            abi.encodeWithSelector(token.approve.selector, spender, amount)
-        );
+        (bool success, bytes memory data) =
+            address(token).call(abi.encodeWithSelector(token.approve.selector, spender, amount));
         // Handle both standard (returns bool) and non-standard (returns nothing) ERC20
         if (!success || (data.length != 0 && !abi.decode(data, (bool)))) {
             revert TransferFailed();

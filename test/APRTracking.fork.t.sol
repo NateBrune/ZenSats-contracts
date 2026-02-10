@@ -203,24 +203,18 @@ contract APRTrackingForkTest is Test {
             WBTC_CRVUSD_POOL,
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
+            address(0),
             predictedVault
         );
 
         vault = new Zenji(
-            WBTC,
-            CRVUSD,
-            address(loanManager),
-            address(strategy),
-            owner,
-            address(viewHelper)
+            WBTC, CRVUSD, address(loanManager), address(strategy), owner, address(viewHelper)
         );
         require(address(vault) == predictedVault, "Vault address mismatch");
 
         tracker = new VaultTracker(address(vault));
 
         // Step 2: Enable yield
-        vm.prank(owner);
-        vault.toggleYield(true);
 
         // Step 3: User deposits
         vm.startPrank(user1);
@@ -232,10 +226,7 @@ contract APRTrackingForkTest is Test {
         console.log("=== After User Deposit ===");
         console.log("User shares:", shares);
         console.log("Vault total collateral:", vault.getTotalCollateral());
-        console.log(
-            "Vault total value (debt):",
-            viewHelper.getTotalDebtValue(address(vault))
-        );
+        console.log("Vault total value (debt):", viewHelper.getTotalDebtValue(address(vault)));
         console.log("Strategy balance:", strategy.balanceOf());
         console.log("Strategy cost basis:", strategy.costBasis());
 
@@ -388,22 +379,15 @@ contract APRTrackingForkTest is Test {
             WBTC_CRVUSD_POOL,
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
+            address(0),
             predictedVault
         );
 
         vault = new Zenji(
-            WBTC,
-            CRVUSD,
-            address(loanManager),
-            address(strategy),
-            owner,
-            address(viewHelper)
+            WBTC, CRVUSD, address(loanManager), address(strategy), owner, address(viewHelper)
         );
 
         tracker = new VaultTracker(address(vault));
-
-        vm.prank(owner);
-        vault.toggleYield(true);
 
         // User deposits
         vm.startPrank(user1);

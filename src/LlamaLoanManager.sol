@@ -6,9 +6,12 @@ import { ILlamaLendController } from "./interfaces/ILlamaLendController.sol";
 import { IChainlinkOracle } from "./interfaces/IChainlinkOracle.sol";
 import { ICurveTwoCrypto } from "./interfaces/ICurveTwoCrypto.sol";
 import { ILoanManager } from "./interfaces/ILoanManager.sol";
+import { ISwapper } from "./interfaces/ISwapper.sol";
 import { IERC3156FlashBorrower } from "@openzeppelin/contracts/interfaces/IERC3156FlashBorrower.sol";
 import { IERC3156FlashLender } from "@openzeppelin/contracts/interfaces/IERC3156FlashLender.sol";
 import { SafeTransferLib } from "./libraries/SafeTransferLib.sol";
+import { TimelockLib } from "./libraries/TimelockLib.sol";
+import { LlamaOracleLib } from "./libraries/LlamaOracleLib.sol";
 
 /// @title LlamaLoanManager
 /// @notice Manages LlamaLend loan positions for the Zenji
@@ -16,11 +19,15 @@ import { SafeTransferLib } from "./libraries/SafeTransferLib.sol";
 /// @dev Also handles collateral <-> debt swaps via TwoCrypto pool
 contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     using SafeTransferLib for IERC20;
+    using TimelockLib for TimelockLib.AddressTimelockData;
 
     // ============ Constants ============
 
     /// @notice Precision for percentage calculations (100% = 1e18)
     uint256 public constant PRECISION = 1e18;
+
+    /// @notice Timelock delay for swapper changes (2 days)
+    uint256 public constant TIMELOCK_DELAY = 2 days;
 
     /// @notice Number of bands for LlamaLend loans
     uint256 public constant LLAMALEND_BANDS = 4;
@@ -71,9 +78,16 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
 
     error InsufficientFlashloanRepayment();
 
-    event PositionUnwound(uint256 collateralRequested, uint256 debtRepaid, uint256 collateralRemoved);
+    event PositionUnwound(
+        uint256 collateralRequested, uint256 debtRepaid, uint256 collateralRemoved
+    );
     event CollateralSwapped(uint256 collateralIn, uint256 debtOut);
     event DebtSwapped(uint256 debtIn, uint256 collateralOut);
+    event SwapperUpdated(address indexed oldSwapper, address indexed newSwapper);
+    event SwapperChangeProposed(
+        address indexed currentSwapper, address indexed newSwapper, uint256 effectiveTime
+    );
+    event SwapperChangeCancelled(address indexed cancelledSwapper);
 
     // ============ Immutables ============
 
@@ -98,6 +112,12 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     /// @notice The vault that owns this loan manager
     address public immutable vault;
 
+    /// @notice Swapper for collateral/debt conversions
+    ISwapper public swapper;
+
+    /// @notice Timelock state for swapper changes
+    TimelockLib.AddressTimelockData internal _swapperTimelock;
+
     // ============ Modifiers ============
 
     modifier onlyVault() {
@@ -114,6 +134,7 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
         address _collateralDebtPool,
         address _collateralOracle,
         address _debtOracle,
+        address _swapper,
         address _vault
     ) {
         if (
@@ -130,6 +151,7 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
         collateralDebtPool = ICurveTwoCrypto(_collateralDebtPool);
         collateralOracle = IChainlinkOracle(_collateralOracle);
         debtOracle = IChainlinkOracle(_debtOracle);
+        swapper = ISwapper(_swapper);
         vault = _vault;
     }
 
@@ -240,7 +262,8 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
                     // Re-check after dust repay
                     if (llamaLend.loan_exists(address(this))) {
                         (collAvail,) = _getPositionValues();
-                        uint256 toRemove = collateralNeeded < collAvail ? collateralNeeded : collAvail;
+                        uint256 toRemove =
+                            collateralNeeded < collAvail ? collateralNeeded : collAvail;
                         if (toRemove > 0) {
                             llamaLend.remove_collateral(toRemove);
                         }
@@ -492,56 +515,37 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
         debtValue = llamaLend.debt(address(this)); // Use debt() to include accrued interest
     }
 
-    /// @notice Get validated collateral price from Chainlink oracle
-    function _getValidatedCollateralPrice() internal view returns (uint256) {
-        (uint80 roundId, int256 price,, uint256 updatedAt, uint80 answeredInRound) =
-            collateralOracle.latestRoundData();
-        if (price <= 0) revert InvalidPrice();
-        if (answeredInRound < roundId) revert StaleOracle();
-        if (block.timestamp - updatedAt > MAX_ORACLE_STALENESS) revert StaleOracle();
-        return uint256(price);
-    }
-
-    /// @notice Get validated debt/USD price from Chainlink oracle
-    function _getValidatedDebtPrice() internal view returns (uint256) {
-        (uint80 roundId, int256 price,, uint256 updatedAt, uint80 answeredInRound) =
-            debtOracle.latestRoundData();
-        if (price <= 0) revert InvalidPrice();
-        if (answeredInRound < roundId) revert StaleOracle();
-        if (block.timestamp - updatedAt > MAX_DEBT_ORACLE_STALENESS) revert StaleOracle();
-        return uint256(price);
-    }
-
     /// @notice Get collateral value in debt terms using Chainlink oracles
     /// @dev Accounts for debt/USD peg deviation: value = (COLLATERAL_USD) / (DEBT_USD)
     function _getCollateralValue(uint256 collateralAmount) internal view returns (uint256) {
-        if (collateralAmount == 0) return 0;
-        uint256 collateralPrice = _getValidatedCollateralPrice();
-        uint256 debtPrice = _getValidatedDebtPrice();
-        uint8 collateralOracleDecimals = collateralOracle.decimals();
-        uint8 debtOracleDecimals = debtOracle.decimals();
-        uint8 collateralDecimals = collateralToken.decimals();
-        return (collateralAmount * collateralPrice * 1e18 * (10 ** debtOracleDecimals))
-            / ((10 ** collateralOracleDecimals) * (10 ** collateralDecimals) * debtPrice);
+        return LlamaOracleLib.getCollateralValue(
+            collateralAmount,
+            collateralOracle,
+            MAX_ORACLE_STALENESS,
+            debtOracle,
+            MAX_DEBT_ORACLE_STALENESS,
+            collateralToken
+        );
     }
 
     /// @notice Get debt value in collateral terms using Chainlink oracles
     /// @dev Accounts for debt/USD peg deviation: value = (debt_amount * debt_USD) / collateral_USD
     function _getDebtValue(uint256 debtAmount) internal view returns (uint256) {
-        if (debtAmount == 0) return 0;
-        uint256 collateralPrice = _getValidatedCollateralPrice();
-        uint256 debtPrice = _getValidatedDebtPrice();
-        uint8 collateralOracleDecimals = collateralOracle.decimals();
-        uint8 debtOracleDecimals = debtOracle.decimals();
-        uint8 collateralDecimals = collateralToken.decimals();
-        return (debtAmount * debtPrice * (10 ** collateralOracleDecimals) * (10 ** collateralDecimals))
-            / ((10 ** debtOracleDecimals) * collateralPrice * 1e18);
+        return LlamaOracleLib.getDebtValue(
+            debtAmount,
+            collateralOracle,
+            MAX_ORACLE_STALENESS,
+            debtOracle,
+            MAX_DEBT_ORACLE_STALENESS,
+            collateralToken
+        );
     }
 
     /// @notice Check oracle freshness (both collateral/USD and debt/USD)
     function _checkOracleFreshness() internal view {
-        _getValidatedCollateralPrice();
-        _getValidatedDebtPrice();
+        LlamaOracleLib.checkOracleFreshness(
+            collateralOracle, MAX_ORACLE_STALENESS, debtOracle, MAX_DEBT_ORACLE_STALENESS
+        );
     }
 
     /// @notice Canonical dust definition for partial unwinds
@@ -549,43 +553,40 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
         return debt <= DUST_THRESHOLD;
     }
 
+    /// @notice Propose a new swapper (requires timelock)
+    function proposeSwapper(address newSwapper) external onlyVault {
+        if (newSwapper == address(0)) revert InvalidAddress();
+        _swapperTimelock.proposeAddress(newSwapper, TIMELOCK_DELAY);
+        emit SwapperChangeProposed(address(swapper), newSwapper, _swapperTimelock.timestamp);
+    }
+
+    /// @notice Execute pending swapper change after timelock
+    function executeSwapper() external onlyVault {
+        address oldSwapper = address(swapper);
+        swapper = ISwapper(_swapperTimelock.executeAddress());
+        emit SwapperUpdated(oldSwapper, address(swapper));
+    }
+
+    /// @notice Cancel pending swapper change
+    function cancelSwapper() external onlyVault {
+        address cancelled = _swapperTimelock.cancelAddress();
+        emit SwapperChangeCancelled(cancelled);
+    }
+
     /// @notice Swap collateral to debt
     function _swapCollateralForDebt(uint256 collateralAmount) internal returns (uint256) {
-        _checkOracleFreshness();
-        uint256 expectedOut = collateralDebtPool.get_dy(
-            TWOCRYPTO_COLLATERAL_INDEX, TWOCRYPTO_DEBT_INDEX, collateralAmount
-        );
-        uint256 minOut = (expectedOut * (PRECISION - COLLATERAL_SWAP_SLIPPAGE)) / PRECISION;
-
-        uint256 debtBefore = debtToken.balanceOf(address(this));
-
-        _ensureApprove(address(collateralToken), address(collateralDebtPool), collateralAmount);
-        collateralDebtPool.exchange(
-            TWOCRYPTO_COLLATERAL_INDEX, TWOCRYPTO_DEBT_INDEX, collateralAmount, minOut
-        );
-
-        uint256 debtAfter = debtToken.balanceOf(address(this));
-        uint256 received = debtAfter - debtBefore;
+        if (address(swapper) == address(0)) revert InvalidAddress();
+        collateralToken.safeTransfer(address(swapper), collateralAmount);
+        uint256 received = swapper.swapCollateralForDebt(collateralAmount);
         emit CollateralSwapped(collateralAmount, received);
         return received;
     }
 
     /// @notice Swap debt to collateral
     function _swapDebtForCollateral(uint256 debtAmount) internal returns (uint256) {
-        _checkOracleFreshness();
-        uint256 expectedOut =
-            collateralDebtPool.get_dy(TWOCRYPTO_DEBT_INDEX, TWOCRYPTO_COLLATERAL_INDEX, debtAmount);
-        uint256 minOut = (expectedOut * (PRECISION - COLLATERAL_SWAP_SLIPPAGE)) / PRECISION;
-
-        uint256 collateralBefore = collateralToken.balanceOf(address(this));
-
-        _ensureApprove(address(debtToken), address(collateralDebtPool), debtAmount);
-        collateralDebtPool.exchange(
-            TWOCRYPTO_DEBT_INDEX, TWOCRYPTO_COLLATERAL_INDEX, debtAmount, minOut
-        );
-
-        uint256 collateralAfter = collateralToken.balanceOf(address(this));
-        uint256 received = collateralAfter - collateralBefore;
+        if (address(swapper) == address(0)) revert InvalidAddress();
+        debtToken.safeTransfer(address(swapper), debtAmount);
+        uint256 received = swapper.swapDebtForCollateral(debtAmount);
         emit DebtSwapped(debtAmount, received);
         return received;
     }

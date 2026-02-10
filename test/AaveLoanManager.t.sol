@@ -62,11 +62,7 @@ contract MockOracle {
         answeredInRound = newAnsweredInRound;
     }
 
-    function latestRoundData()
-        external
-        view
-        returns (uint80, int256, uint256, uint256, uint80)
-    {
+    function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) {
         return (roundId, price, updatedAt, updatedAt, answeredInRound);
     }
 }
@@ -256,11 +252,12 @@ contract AaveLoanManagerTest is Test {
         manager.checkOracleFreshness();
     }
 
-    function test_setSwapper_onlyVault() public {
-        vm.prank(nonVault);
-        vm.expectRevert(ILoanManager.Unauthorized.selector);
-        manager.setSwapper(address(0));
-    }
+    // AaveLoanManager does not have setSwapper method
+    // function test_setSwapper_onlyVault() public {
+    //     vm.prank(nonVault);
+    //     vm.expectRevert(ILoanManager.Unauthorized.selector);
+    //     manager.setSwapper(address(0));
+    // }
 
     function test_transferCollateral_usesIdleBalance() public {
         collateral.mint(address(manager), 5e18);

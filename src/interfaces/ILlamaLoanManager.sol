@@ -6,5 +6,4 @@ import { ILoanManager } from "./ILoanManager.sol";
 /// @title ILlamaLoanManager
 /// @notice Deprecated alias of ILoanManager
 /// @dev Retained for backwards compatibility; use ILoanManager directly.
-interface ILlamaLoanManager is ILoanManager {}
-
+interface ILlamaLoanManager is ILoanManager { }

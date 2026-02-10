@@ -46,11 +46,7 @@ contract MockOracle {
         price = price_;
     }
 
-    function latestRoundData()
-        external
-        view
-        returns (uint80, int256, uint256, uint256, uint80)
-    {
+    function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) {
         return (1, price, block.timestamp, block.timestamp, 1);
     }
 }
@@ -240,9 +236,6 @@ contract UsdtIporAaveStrategyTest is Test {
 
         require(address(vault) == predictedVault, "Vault address mismatch");
 
-        vm.prank(owner);
-        vault.toggleYield(true);
-
         wbtc.mint(user, 1e8);
         vm.prank(user);
         wbtc.approve(address(vault), type(uint256).max);
@@ -300,7 +293,7 @@ contract UsdtIporAaveStrategyTest is Test {
         vault.enterEmergencyMode();
 
         vm.prank(owner);
-        vault.emergencyRedeemYield();
+        vault.emergencyRescue(2);
 
         assertEq(usdt.balanceOf(address(strategy)), 0, "Strategy should not retain USDT");
     }

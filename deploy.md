@@ -76,6 +76,7 @@ forge create src/CurveThreeCryptoSwapper.sol:CurveThreeCryptoSwapper \
   --rpc-url $MAINNET_RPC_URL \
   --private-key $PRIVATE_KEY \
   --constructor-args \
+    <GOVERNANCE_ADDRESS> \
     0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599 \
     0xdAC17F958D2ee523a2206206994597C13D831ec7 \
     0xD51a44d3FaE010294C616388b506AcdA1bfAAE46 \
@@ -85,11 +86,12 @@ forge create src/CurveThreeCryptoSwapper.sol:CurveThreeCryptoSwapper \
 ```
 
 Constructor args:
-1. `WBTC` - collateral token
-2. `USDT` - debt token
-3. `TRICRYPTO_POOL` - Curve pool address
-4. `1` - WBTC index in tricrypto
-5. `0` - USDT index in tricrypto
+1. `<GOVERNANCE_ADDRESS>` - governance address for slippage control
+2. `WBTC` - collateral token
+3. `USDT` - debt token
+4. `TRICRYPTO_POOL` - Curve pool address
+5. `1` - WBTC index in tricrypto
+6. `0` - USDT index in tricrypto
 
 Save the deployed address as `SWAPPER`.
 
@@ -184,8 +186,10 @@ Constructor args:
 2. `USDT` - debt asset
 3. `LOAN_MANAGER` - from Step 3
 4. `address(0)` - strategy set later
-5. `OWNER` - vault owner address
+5. `OWNER` - vault owner address (handles day-to-day operations)
 6. `VIEW_HELPER` - from Step 1
+
+**Note**: Governance address is initially set to OWNER in constructor. You can transfer it to a multisig later.
 
 Save the deployed address as `VAULT`.
 
@@ -223,30 +227,68 @@ cast send <VAULT> "setInitialStrategy(address)" <STRATEGY> \
 
 ---
 
-### Step 8: Enable Yield
+### Step 8: Set Swapper on Vault
 
-**Must be called by OWNER:**
+**Must be called by GOVERNANCE (owner initially):**
+
+The swapper is set via a timelocked propose/execute flow (2-day delay):
 
 ```bash
-cast send <VAULT> "toggleYield(bool)" true \
+# Propose the swapper
+cast send <VAULT> "proposeSwapper(address)" <SWAPPER> \
   --rpc-url $MAINNET_RPC_URL \
   --private-key $OWNER_PRIVATE_KEY
+
+# Wait 2 days, then execute
+cast send <VAULT> "executeSwapper()" \
+  --rpc-url $MAINNET_RPC_URL \
+  --private-key $OWNER_PRIVATE_KEY
+```
+
+**Note**: The vault cannot unwind positions without a swapper. This must be done before any deposits.
+
+---
+
+### Step 9: (Optional) Transfer Governance to Multisig
+
+For production deployments, transfer governance control to a multisig:
+
+```bash
+# As current governance (owner initially), propose transfer
+cast send <VAULT> "transferRole(uint8,address)" 1 <MULTISIG_ADDRESS> \
+  --rpc-url $MAINNET_RPC_URL \
+  --private-key $OWNER_PRIVATE_KEY
+
+# As multisig, accept governance
+cast send <VAULT> "acceptRole(uint8)" 1 \
+  --rpc-url $MAINNET_RPC_URL \
+  --private-key $MULTISIG_PRIVATE_KEY
+
+# Transfer swapper governance
+cast send <SWAPPER> "transferGovernance(address)" <MULTISIG_ADDRESS> \
+  --rpc-url $MAINNET_RPC_URL \
+  --private-key $OWNER_PRIVATE_KEY
+
+cast send <SWAPPER> "acceptGovernance()" \
+  --rpc-url $MAINNET_RPC_URL \
+  --private-key $MULTISIG_PRIVATE_KEY
 ```
 
 ---
 
 ## Quick Reference: Deployment Order
 
-| Step | Contract                | Init Required? | Who Calls |
-|------|-------------------------|----------------|-----------|
-| 1    | ZenjiViewHelper         | No             | Deployer  |
-| 2    | CurveThreeCryptoSwapper | No             | Deployer  |
-| 3    | AaveLoanManager         | Yes (Step 6a)  | Deployer  |
-| 4    | UsdtIporYieldStrategy   | Yes (Step 6b)  | Deployer  |
-| 5    | Zenji                   | No             | Deployer  |
-| 6    | initializeVault (x2)    | -              | Deployer  |
-| 7    | setInitialStrategy      | -              | Owner     |
-| 8    | toggleYield(true)       | -              | Owner     |
+| Step | Contract                | Init Required? | Who Calls  |
+|------|-------------------------|----------------|------------|
+| 1    | ZenjiViewHelper         | No             | Deployer   |
+| 2    | CurveThreeCryptoSwapper | No             | Deployer   |
+| 3    | AaveLoanManager         | Yes (Step 6a)  | Deployer   |
+| 4    | UsdtIporYieldStrategy   | Yes (Step 6b)  | Deployer   |
+| 5    | Zenji                   | No             | Deployer   |
+| 6    | initializeVault (x2)    | -              | Deployer   |
+| 7    | setInitialStrategy      | -              | Owner      |
+| 8    | proposeSwapper (+ wait + executeSwapper) | - | Gov |
+| 9    | Transfer Governance     | -              | Gov/Owner  |
 
 ---
 
@@ -264,12 +306,12 @@ cast call <STRATEGY> "vault()(address)" --rpc-url $MAINNET_RPC_URL
 # Should return <VAULT>
 
 # Check vault strategy
-cast call <VAULT> "strategy()(address)" --rpc-url $MAINNET_RPC_URL
+cast call <VAULT> "yieldStrategy()(address)" --rpc-url $MAINNET_RPC_URL
 # Should return <STRATEGY>
 
-# Check yield enabled
-cast call <VAULT> "yieldEnabled()(bool)" --rpc-url $MAINNET_RPC_URL
-# Should return true
+# Check vault is not idle
+cast call <VAULT> "idle()(bool)" --rpc-url $MAINNET_RPC_URL
+# Should return false
 ```
 
 ---
@@ -279,7 +321,7 @@ cast call <VAULT> "yieldEnabled()(bool)" --rpc-url $MAINNET_RPC_URL
 - **USDT quirk**: USDT's `approve()` returns void instead of bool. The SafeTransferLib handles this with `safeApprove()`.
 - **Loan manager swapper**: Required for flashloan unwind when there's a repayment shortfall. Uses the Curve TriCrypto pool.
 - **Strategy swapper**: The strategy uses the Curve USDT/crvUSD pool directly for swaps before depositing into IPOR.
-- **Owner vs Deployer**: Steps 7-8 must be called by the vault owner. If owner ≠ deployer, use the owner's key.
+- **Owner vs Deployer**: Steps 7-9 must be called by the vault owner/governance. If owner ≠ deployer, use the owner's key.
 
 ---
 
@@ -362,7 +404,35 @@ Save the deployed address as `VIEW_HELPER`.
 
 ---
 
-### Step 2: Deploy LlamaLoanManager
+### Step 2: Deploy CurveTwoCryptoSwapper
+
+This swapper handles WBTC ↔ crvUSD swaps for the loan manager (e.g., during unwind).
+
+```bash
+forge create src/CurveTwoCryptoSwapper.sol:CurveTwoCryptoSwapper \
+  --rpc-url $MAINNET_RPC_URL \
+  --private-key $PRIVATE_KEY \
+  --constructor-args \
+    0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599 \
+    0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E \
+    0xD9FF8396554A0d18B2CFbeC53e1979b7ecCe8373 \
+    1 \
+    0 \
+  --verify
+```
+
+Constructor args:
+1. `WBTC` - collateral token
+2. `crvUSD` - debt token
+3. `WBTC_CRVUSD_POOL` - Curve TwoCrypto pool address
+4. `1` - WBTC index in TwoCrypto
+5. `0` - crvUSD index in TwoCrypto
+
+Save the deployed address as `SWAPPER`.
+
+---
+
+### Step 3: Deploy LlamaLoanManager
 
 ```bash
 forge create src/LlamaLoanManager.sol:LlamaLoanManager \
@@ -375,6 +445,7 @@ forge create src/LlamaLoanManager.sol:LlamaLoanManager \
     0xD9FF8396554A0d18B2CFbeC53e1979b7ecCe8373 \
     0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c \
     0xEEf0C605546958c1f899b6fB336C20671f9cD49F \
+    <SWAPPER> \
     <VAULT_PLACEHOLDER> \
   --verify
 ```
@@ -386,17 +457,18 @@ Constructor args:
 4. `WBTC_CRVUSD_POOL` - Curve TwoCrypto pool for swaps
 5. `BTC/USD oracle` - Chainlink
 6. `crvUSD/USD oracle` - Chainlink
-7. `<VAULT_PLACEHOLDER>` - vault address (from Step 4 - see note below)
+7. `<SWAPPER>` - from Step 2
+8. `<VAULT_PLACEHOLDER>` - vault address (from Step 5 - see note below)
 
 **Note**: LlamaLoanManager requires the vault address at construction (unlike AaveLoanManager which uses `initializeVault`). You have two options:
-- **Option A (Recommended)**: Deploy vault first (Step 4), then come back to deploy LlamaLoanManager with the real vault address
+- **Option A (Recommended)**: Deploy vault first (Step 5), then come back to deploy LlamaLoanManager with the real vault address
 - **Option B**: Use a temporary address like your own EOA, deploy everything, then redeploy LlamaLoanManager with the correct vault address
 
 Save the deployed address as `LOAN_MANAGER`.
 
 ---
 
-### Step 3: Deploy IporYieldStrategy
+### Step 4: Deploy IporYieldStrategy
 
 ```bash
 forge create src/strategies/IporYieldStrategy.sol:IporYieldStrategy \
@@ -418,7 +490,7 @@ Save the deployed address as `STRATEGY`.
 
 ---
 
-### Step 4: Deploy Zenji Vault
+### Step 5: Deploy Zenji Vault
 
 ```bash
 forge create src/Zenji.sol:Zenji \
@@ -437,18 +509,18 @@ forge create src/Zenji.sol:Zenji \
 Constructor args:
 1. `WBTC` - collateral asset
 2. `crvUSD` - debt asset
-3. `LOAN_MANAGER` - from Step 2
+3. `LOAN_MANAGER` - from Step 3
 4. `address(0)` - strategy set later
 5. `OWNER` - vault owner address
 6. `VIEW_HELPER` - from Step 1
 
 Save the deployed address as `VAULT`.
 
-**If you used Option A above**: Go back to Step 2 now and deploy LlamaLoanManager with this vault address.
+**If you used Option A above**: Go back to Step 3 now and deploy LlamaLoanManager with this vault address.
 
 ---
 
-### Step 5: Initialize Strategy
+### Step 6: Initialize Strategy
 
 The strategy needs to know the vault address.
 
@@ -460,7 +532,7 @@ cast send <STRATEGY> "initializeVault(address)" <VAULT> \
 
 ---
 
-### Step 6: Set Strategy on Vault
+### Step 7: Set Strategy on Vault
 
 **Must be called by OWNER:**
 
@@ -472,41 +544,78 @@ cast send <VAULT> "setInitialStrategy(address)" <STRATEGY> \
 
 ---
 
-### Step 7: Configure Vault Parameters
+### Step 8: Configure Vault Parameters
 
 **Must be called by OWNER:**
 
-Set target LTV (recommended: 50% for LlamaLend):
+Set target LTV (param 1, recommended: 50% for LlamaLend):
 ```bash
-cast send <VAULT> "setTargetLtv(uint256)" 500000000000000000 \
+cast send <VAULT> "setParam(uint8,uint256)" 1 500000000000000000 \
   --rpc-url $MAINNET_RPC_URL \
   --private-key $OWNER_PRIVATE_KEY
 ```
 
-Set fee rate (e.g., 10%):
+Set fee rate (param 0, e.g., 10%):
 ```bash
-cast send <VAULT> "setFeeRate(uint256)" 100000000000000000 \
+cast send <VAULT> "setParam(uint8,uint256)" 0 100000000000000000 \
   --rpc-url $MAINNET_RPC_URL \
   --private-key $OWNER_PRIVATE_KEY
 ```
 
-Set deposit cap (e.g., 10 WBTC = 1e9 satoshis):
+Set deposit cap (param 2, e.g., 10 WBTC = 1e9 satoshis):
 ```bash
-cast send <VAULT> "setDepositCap(uint256)" 1000000000 \
+cast send <VAULT> "setParam(uint8,uint256)" 2 1000000000 \
+  --rpc-url $MAINNET_RPC_URL \
+  --private-key $OWNER_PRIVATE_KEY
+```
+
+**`setParam` reference:** 0=feeRate, 1=targetLtv, 2=depositCap, 3=rebalanceBountyRate
+
+---
+
+### Step 9: Set Swapper on Vault
+
+**Must be called by GOVERNANCE (owner initially):**
+
+The swapper is set via a timelocked propose/execute flow (2-day delay):
+
+```bash
+# Propose the swapper
+cast send <VAULT> "proposeSwapper(address)" <SWAPPER> \
+  --rpc-url $MAINNET_RPC_URL \
+  --private-key $OWNER_PRIVATE_KEY
+
+# Wait 2 days, then execute
+cast send <VAULT> "executeSwapper()" \
   --rpc-url $MAINNET_RPC_URL \
   --private-key $OWNER_PRIVATE_KEY
 ```
 
 ---
 
-### Step 8: Enable Yield
+### Step 10: (Optional) Transfer Governance to Multisig
 
-**Must be called by OWNER:**
+For production deployments, transfer governance control to a multisig:
 
 ```bash
-cast send <VAULT> "toggleYield(bool)" true \
+# As current governance (owner initially), propose transfer
+cast send <VAULT> "transferRole(uint8,address)" 1 <MULTISIG_ADDRESS> \
   --rpc-url $MAINNET_RPC_URL \
   --private-key $OWNER_PRIVATE_KEY
+
+# As multisig, accept governance
+cast send <VAULT> "acceptRole(uint8)" 1 \
+  --rpc-url $MAINNET_RPC_URL \
+  --private-key $MULTISIG_PRIVATE_KEY
+
+# Transfer swapper governance (swapper uses its own interface)
+cast send <SWAPPER> "transferGovernance(address)" <MULTISIG_ADDRESS> \
+  --rpc-url $MAINNET_RPC_URL \
+  --private-key $OWNER_PRIVATE_KEY
+
+cast send <SWAPPER> "acceptGovernance()" \
+  --rpc-url $MAINNET_RPC_URL \
+  --private-key $MULTISIG_PRIVATE_KEY
 ```
 
 ---
@@ -516,15 +625,17 @@ cast send <VAULT> "toggleYield(bool)" true \
 | Step | Contract             | Init Required? | Who Calls |
 |------|----------------------|----------------|-----------|
 | 1    | ZenjiViewHelper      | No             | Deployer  |
-| 2    | LlamaLoanManager     | No*            | Deployer  |
-| 3    | IporYieldStrategy    | Yes (Step 5)   | Deployer  |
-| 4    | Zenji                | No             | Deployer  |
-| 5    | initializeVault      | -              | Deployer  |
-| 6    | setInitialStrategy   | -              | Owner     |
-| 7    | Configure parameters | -              | Owner     |
-| 8    | toggleYield(true)    | -              | Owner     |
+| 2    | CurveTwoCryptoSwapper| No             | Deployer  |
+| 3    | LlamaLoanManager     | No*            | Deployer  |
+| 4    | IporYieldStrategy    | Yes (Step 6)   | Deployer  |
+| 5    | Zenji                | No             | Deployer  |
+| 6    | initializeVault      | -              | Deployer  |
+| 7    | setInitialStrategy   | -              | Owner     |
+| 8    | Configure parameters | -              | Owner     |
+| 9    | proposeSwapper (+ wait + executeSwapper) | - | Gov |
+| 10   | Transfer Governance  | -              | Gov/Owner |
 
-\* LlamaLoanManager needs vault address at construction (see Step 2 note)
+\* LlamaLoanManager needs vault address at construction (see Step 3 note)
 
 ---
 
@@ -549,9 +660,9 @@ cast call <VAULT> "loanManager()(address)" --rpc-url $MAINNET_RPC_URL
 cast call <VAULT> "yieldStrategy()(address)" --rpc-url $MAINNET_RPC_URL
 # Should return <STRATEGY>
 
-# Check yield enabled
-cast call <VAULT> "yieldEnabled()(bool)" --rpc-url $MAINNET_RPC_URL
-# Should return true
+# Check vault is not idle
+cast call <VAULT> "idle()(bool)" --rpc-url $MAINNET_RPC_URL
+# Should return false
 
 # Check target LTV
 cast call <VAULT> "targetLtv()(uint256)" --rpc-url $MAINNET_RPC_URL
@@ -593,7 +704,7 @@ cast call <VAULT> "debtAsset()(address)" --rpc-url $MAINNET_RPC_URL
 - **Flashloan Support**: LlamaLoanManager uses Balancer flashloans for underwater position unwinding
 - **No Swapper for Strategy**: IporYieldStrategy doesn't need swaps - crvUSD in, crvUSD out
 - **Loan Manager Swapper**: Curve TwoCrypto pool handles WBTC↔crvUSD for emergency unwinding
-- **Owner vs Deployer**: Steps 6-8 must be called by the vault owner. If owner ≠ deployer, use the owner's key.
+- **Owner vs Deployer**: Steps 7-9 must be called by the vault owner/governance. If owner ≠ deployer, use the owner's key.
 
 ---
 

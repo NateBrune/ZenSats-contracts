@@ -279,7 +279,7 @@ contract TokemakYieldStrategyTest is Test {
     // ============ Constructor Tests ============
 
     function test_constructor_setsImmutables() public view {
-        assertEq(address(strategy.crvUSD()), address(crvUSD));
+        assertEq(address(strategy.debtAsset()), address(crvUSD));
         assertEq(strategy.vault(), vault);
         assertEq(address(strategy.usdc()), address(usdc));
         assertEq(address(strategy.curvePool()), address(curvePool));

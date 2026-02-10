@@ -8,12 +8,15 @@ import { IFlashLoanSimpleReceiver } from "./interfaces/IFlashLoanSimpleReceiver.
 import { ILoanManager } from "./interfaces/ILoanManager.sol";
 import { ISwapper } from "./interfaces/ISwapper.sol";
 import { SafeTransferLib } from "./libraries/SafeTransferLib.sol";
+import { TimelockLib } from "./libraries/TimelockLib.sol";
+import { AaveOracleLib } from "./libraries/AaveOracleLib.sol";
 
 /// @title AaveLoanManager
 /// @notice Manages Aave V3 collateralized borrowing positions for Zenji
 /// @dev Uses Chainlink oracles for collateral/debt valuation
 contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
     using SafeTransferLib for IERC20;
+    using TimelockLib for TimelockLib.AddressTimelockData;
 
     // ============ Constants ============
 
@@ -25,6 +28,8 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
     uint16 public constant AAVE_REFERRAL_CODE = 0;
     uint256 public constant SWAP_AMOUNT_BUFFER = 105;
     uint256 public constant DUST_BUFFER = 1;
+    uint256 public constant DUST_THRESHOLD = 1e6;
+    uint256 public constant TIMELOCK_DELAY = 2 days;
 
     // ============ Immutables ============
 
@@ -39,11 +44,18 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
     address public initializer;
     ISwapper public swapper;
 
+    // Timelock state
+    TimelockLib.AddressTimelockData internal _swapperTimelock;
+
     // Aave risk params (basis points)
     uint256 public immutable maxLtvBps;
     uint256 public immutable liquidationThresholdBps;
 
     event SwapperUpdated(address indexed oldSwapper, address indexed newSwapper);
+    event SwapperChangeProposed(
+        address indexed currentSwapper, address indexed newSwapper, uint256 effectiveTime
+    );
+    event SwapperChangeCancelled(address indexed cancelledSwapper);
     event VaultInitialized(address indexed vault);
 
     error InsufficientFlashloanRepayment();
@@ -170,9 +182,8 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         uint256 debt = variableDebtToken.balanceOf(address(this));
         if (collateral == 0 && debt == 0) return;
 
-        uint256 debtToRepay = fullyClose
-            ? debt
-            : (collateral > 0 ? (debt * collateralNeeded) / collateral : 0);
+        uint256 debtToRepay =
+            fullyClose ? debt : (collateral > 0 ? (debt * collateralNeeded) / collateral : 0);
 
         uint256 debtBalance = debtToken.balanceOf(address(this));
         uint256 repayNow = debtToRepay < debtBalance ? debtToRepay : debtBalance;
@@ -182,14 +193,15 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         }
 
         uint256 remainingDebt = variableDebtToken.balanceOf(address(this));
-        if (fullyClose && remainingDebt > 0) {
+        bool needFlashloan = fullyClose ? (remainingDebt > 0) : !_isDustDebt(remainingDebt);
+        if (needFlashloan) {
             uint256 flashloanAmount = (remainingDebt * 10050) / 10000;
             bytes memory data = abi.encode(collateralNeeded, fullyClose);
             aavePool.flashLoanSimple(
                 address(this), address(debtToken), flashloanAmount, data, AAVE_REFERRAL_CODE
             );
 
-            if (variableDebtToken.balanceOf(address(this)) > 0) revert DebtNotFullyRepaid();
+            if (fullyClose && variableDebtToken.balanceOf(address(this)) > 0) revert DebtNotFullyRepaid();
             uint256 idleCollateral = collateralToken.balanceOf(address(this));
             if (idleCollateral > 0) {
                 if (!collateralToken.transfer(vault, idleCollateral)) revert TransferFailed();
@@ -253,9 +265,11 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
             if (address(swapper) == address(0)) revert InvalidAddress();
             uint256 shortfall = repaymentNeeded - debtAvailable;
             uint256 collateralQuote = _getDebtValue(shortfall);
-            uint256 collateralNeededForSwap = (collateralQuote * SWAP_AMOUNT_BUFFER) / 100 + DUST_BUFFER;
+            uint256 collateralNeededForSwap =
+                (collateralQuote * SWAP_AMOUNT_BUFFER) / 100 + DUST_BUFFER;
             uint256 collateralBal = collateralToken.balanceOf(address(this));
-            uint256 toSwap = collateralNeededForSwap < collateralBal ? collateralNeededForSwap : collateralBal;
+            uint256 toSwap =
+                collateralNeededForSwap < collateralBal ? collateralNeededForSwap : collateralBal;
             if (toSwap > 0) {
                 collateralToken.safeTransfer(address(swapper), toSwap);
                 swapper.swapCollateralForDebt(toSwap);
@@ -278,12 +292,26 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         _ensureApprove(address(debtToken), address(aavePool), repaymentNeeded);
         return true;
     }
-    function setSwapper(address newSwapper) external onlyVault {
-        address oldSwapper = address(swapper);
-        swapper = ISwapper(newSwapper);
-        emit SwapperUpdated(oldSwapper, newSwapper);
+
+    /// @notice Propose a new swapper (requires timelock)
+    function proposeSwapper(address newSwapper) external onlyVault {
+        if (newSwapper == address(0)) revert InvalidAddress();
+        _swapperTimelock.proposeAddress(newSwapper, TIMELOCK_DELAY);
+        emit SwapperChangeProposed(address(swapper), newSwapper, _swapperTimelock.timestamp);
     }
 
+    /// @notice Execute pending swapper change after timelock
+    function executeSwapper() external onlyVault {
+        address oldSwapper = address(swapper);
+        swapper = ISwapper(_swapperTimelock.executeAddress());
+        emit SwapperUpdated(oldSwapper, address(swapper));
+    }
+
+    /// @notice Cancel pending swapper change
+    function cancelSwapper() external onlyVault {
+        address cancelled = _swapperTimelock.cancelAddress();
+        emit SwapperChangeCancelled(cancelled);
+    }
 
     // ============ View Functions ============
 
@@ -442,66 +470,49 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         IERC20(token).ensureApproval(spender, amount);
     }
 
+    function _isDustDebt(uint256 debt) internal pure returns (bool) {
+        return debt <= DUST_THRESHOLD;
+    }
+
     function _checkOracleFreshness() internal view {
-        _getValidatedCollateralPrice();
-        _getValidatedDebtPrice();
-    }
-
-    function _getValidatedCollateralPrice() internal view returns (uint256) {
-        (uint80 roundId, int256 price,, uint256 updatedAt, uint80 answeredInRound) =
-            collateralOracle.latestRoundData();
-        if (price <= 0) revert InvalidPrice();
-        if (answeredInRound < roundId) revert StaleOracle();
-        if (block.timestamp - updatedAt > MAX_ORACLE_STALENESS) revert StaleOracle();
-        return uint256(price);
-    }
-
-    function _getValidatedDebtPrice() internal view returns (uint256) {
-        (uint80 roundId, int256 price,, uint256 updatedAt, uint80 answeredInRound) =
-            debtOracle.latestRoundData();
-        if (price <= 0) revert InvalidPrice();
-        if (answeredInRound < roundId) revert StaleOracle();
-        if (block.timestamp - updatedAt > MAX_DEBT_ORACLE_STALENESS) revert StaleOracle();
-        return uint256(price);
+        AaveOracleLib.checkOracleFreshness(
+            collateralOracle, MAX_ORACLE_STALENESS, debtOracle, MAX_DEBT_ORACLE_STALENESS
+        );
     }
 
     function _getCollateralValue(uint256 collateralAmount) internal view returns (uint256) {
-        if (collateralAmount == 0) return 0;
-        uint256 collateralPrice = _getValidatedCollateralPrice();
-        uint256 debtPrice = _getValidatedDebtPrice();
-        uint8 collateralOracleDecimals = collateralOracle.decimals();
-        uint8 debtOracleDecimals = debtOracle.decimals();
-        uint8 collateralDecimals = collateralToken.decimals();
-        uint8 debtDecimals = debtToken.decimals();
-        return (collateralAmount * collateralPrice * (10 ** debtDecimals) * (10 ** debtOracleDecimals))
-            / ((10 ** collateralOracleDecimals) * (10 ** collateralDecimals) * debtPrice);
+        return AaveOracleLib.getCollateralValue(
+            collateralAmount,
+            collateralOracle,
+            MAX_ORACLE_STALENESS,
+            debtOracle,
+            MAX_DEBT_ORACLE_STALENESS,
+            collateralToken,
+            debtToken
+        );
     }
 
     function _getDebtValue(uint256 debtAmount) internal view returns (uint256) {
-        if (debtAmount == 0) return 0;
-        uint256 collateralPrice = _getValidatedCollateralPrice();
-        uint256 debtPrice = _getValidatedDebtPrice();
-        uint8 collateralOracleDecimals = collateralOracle.decimals();
-        uint8 debtOracleDecimals = debtOracle.decimals();
-        uint8 collateralDecimals = collateralToken.decimals();
-        uint8 debtDecimals = debtToken.decimals();
-        return (debtAmount * debtPrice * (10 ** collateralOracleDecimals) * (10 ** collateralDecimals))
-            / ((10 ** debtOracleDecimals) * collateralPrice * (10 ** debtDecimals));
+        return AaveOracleLib.getDebtValue(
+            debtAmount,
+            collateralOracle,
+            MAX_ORACLE_STALENESS,
+            debtOracle,
+            MAX_DEBT_ORACLE_STALENESS,
+            collateralToken,
+            debtToken
+        );
     }
 
     function _getCollateralUsdValue(uint256 collateralAmount) internal view returns (uint256) {
-        if (collateralAmount == 0) return 0;
-        uint256 price = _getValidatedCollateralPrice();
-        uint8 oracleDecimals = collateralOracle.decimals();
-        uint8 tokenDecimals = collateralToken.decimals();
-        return (collateralAmount * price * 1e18) / ((10 ** oracleDecimals) * (10 ** tokenDecimals));
+        return AaveOracleLib.getCollateralUsdValue(
+            collateralAmount, collateralOracle, MAX_ORACLE_STALENESS, collateralToken
+        );
     }
 
     function _getDebtUsdValue(uint256 debtAmount) internal view returns (uint256) {
-        if (debtAmount == 0) return 0;
-        uint256 price = _getValidatedDebtPrice();
-        uint8 oracleDecimals = debtOracle.decimals();
-        uint8 tokenDecimals = debtToken.decimals();
-        return (debtAmount * price * 1e18) / ((10 ** oracleDecimals) * (10 ** tokenDecimals));
+        return AaveOracleLib.getDebtUsdValue(
+            debtAmount, debtOracle, MAX_DEBT_ORACLE_STALENESS, debtToken
+        );
     }
 }

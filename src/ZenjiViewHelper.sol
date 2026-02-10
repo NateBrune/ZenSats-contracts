@@ -12,7 +12,7 @@ interface IZenjiView {
     function loanManager() external view returns (ILoanManager);
     function collateralAsset() external view returns (IERC20);
     function debtAsset() external view returns (IERC20);
-    function yieldEnabled() external view returns (bool);
+    function idle() external view returns (bool);
     function targetLtv() external view returns (uint256);
     function DEADBAND_SPREAD() external view returns (uint256);
     function feeRate() external view returns (uint256);
@@ -20,17 +20,23 @@ interface IZenjiView {
     function accumulatedFees() external view returns (uint256);
     function lastStrategyBalance() external view returns (uint256);
     function yieldStrategy() external view returns (IYieldStrategy);
+    function VIRTUAL_SHARE_OFFSET() external view returns (uint256);
 }
 
 /// @title ZenjiViewHelper
 /// @notice External helper for view utilities to reduce Zenji bytecode size
 contract ZenjiViewHelper {
-    function getUserValue(address vault, address user) external view returns (uint256 collateralValue) {
+    function getUserValue(address vault, address user)
+        external
+        view
+        returns (uint256 collateralValue)
+    {
         IZenjiView v = IZenjiView(vault);
         uint256 supply = v.totalSupply();
         if (supply == 0) return 0;
         uint256 userShares = v.balanceOf(user);
-        return (v.getTotalCollateral() * userShares) / supply;
+        uint256 offset = v.VIRTUAL_SHARE_OFFSET();
+        return (userShares * (v.getTotalCollateral() + offset)) / (supply + offset);
     }
 
     function getHealth(address vault) external view returns (int256 health) {
@@ -46,7 +52,11 @@ contract ZenjiViewHelper {
         return ltv < (target - deadband) || ltv > (target + deadband);
     }
 
-    function getLtvBounds(address vault) external view returns (uint256 lowerBand, uint256 upperBand) {
+    function getLtvBounds(address vault)
+        external
+        view
+        returns (uint256 lowerBand, uint256 upperBand)
+    {
         IZenjiView v = IZenjiView(vault);
         uint256 target = v.targetLtv();
         uint256 deadband = v.DEADBAND_SPREAD();
@@ -77,7 +87,7 @@ contract ZenjiViewHelper {
         IZenjiView v = IZenjiView(vault);
         ILoanManager lm = v.loanManager();
 
-        if (!v.yieldEnabled()) {
+        if (v.idle()) {
             return v.collateralAsset().balanceOf(vault);
         }
 
@@ -119,7 +129,7 @@ contract ZenjiViewHelper {
         IZenjiView v = IZenjiView(vault);
         ILoanManager lm = v.loanManager();
 
-        if (!v.yieldEnabled()) {
+        if (v.idle()) {
             return lm.getCollateralValue(v.collateralAsset().balanceOf(vault));
         }
 

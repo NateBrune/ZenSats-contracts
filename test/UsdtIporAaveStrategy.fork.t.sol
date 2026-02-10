@@ -84,11 +84,7 @@ contract UsdtIporAaveStrategyForkTest is Test {
 
         viewHelper = new ZenjiViewHelper();
         swapper = new CurveThreeCryptoSwapper(
-            WBTC,
-            USDT,
-            TRICRYPTO_POOL,
-            TRICRYPTO_WBTC_INDEX,
-            TRICRYPTO_USDT_INDEX
+            owner, WBTC, USDT, TRICRYPTO_POOL, TRICRYPTO_WBTC_INDEX, TRICRYPTO_USDT_INDEX
         );
 
         loanManager = new AaveLoanManager(
@@ -115,14 +111,7 @@ contract UsdtIporAaveStrategyForkTest is Test {
             CRVUSD_INDEX
         );
 
-        vault = new Zenji(
-            WBTC,
-            USDT,
-            address(loanManager),
-            address(0),
-            owner,
-            address(viewHelper)
-        );
+        vault = new Zenji(WBTC, USDT, address(loanManager), address(0), owner, address(viewHelper));
 
         loanManager.initializeVault(address(vault));
         strategy.initializeVault(address(vault));
@@ -132,9 +121,6 @@ contract UsdtIporAaveStrategyForkTest is Test {
 
         vm.prank(address(vault));
         strategy.setSlippage(5e16);
-
-        vm.prank(owner);
-        vault.toggleYield(true);
 
         vm.prank(WBTC_WHALE);
         wbtc.transfer(user, 1e8); // 1 WBTC

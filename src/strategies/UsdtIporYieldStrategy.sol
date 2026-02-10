@@ -1,61 +1,28 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import { IYieldStrategy } from "../interfaces/IYieldStrategy.sol";
-import { IYieldVault } from "../interfaces/IYieldVault.sol";
-import { ICurveStableSwap } from "../interfaces/ICurveStableSwap.sol";
-import { IERC20 } from "../interfaces/IERC20.sol";
-import { SafeTransferLib } from "../libraries/SafeTransferLib.sol";
+import {BaseIporStrategy} from "./BaseIporStrategy.sol";
+import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
+import {ICurveStableSwap} from "../interfaces/ICurveStableSwap.sol";
+import {IERC20} from "../interfaces/IERC20.sol";
 
 /// @title UsdtIporYieldStrategy
 /// @notice Swaps USDT to crvUSD and deposits into IPOR PlasmaVault
-contract UsdtIporYieldStrategy is IYieldStrategy {
-    using SafeTransferLib for IERC20;
-
-    uint256 public constant PRECISION = 1e18;
+contract UsdtIporYieldStrategy is BaseIporStrategy {
     uint256 public constant DEFAULT_SLIPPAGE = 1e16;
     uint256 public constant MAX_SLIPPAGE = 5e16;
     uint256 public constant EMERGENCY_SLIPPAGE = 1e17;
 
-    IERC20 public immutable usdt;
     IERC20 public immutable crvUSD;
     ICurveStableSwap public immutable curvePool;
-    IYieldVault public immutable iporVault;
-    address public override vault;
-    address public initializer;
-
     int128 public immutable usdtIndex;
     int128 public immutable crvUsdIndex;
 
     uint256 public slippageTolerance = DEFAULT_SLIPPAGE;
-    uint256 private _costBasis;
-    bool public override paused;
-
-    uint256 private _status;
-    uint256 private constant _NOT_ENTERED = 1;
-    uint256 private constant _ENTERED = 2;
 
     event SlippageUpdated(uint256 oldSlippage, uint256 newSlippage);
     event SwappedUsdtToCrvUsd(uint256 usdtAmount, uint256 crvUsdReceived);
     event SwappedCrvUsdToUsdt(uint256 crvUsdAmount, uint256 usdtReceived);
-    event VaultInitialized(address indexed vault);
-
-    modifier onlyVault() {
-        if (msg.sender != vault) revert Unauthorized();
-        _;
-    }
-
-    modifier whenNotPaused() {
-        if (paused) revert StrategyPaused();
-        _;
-    }
-
-    modifier nonReentrant() {
-        if (_status == _ENTERED) revert Unauthorized();
-        _status = _ENTERED;
-        _;
-        _status = _NOT_ENTERED;
-    }
 
     constructor(
         address _usdt,
@@ -65,36 +32,12 @@ contract UsdtIporYieldStrategy is IYieldStrategy {
         address _iporVault,
         int128 _usdtIndex,
         int128 _crvUsdIndex
-    ) {
-        if (
-            _usdt == address(0) || _crvUSD == address(0) || _curvePool == address(0)
-                || _iporVault == address(0)
-        ) {
-            revert InvalidAddress();
-        }
-        usdt = IERC20(_usdt);
+    ) BaseIporStrategy(_usdt, _vault, _iporVault) {
+        if (_crvUSD == address(0) || _curvePool == address(0)) revert InvalidAddress();
         crvUSD = IERC20(_crvUSD);
-        if (_vault != address(0)) {
-            vault = _vault;
-            initializer = address(0);
-        } else {
-            initializer = msg.sender;
-        }
         curvePool = ICurveStableSwap(_curvePool);
-        iporVault = IYieldVault(_iporVault);
         usdtIndex = _usdtIndex;
         crvUsdIndex = _crvUsdIndex;
-        _status = _NOT_ENTERED;
-    }
-
-    function initializeVault(address _vault) external {
-        if (vault != address(0)) revert InvalidAddress();
-        if (_vault == address(0)) revert InvalidAddress();
-        if (msg.sender != initializer) revert Unauthorized();
-
-        vault = _vault;
-        initializer = address(0);
-        emit VaultInitialized(_vault);
     }
 
     function setSlippage(uint256 newSlippage) external onlyVault {
@@ -104,186 +47,67 @@ contract UsdtIporYieldStrategy is IYieldStrategy {
         emit SlippageUpdated(oldSlippage, newSlippage);
     }
 
-    // ============ Core Functions ============
-
-    function deposit(uint256 usdtAmount)
-        external
-        override
-        onlyVault
-        whenNotPaused
-        nonReentrant
-        returns (uint256 underlyingDeposited)
-    {
-        if (usdtAmount == 0) revert ZeroAmount();
-
-        usdt.safeTransferFrom(msg.sender, address(this), usdtAmount);
-        _costBasis += usdtAmount;
-
-        uint256 crvUsdReceived = _swapUsdtToCrvUsd(usdtAmount, slippageTolerance);
-        _ensureApprove(address(crvUSD), address(iporVault), crvUsdReceived);
-        iporVault.deposit(crvUsdReceived, address(this));
-
-        underlyingDeposited = crvUsdReceived;
-        emit Deposited(usdtAmount, underlyingDeposited);
-    }
-
-    function withdraw(uint256 usdtAmount)
-        external
-        override
-        onlyVault
-        nonReentrant
-        returns (uint256 usdtReceived)
-    {
-        if (usdtAmount == 0) revert ZeroAmount();
-
-        uint256 currentValue = balanceOf();
-        if (currentValue == 0) return 0;
-        if (usdtAmount > currentValue) usdtAmount = currentValue;
-
-        uint256 basisReduction = (_costBasis * usdtAmount) / currentValue;
-
-        uint256 shares = iporVault.balanceOf(address(this));
-        if (shares == 0) return 0;
-
-        uint256 sharesToRedeem = (shares * usdtAmount) / currentValue;
-        if (sharesToRedeem > shares) sharesToRedeem = shares;
-        if (sharesToRedeem == 0) return 0;
-
-        uint256 crvUsdReceived = iporVault.redeem(sharesToRedeem, address(this), address(this));
-        if (crvUsdReceived > 0) {
-            usdtReceived = _swapCrvUsdToUsdt(crvUsdReceived, slippageTolerance);
-        }
-
-        _costBasis = _costBasis > basisReduction ? _costBasis - basisReduction : 0;
-
-        if (usdtReceived > 0) {
-            usdt.safeTransfer(vault, usdtReceived);
-        }
-
-        emit Withdrawn(usdtAmount, usdtReceived);
-    }
-
-    function withdrawAll()
-        external
-        override
-        onlyVault
-        nonReentrant
-        returns (uint256 usdtReceived)
-    {
-        uint256 shares = iporVault.balanceOf(address(this));
-        if (shares == 0) return 0;
-
-        uint256 crvUsdReceived = iporVault.redeem(shares, address(this), address(this));
-        if (crvUsdReceived > 0) {
-            usdtReceived = _swapCrvUsdToUsdt(crvUsdReceived, slippageTolerance);
-        }
-
-        _costBasis = 0;
-        if (usdtReceived > 0) {
-            usdt.safeTransfer(vault, usdtReceived);
-        }
-
-        emit Withdrawn(type(uint256).max, usdtReceived);
-    }
-
-    function harvest()
-        external
-        override
-        onlyVault
-        whenNotPaused
-        nonReentrant
-        returns (uint256 rewardsValue)
-    {
-        emit Harvested(0);
-        return 0;
-    }
-
-    function emergencyWithdraw()
-        external
-        override
-        onlyVault
-        nonReentrant
-        returns (uint256 usdtReceived)
-    {
-        uint256 shares = iporVault.balanceOf(address(this));
-        if (shares == 0) return 0;
-
-        uint256 crvUsdReceived = iporVault.redeem(shares, address(this), address(this));
-        if (crvUsdReceived > 0) {
-            usdtReceived = _swapCrvUsdToUsdt(crvUsdReceived, EMERGENCY_SLIPPAGE);
-        }
-
-        _costBasis = 0;
-        if (usdtReceived > 0) {
-            usdt.safeTransfer(vault, usdtReceived);
-        }
-
-        emit EmergencyWithdrawn(usdtReceived);
-    }
-
-    function pauseStrategy()
-        external
-        override
-        onlyVault
-        nonReentrant
-        returns (uint256 usdtReceived)
-    {
-        paused = !paused;
-
-        if (paused) {
-            uint256 shares = iporVault.balanceOf(address(this));
-            if (shares > 0) {
-                uint256 crvUsdReceived = iporVault.redeem(shares, address(this), address(this));
-                if (crvUsdReceived > 0) {
-                    usdtReceived = _swapCrvUsdToUsdt(crvUsdReceived, EMERGENCY_SLIPPAGE);
-                }
-            }
-
-            _costBasis = 0;
-            if (usdtReceived > 0) {
-                usdt.safeTransfer(vault, usdtReceived);
-            }
-        }
-
-        emit StrategyPauseToggled(paused, usdtReceived);
-    }
-
     // ============ View Functions ============
 
-    function asset() external view override returns (address) {
-        return address(usdt);
-    }
-
+    /// @inheritdoc IYieldStrategy
     function underlyingAsset() external view override returns (address) {
         return address(crvUSD);
     }
 
+    /// @inheritdoc IYieldStrategy
     function balanceOf() public view override returns (uint256) {
-        uint256 shares = iporVault.balanceOf(address(this));
-        if (shares == 0) return 0;
-        uint256 crvUsdValue = iporVault.convertToAssets(shares);
-        if (crvUsdValue == 0) return 0;
-        return curvePool.get_dy(crvUsdIndex, usdtIndex, crvUsdValue);
+        uint256 crvUsdValue = _iporBalance();
+        if (crvUsdValue < 1) return 0;
+        // Use 1:1 stablecoin parity (crvUSD 18 decimals -> USDT 6 decimals)
+        return crvUsdValue / 1e12;
     }
 
-    function costBasis() external view override returns (uint256) {
-        return _costBasis;
-    }
-
-    function unrealizedProfit() external view override returns (uint256) {
-        uint256 currentValue = balanceOf();
-        return currentValue > _costBasis ? currentValue - _costBasis : 0;
-    }
-
-    function pendingRewards() external pure override returns (uint256) {
-        return 0;
-    }
-
+    /// @inheritdoc IYieldStrategy
     function name() external pure override returns (string memory) {
         return "USDT -> crvUSD IPOR Strategy";
     }
 
-    // ============ Internal ============
+    // ============ Internal Functions ============
+
+    function _deposit(uint256 usdtAmount) internal override returns (uint256 underlyingDeposited) {
+        uint256 crvUsdReceived = _swapUsdtToCrvUsd(usdtAmount, slippageTolerance);
+        _ensureApprove(address(crvUSD), address(iporVault), crvUsdReceived);
+        uint256 sharesMinted = iporVault.deposit(crvUsdReceived, address(this));
+        underlyingDeposited = iporVault.convertToAssets(sharesMinted);
+    }
+
+    function _withdraw(uint256 usdtAmount) internal override returns (uint256 usdtReceived) {
+        uint256 currentValue = balanceOf();
+        if (currentValue < 1) return 0;
+
+        uint256 shares = iporVault.balanceOf(address(this));
+        if (shares < 1) return 0;
+
+        uint256 sharesToRedeem = (shares * usdtAmount) / currentValue;
+        if (sharesToRedeem > shares) sharesToRedeem = shares;
+        if (sharesToRedeem < 1) return 0;
+
+        uint256 crvUsdReceived = _redeemFromIpor(sharesToRedeem);
+        if (crvUsdReceived > 0) {
+            usdtReceived = _swapCrvUsdToUsdt(crvUsdReceived, slippageTolerance);
+        }
+    }
+
+    function _withdrawAll() internal override returns (uint256 usdtReceived) {
+        uint256 crvUsdReceived = _redeemAllFromIpor();
+        if (crvUsdReceived > 0) {
+            usdtReceived = _swapCrvUsdToUsdt(crvUsdReceived, slippageTolerance);
+        }
+    }
+
+    function _emergencyWithdraw() internal override returns (uint256 usdtReceived) {
+        uint256 crvUsdReceived = _redeemAllFromIpor();
+        if (crvUsdReceived > 0) {
+            usdtReceived = _swapCrvUsdToUsdt(crvUsdReceived, EMERGENCY_SLIPPAGE);
+        }
+    }
+
+    // ============ Internal Swap Functions ============
 
     function _swapUsdtToCrvUsd(uint256 usdtAmount, uint256 slippage)
         internal
@@ -292,7 +116,7 @@ contract UsdtIporYieldStrategy is IYieldStrategy {
         uint256 expectedOut = curvePool.get_dy(usdtIndex, crvUsdIndex, usdtAmount);
         uint256 minOut = (expectedOut * (PRECISION - slippage)) / PRECISION;
 
-        _ensureApprove(address(usdt), address(curvePool), usdtAmount);
+        _ensureApprove(address(debtAsset), address(curvePool), usdtAmount);
         crvUsdReceived = _exchange(usdtIndex, crvUsdIndex, usdtAmount, minOut);
         emit SwappedUsdtToCrvUsd(usdtAmount, crvUsdReceived);
     }
@@ -325,9 +149,5 @@ contract UsdtIporYieldStrategy is IYieldStrategy {
         }
         if (!ok || data.length < 32) revert TransferFailed();
         amountOut = abi.decode(data, (uint256));
-    }
-
-    function _ensureApprove(address token, address spender, uint256 amount) internal {
-        IERC20(token).ensureApproval(spender, amount);
     }
 }

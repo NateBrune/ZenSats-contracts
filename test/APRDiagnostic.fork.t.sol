@@ -116,21 +116,14 @@ contract APRDiagnosticForkTest is Test {
             WBTC_CRVUSD_POOL,
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
+            address(0),
             predictedVault
         );
 
         vault = new Zenji(
-            WBTC,
-            CRVUSD,
-            address(loanManager),
-            address(strategy),
-            owner,
-            address(viewHelper)
+            WBTC, CRVUSD, address(loanManager), address(strategy), owner, address(viewHelper)
         );
         tracker = new VaultTracker(address(vault));
-
-        vm.prank(owner);
-        vault.toggleYield(true);
 
         // User deposits
         vm.startPrank(user1);
@@ -257,10 +250,7 @@ contract APRDiagnosticForkTest is Test {
         }
 
         // Vault totals
-        console.log(
-            "Vault getTotalValue (debt):",
-            viewHelper.getTotalDebtValue(address(vault))
-        );
+        console.log("Vault getTotalValue (debt):", viewHelper.getTotalDebtValue(address(vault)));
         console.log("Vault getTotalCollateral:", vault.getTotalCollateral());
         console.log("Tracker sharePrice:", tracker.sharePrice());
     }

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import { IYieldStrategy } from "../interfaces/IYieldStrategy.sol";
-import { IERC20 } from "../interfaces/IERC20.sol";
-import { SafeTransferLib } from "../libraries/SafeTransferLib.sol";
+import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
+import {IERC20} from "../interfaces/IERC20.sol";
+import {SafeTransferLib} from "../libraries/SafeTransferLib.sol";
 
 /// @title BaseYieldStrategy
 /// @notice Abstract base contract for yield strategies with cost basis tracking
@@ -13,20 +13,22 @@ abstract contract BaseYieldStrategy is IYieldStrategy {
 
     // ============ Constants ============
 
-    /// @notice Precision for percentage calculations (100% = 1e18)
     uint256 public constant PRECISION = 1e18;
 
     // ============ Immutables ============
 
-    /// @notice crvUSD token (asset accepted by strategy)
-    IERC20 public immutable crvUSD;
-
-    /// @notice The vault that owns this strategy
-    address public immutable override vault;
+    /// @notice The debt asset token (asset accepted/returned by this strategy)
+    IERC20 public immutable debtAsset;
 
     // ============ State ============
 
-    /// @notice Total crvUSD deposited (cost basis for profit calculation)
+    /// @notice The vault that owns this strategy
+    address public override vault;
+
+    /// @notice Deployer address for deferred vault initialization
+    address public initializer;
+
+    /// @notice Total debt asset deposited (cost basis for profit calculation)
     uint256 internal _costBasis;
 
     /// @notice Whether the strategy is paused
@@ -36,6 +38,10 @@ abstract contract BaseYieldStrategy is IYieldStrategy {
     uint256 private _status;
     uint256 private constant _NOT_ENTERED = 1;
     uint256 private constant _ENTERED = 2;
+
+    // ============ Events ============
+
+    event VaultInitialized(address indexed vault);
 
     // ============ Modifiers ============
 
@@ -58,19 +64,37 @@ abstract contract BaseYieldStrategy is IYieldStrategy {
 
     // ============ Constructor ============
 
-    constructor(address _crvUSD, address _vault) {
-        if (_crvUSD == address(0) || _vault == address(0)) {
-            revert InvalidAddress();
+    /// @param _debtAsset The debt asset token address
+    /// @param _vault The vault address (or zero for deferred initialization)
+    constructor(address _debtAsset, address _vault) {
+        if (_debtAsset == address(0)) revert InvalidAddress();
+        debtAsset = IERC20(_debtAsset);
+        if (_vault != address(0)) {
+            vault = _vault;
+            initializer = address(0);
+        } else {
+            initializer = msg.sender;
         }
-        crvUSD = IERC20(_crvUSD);
-        vault = _vault;
         _status = _NOT_ENTERED;
+    }
+
+    // ============ Deferred Initialization ============
+
+    /// @notice Initialize the vault address (can only be called once by deployer)
+    function initializeVault(address newVault) external {
+        if (vault != address(0)) revert InvalidAddress();
+        if (newVault == address(0)) revert InvalidAddress();
+        if (msg.sender != initializer) revert Unauthorized();
+
+        vault = newVault;
+        initializer = address(0);
+        emit VaultInitialized(newVault);
     }
 
     // ============ Core Functions ============
 
     /// @inheritdoc IYieldStrategy
-    function deposit(uint256 crvUsdAmount)
+    function deposit(uint256 amount)
         external
         override
         onlyVault
@@ -78,79 +102,50 @@ abstract contract BaseYieldStrategy is IYieldStrategy {
         nonReentrant
         returns (uint256 underlyingDeposited)
     {
-        if (crvUsdAmount == 0) revert ZeroAmount();
+        if (amount == 0) revert ZeroAmount();
 
-        // Transfer crvUSD from vault
-        if (!crvUSD.transferFrom(msg.sender, address(this), crvUsdAmount)) {
-            revert TransferFailed();
-        }
-
-        // Update cost basis
-        _costBasis += crvUsdAmount;
-
-        // Deposit to underlying protocol
-        underlyingDeposited = _deposit(crvUsdAmount);
-
-        emit Deposited(crvUsdAmount, underlyingDeposited);
+        debtAsset.safeTransferFrom(msg.sender, address(this), amount);
+        _costBasis += amount;
+        underlyingDeposited = _deposit(amount);
+        emit Deposited(amount, underlyingDeposited);
     }
 
     /// @inheritdoc IYieldStrategy
-    function withdraw(uint256 crvUsdAmount)
+    function withdraw(uint256 amount)
         external
         override
         onlyVault
         nonReentrant
-        returns (uint256 crvUsdReceived)
+        returns (uint256 received)
     {
-        if (crvUsdAmount == 0) revert ZeroAmount();
+        if (amount == 0) revert ZeroAmount();
 
         uint256 currentValue = this.balanceOf();
         if (currentValue == 0) return 0;
-        if (crvUsdAmount > currentValue) {
-            crvUsdAmount = currentValue;
-        }
+        if (amount > currentValue) amount = currentValue;
 
-        // Calculate proportional cost basis reduction
-        uint256 basisReduction = (_costBasis * crvUsdAmount) / currentValue;
-
-        // Withdraw from underlying protocol
-        crvUsdReceived = _withdraw(crvUsdAmount);
-
-        // Update cost basis
+        uint256 basisReduction = (_costBasis * amount) / currentValue;
+        received = _withdraw(amount);
         _costBasis = _costBasis > basisReduction ? _costBasis - basisReduction : 0;
 
-        // Transfer crvUSD to vault
-        if (crvUsdReceived > 0) {
-            if (!crvUSD.transfer(vault, crvUsdReceived)) {
-                revert TransferFailed();
-            }
+        if (received > 0) {
+            debtAsset.safeTransfer(vault, received);
         }
 
-        emit Withdrawn(crvUsdAmount, crvUsdReceived);
+        emit Withdrawn(amount, received);
     }
 
     /// @inheritdoc IYieldStrategy
-    function withdrawAll()
-        external
-        override
-        onlyVault
-        nonReentrant
-        returns (uint256 crvUsdReceived)
-    {
-        crvUsdReceived = _withdrawAll();
-
-        // Reset cost basis
+    function withdrawAll() external override onlyVault nonReentrant returns (uint256 received) {
+        received = _withdrawAll();
         _costBasis = 0;
 
-        // Transfer all crvUSD to vault
-        uint256 balance = crvUSD.balanceOf(address(this));
+        uint256 balance = debtAsset.balanceOf(address(this));
         if (balance > 0) {
-            if (!crvUSD.transfer(vault, balance)) {
-                revert TransferFailed();
-            }
+            debtAsset.safeTransfer(vault, balance);
         }
 
-        emit Withdrawn(type(uint256).max, crvUsdReceived);
+        emit Withdrawn(type(uint256).max, received);
     }
 
     /// @inheritdoc IYieldStrategy
@@ -172,57 +167,41 @@ abstract contract BaseYieldStrategy is IYieldStrategy {
         override
         onlyVault
         nonReentrant
-        returns (uint256 crvUsdReceived)
+        returns (uint256 received)
     {
-        crvUsdReceived = _emergencyWithdraw();
-
-        // Reset cost basis
+        received = _emergencyWithdraw();
         _costBasis = 0;
 
-        // Transfer all crvUSD to vault
-        uint256 balance = crvUSD.balanceOf(address(this));
+        uint256 balance = debtAsset.balanceOf(address(this));
         if (balance > 0) {
-            if (!crvUSD.transfer(vault, balance)) {
-                revert TransferFailed();
-            }
+            debtAsset.safeTransfer(vault, balance);
         }
 
-        emit EmergencyWithdrawn(crvUsdReceived);
+        emit EmergencyWithdrawn(received);
     }
 
     /// @inheritdoc IYieldStrategy
-    function pauseStrategy()
-        external
-        override
-        onlyVault
-        nonReentrant
-        returns (uint256 crvUsdReceived)
-    {
+    function pauseStrategy() external override onlyVault nonReentrant returns (uint256 received) {
         paused = !paused;
 
         if (paused) {
-            crvUsdReceived = _withdrawAll();
-
-            // Reset cost basis
+            received = _withdrawAll();
             _costBasis = 0;
 
-            // Transfer all crvUSD to vault
-            uint256 balance = crvUSD.balanceOf(address(this));
+            uint256 balance = debtAsset.balanceOf(address(this));
             if (balance > 0) {
-                if (!crvUSD.transfer(vault, balance)) {
-                    revert TransferFailed();
-                }
+                debtAsset.safeTransfer(vault, balance);
             }
         }
 
-        emit StrategyPauseToggled(paused, crvUsdReceived);
+        emit StrategyPauseToggled(paused, received);
     }
 
     // ============ View Functions ============
 
     /// @inheritdoc IYieldStrategy
     function asset() external view override returns (address) {
-        return address(crvUSD);
+        return address(debtAsset);
     }
 
     /// @inheritdoc IYieldStrategy
@@ -241,34 +220,14 @@ abstract contract BaseYieldStrategy is IYieldStrategy {
 
     // ============ Internal Functions (to be implemented by derived contracts) ============
 
-    /// @notice Internal deposit logic - implement in derived contract
-    /// @param crvUsdAmount Amount of crvUSD to deposit
-    /// @return underlyingDeposited Amount deposited to underlying protocol
-    function _deposit(uint256 crvUsdAmount)
-        internal
-        virtual
-        returns (uint256 underlyingDeposited);
-
-    /// @notice Internal withdraw logic - implement in derived contract
-    /// @param crvUsdAmount Amount of crvUSD to withdraw
-    /// @return crvUsdReceived Actual crvUSD received
-    function _withdraw(uint256 crvUsdAmount) internal virtual returns (uint256 crvUsdReceived);
-
-    /// @notice Internal withdraw all logic - implement in derived contract
-    /// @return crvUsdReceived Total crvUSD received
-    function _withdrawAll() internal virtual returns (uint256 crvUsdReceived);
-
-    /// @notice Internal harvest logic - implement in derived contract
-    /// @return rewardsValue Value of rewards harvested
+    function _deposit(uint256 amount) internal virtual returns (uint256 underlyingDeposited);
+    function _withdraw(uint256 amount) internal virtual returns (uint256 received);
+    function _withdrawAll() internal virtual returns (uint256 received);
     function _harvest() internal virtual returns (uint256 rewardsValue);
-
-    /// @notice Internal emergency withdraw logic - implement in derived contract
-    /// @return crvUsdReceived Total crvUSD received
-    function _emergencyWithdraw() internal virtual returns (uint256 crvUsdReceived);
+    function _emergencyWithdraw() internal virtual returns (uint256 received);
 
     // ============ Helper Functions ============
 
-    /// @notice Ensure token approval for spender
     function _ensureApprove(address token, address spender, uint256 amount) internal {
         IERC20(token).ensureApproval(spender, amount);
     }

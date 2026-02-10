@@ -16,10 +16,14 @@ interface ISwapper {
     /// @notice Swap collateral for debt asset
     /// @param collateralAmount Amount of collateral to swap
     /// @return debtReceived Amount of debt asset received
-    function swapCollateralForDebt(uint256 collateralAmount) external returns (uint256 debtReceived);
+    function swapCollateralForDebt(uint256 collateralAmount)
+        external
+        returns (uint256 debtReceived);
 
     /// @notice Swap debt asset for collateral
     /// @param debtAmount Amount of debt asset to swap
     /// @return collateralReceived Amount of collateral received
-    function swapDebtForCollateral(uint256 debtAmount) external returns (uint256 collateralReceived);
+    function swapDebtForCollateral(uint256 debtAmount)
+        external
+        returns (uint256 collateralReceived);
 }

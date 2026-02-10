@@ -370,7 +370,11 @@ contract ZenjiTest is Test {
 
         // Compute the address the vault will be deployed to
         address expectedVaultAddress =
-            computeCreateAddress(address(this), vm.getNonce(address(this)) + 2);
+            computeCreateAddress(address(this), vm.getNonce(address(this)) + 3);
+
+        // Deploy swapper first (needed by LlamaLoanManager)
+        CurveTwoCryptoSwapper swapper =
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
 
         // Deploy the mock strategy pointing to the expected vault address
         mockStrategy = new MockYieldStrategy(CRVUSD, expectedVaultAddress, address(mockYield));
@@ -382,28 +386,20 @@ contract ZenjiTest is Test {
             WBTC_CRVUSD_POOL,
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
+            address(swapper),
             expectedVaultAddress
         );
 
         // Redeploy the vault with the mock strategy
         vault = new Zenji(
-            WBTC,
-            CRVUSD,
-            address(loanManager),
-            address(mockStrategy),
-            owner,
-            address(viewHelper)
+            WBTC, CRVUSD, address(loanManager), address(mockStrategy), owner, address(viewHelper)
         );
 
-        CurveTwoCryptoSwapper swapper = new CurveTwoCryptoSwapper(
-            WBTC,
-            CRVUSD,
-            WBTC_CRVUSD_POOL,
-            1,
-            0
-        );
-        vm.prank(owner);
-        vault.setSwapper(address(swapper));
+        vm.startPrank(owner);
+        vault.proposeSwapper(address(swapper));
+        warpAndMock(block.timestamp + 2 days + 1);
+        vault.executeSwapper();
+        vm.stopPrank();
 
         // Verify the addresses match
         require(address(vault) == expectedVaultAddress, "Vault address mismatch");
@@ -463,11 +459,6 @@ contract ZenjiTest is Test {
 
         // Deploy mock yield strategy (IPOR PlasmaVault is at capacity)
         increaseIporVaultCap();
-
-        // Enable yield and ensure unpaused
-        vm.startPrank(owner);
-        vault.toggleYield(true);
-        vm.stopPrank();
     }
 
     // ============ Basic Deposit/Withdraw Tests ============
@@ -545,9 +536,9 @@ contract ZenjiTest is Test {
 
         vm.startPrank(owner);
         vault.enterEmergencyMode();
-        vault.emergencyWithdrawYield();
-        vault.emergencyUnwindLoanAndRecover();
-        vault.setLiquidationComplete();
+        vault.emergencyStep(0);
+        vault.emergencyStep(1);
+        vault.emergencyStep(2);
         vm.stopPrank();
 
         vm.prank(user1);
@@ -566,9 +557,9 @@ contract ZenjiTest is Test {
 
         vm.startPrank(owner);
         vault.enterEmergencyMode();
-        vault.emergencyWithdrawYield();
-        vault.emergencyUnwindLoanAndRecover();
-        vault.setLiquidationComplete();
+        vault.emergencyStep(0);
+        vault.emergencyStep(1);
+        vault.emergencyStep(2);
         vm.stopPrank();
 
         uint256 max = vault.maxWithdraw(user1);
@@ -595,9 +586,9 @@ contract ZenjiTest is Test {
 
         vm.startPrank(owner);
         vault.enterEmergencyMode();
-        vault.emergencyWithdrawYield();
-        vault.emergencyUnwindLoanAndRecover();
-        vault.setLiquidationComplete();
+        vault.emergencyStep(0);
+        vault.emergencyStep(1);
+        vault.emergencyStep(2);
         vm.stopPrank();
 
         uint256 availableWbtcBefore = wbtc.balanceOf(address(vault));
@@ -630,10 +621,13 @@ contract ZenjiTest is Test {
     // ============ Admin Tests ============
 
     function test_setIdle_enterExit() public {
+        // Deposit first so there's collateral to deploy when exiting idle
+        vm.prank(user1);
+        vault.deposit(1e8, user1);
+
         vm.prank(owner);
         vault.setIdle(true);
         assertTrue(vault.idle(), "Should be idle");
-        assertFalse(vault.yieldEnabled(), "Yield should be disabled in idle");
 
         vm.prank(owner);
         vault.setIdle(false);
@@ -704,10 +698,7 @@ contract ZenjiTest is Test {
 
     function test_depositCapExceeded_reverts() public {
         vm.prank(owner);
-        vault.toggleYield(false);
-
-        vm.prank(owner);
-        vault.setDepositCap(5e7); // 0.5 WBTC
+        vault.setParam(2, 5e7); // 0.5 WBTC
 
         vm.prank(user1);
         vm.expectRevert(Zenji.DepositCapExceeded.selector);
@@ -716,7 +707,7 @@ contract ZenjiTest is Test {
 
     function test_getTotalValue_whenYieldDisabled() public {
         vm.prank(owner);
-        vault.toggleYield(false);
+        vault.setIdle(true);
 
         vm.prank(user1);
         vault.deposit(1e8, user1);
@@ -728,10 +719,10 @@ contract ZenjiTest is Test {
         assertGt(totalValue, 0);
     }
 
-    function test_setRebalanceBountyRate_revertsIfTooHigh() public {
+    function test_setParam_bountyRate_revertsIfTooHigh() public {
         vm.prank(owner);
         vm.expectRevert(Zenji.InvalidBountyRate.selector);
-        vault.setRebalanceBountyRate(type(uint256).max);
+        vault.setParam(3, type(uint256).max);
     }
 
     // function test_pauseStrategy_unwindsAndPauses() public {
@@ -767,12 +758,6 @@ contract ZenjiTest is Test {
     //     vault.pauseStrategy();
     // }
 
-    function test_toggleYield() public {
-        vm.prank(owner);
-        vault.toggleYield(false);
-        assertFalse(vault.yieldEnabled(), "Yield should be disabled");
-    }
-
     function test_setInitialStrategy_onlyOnce() public {
         // Deploy a vault with no initial strategy
         uint64 nonce = vm.getNonce(address(this));
@@ -784,16 +769,11 @@ contract ZenjiTest is Test {
             WBTC_CRVUSD_POOL,
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
+            address(0),
             predictedVault
         );
-        Zenji freshVault = new Zenji(
-            WBTC,
-            CRVUSD,
-            address(loanManager),
-            address(0),
-            owner,
-            address(viewHelper)
-        );
+        Zenji freshVault =
+            new Zenji(WBTC, CRVUSD, address(loanManager), address(0), owner, address(viewHelper));
 
         MockYieldVault localYield = new MockYieldVault(CRVUSD);
         MockYieldStrategy localStrategy =
@@ -817,44 +797,39 @@ contract ZenjiTest is Test {
             WBTC_CRVUSD_POOL,
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
+            address(0),
             predictedVault
         );
-        Zenji freshVault = new Zenji(
-            WBTC,
-            CRVUSD,
-            address(loanManager),
-            address(0),
-            owner,
-            address(viewHelper)
-        );
+        Zenji freshVault =
+            new Zenji(WBTC, CRVUSD, address(loanManager), address(0), owner, address(viewHelper));
 
         vm.prank(owner);
         vm.expectRevert(Zenji.InvalidAddress.selector);
         freshVault.setInitialStrategy(address(0));
     }
 
-    function test_transferOwnership() public {
+    function test_transferRole_owner() public {
         address newOwner = makeAddr("newOwner");
 
         vm.prank(owner);
-        vault.transferOwnership(newOwner);
+        vault.transferRole(0, newOwner);
         assertEq(vault.pendingOwner(), newOwner, "Pending owner mismatch");
 
         vm.prank(newOwner);
-        vault.acceptOwnership();
+        vault.acceptRole(0);
         assertEq(vault.owner(), newOwner, "Owner mismatch");
     }
 
-    function test_transferOwnership_revertsOnZero() public {
+    function test_transferRole_owner_revertsOnZero() public {
         vm.prank(owner);
         vm.expectRevert(Zenji.InvalidAddress.selector);
-        vault.transferOwnership(address(0));
+        vault.transferRole(0, address(0));
     }
 
-    function test_acceptOwnership_revertsIfNotPending() public {
+    function test_acceptRole_owner_revertsIfNotPending() public {
         vm.prank(user1);
         vm.expectRevert(Zenji.Unauthorized.selector);
-        vault.acceptOwnership();
+        vault.acceptRole(0);
     }
 
     function test_onlyOwner() public {
@@ -877,35 +852,35 @@ contract ZenjiTest is Test {
 
     // ============ Setter Tests ============
 
-    function test_setFeeRate() public {
+    function test_setParam_feeRate() public {
         uint256 newFeeRate = 5e16; // 5%
 
         vm.prank(owner);
-        vault.setFeeRate(newFeeRate);
+        vault.setParam(0, newFeeRate);
 
         assertEq(vault.feeRate(), newFeeRate, "Fee rate should be updated");
     }
 
-    function test_setFeeRate_revertsIfTooHigh() public {
+    function test_setParam_feeRate_revertsIfTooHigh() public {
         vm.startPrank(owner);
         vm.expectRevert(Zenji.InvalidFeeRate.selector);
-        vault.setFeeRate(type(uint256).max);
+        vault.setParam(0, type(uint256).max);
         vm.stopPrank();
     }
 
-    function test_setTargetLtv() public {
+    function test_setParam_targetLtv() public {
         uint256 newLtv = 25e16; // 25%
 
         vm.prank(owner);
-        vault.setTargetLtv(newLtv);
+        vault.setParam(1, newLtv);
 
         assertEq(vault.targetLtv(), newLtv, "Target LTV should be updated");
     }
 
-    function test_setTargetLtv_revertsIfOutOfRange() public {
+    function test_setParam_targetLtv_revertsIfOutOfRange() public {
         vm.startPrank(owner);
         vm.expectRevert(Zenji.InvalidTargetLtv.selector);
-        vault.setTargetLtv(0);
+        vault.setParam(1, 0);
         vm.stopPrank();
     }
 
@@ -915,7 +890,6 @@ contract ZenjiTest is Test {
         vm.prank(owner);
         vault.enterEmergencyMode();
         assertTrue(vault.emergencyMode(), "Emergency mode should be enabled");
-        assertFalse(vault.yieldEnabled(), "Yield should be disabled");
 
         // Deposits should fail (emergency mode)
         vm.prank(user1);
@@ -928,20 +902,19 @@ contract ZenjiTest is Test {
         vault.enterEmergencyMode();
     }
 
-    function test_emergencyWithdrawYield_revertsWhenNotEmergency() public {
+    function test_emergencyStep_revertsWhenNotEmergency() public {
         vm.prank(owner);
         vm.expectRevert(Zenji.EmergencyModeNotActive.selector);
-        vault.emergencyWithdrawYield();
+        vault.emergencyStep(0);
     }
 
     function test_emergencyFlow_noLoanPath() public {
-        vm.prank(owner);
+        vm.startPrank(owner);
         vault.enterEmergencyMode();
-
-        vm.prank(owner);
-        vault.emergencyWithdrawYield();
-        vault.emergencyUnwindLoanAndRecover();
-        vault.setLiquidationComplete();
+        vault.emergencyStep(0);
+        vault.emergencyStep(1);
+        vault.emergencyStep(2);
+        vm.stopPrank();
 
         assertTrue(vault.liquidationComplete(), "Liquidation should be complete");
     }
@@ -949,12 +922,16 @@ contract ZenjiTest is Test {
     function test_emergencyRedeemYield_revertsWhenNotEmergency() public {
         vm.prank(owner);
         vm.expectRevert(Zenji.EmergencyModeNotActive.selector);
-        vault.emergencyRedeemYield();
+        vault.emergencyRescue(2);
     }
 
     function test_emergencyWithdraw_withBrickedStrategy_recoversSomeFunds() public {
         address expectedVaultAddress =
-            computeCreateAddress(address(this), vm.getNonce(address(this)) + 2);
+            computeCreateAddress(address(this), vm.getNonce(address(this)) + 3);
+
+        // Deploy swapper first
+        CurveTwoCryptoSwapper swapper =
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
 
         MockBrickedStrategy bricked = new MockBrickedStrategy(CRVUSD, expectedVaultAddress);
 
@@ -965,27 +942,19 @@ contract ZenjiTest is Test {
             WBTC_CRVUSD_POOL,
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
+            address(swapper),
             expectedVaultAddress
         );
 
         Zenji brickedVault = new Zenji(
-            WBTC,
-            CRVUSD,
-            address(loanManager),
-            address(bricked),
-            owner,
-            address(viewHelper)
+            WBTC, CRVUSD, address(loanManager), address(bricked), owner, address(viewHelper)
         );
 
-        CurveTwoCryptoSwapper swapper = new CurveTwoCryptoSwapper(
-            WBTC,
-            CRVUSD,
-            WBTC_CRVUSD_POOL,
-            1,
-            0
-        );
-        vm.prank(owner);
-        brickedVault.setSwapper(address(swapper));
+        vm.startPrank(owner);
+        brickedVault.proposeSwapper(address(swapper));
+        warpAndMock(block.timestamp + 2 days + 1);
+        brickedVault.executeSwapper();
+        vm.stopPrank();
 
         require(address(brickedVault) == expectedVaultAddress, "Vault address mismatch");
 
@@ -999,9 +968,9 @@ contract ZenjiTest is Test {
 
         vm.startPrank(owner);
         brickedVault.enterEmergencyMode();
-        brickedVault.emergencyWithdrawYield();
-        brickedVault.emergencyUnwindLoanAndRecover();
-        brickedVault.setLiquidationComplete();
+        brickedVault.emergencyStep(0);
+        brickedVault.emergencyStep(1);
+        brickedVault.emergencyStep(2);
         vm.stopPrank();
 
         uint256 balanceBefore = wbtc.balanceOf(user1);
@@ -1032,9 +1001,6 @@ contract ZenjiTest is Test {
         // Deposit first
         vm.prank(user1);
         vault.deposit(1e8, user1);
-        vault.emergencyWithdrawYield();
-        vault.emergencyUnwindLoanAndRecover();
-        vault.setLiquidationComplete();
 
         // Wait for redemption delay
         warpAndMock(block.timestamp + 2);
@@ -1043,9 +1009,9 @@ contract ZenjiTest is Test {
         // Enter emergency mode and liquidate
         vm.startPrank(owner);
         vault.enterEmergencyMode();
-        vault.emergencyWithdrawYield();
-        vault.emergencyUnwindLoanAndRecover();
-        vault.setLiquidationComplete();
+        vault.emergencyStep(0);
+        vault.emergencyStep(1);
+        vault.emergencyStep(2);
         vm.stopPrank();
 
         assertTrue(vault.liquidationComplete(), "Liquidation should be complete");
@@ -1072,16 +1038,11 @@ contract ZenjiTest is Test {
             WBTC_CRVUSD_POOL,
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
+            address(0),
             predictedVault
         );
-        Zenji freshVault = new Zenji(
-            WBTC,
-            CRVUSD,
-            address(loanManager),
-            address(0),
-            owner,
-            address(viewHelper)
-        );
+        Zenji freshVault =
+            new Zenji(WBTC, CRVUSD, address(loanManager), address(0), owner, address(viewHelper));
 
         vm.expectRevert(Zenji.InvalidStrategy.selector);
         freshVault.harvestYield();
@@ -1132,18 +1093,18 @@ contract ZenjiTest is Test {
 
     // ============ Deposit Cap Tests ============
 
-    function test_setDepositCap() public {
+    function test_setParam_depositCap() public {
         uint256 cap = 5e8; // 5 WBTC
 
         vm.prank(owner);
-        vault.setDepositCap(cap);
+        vault.setParam(2, cap);
 
         assertEq(vault.depositCap(), cap, "Deposit cap mismatch");
     }
 
     function test_depositCapExceeded() public {
         vm.prank(owner);
-        vault.setDepositCap(5e7); // 0.5 WBTC cap
+        vault.setParam(2, 5e7); // 0.5 WBTC cap
 
         vm.prank(user1);
         vm.expectRevert(Zenji.DepositCapExceeded.selector);
@@ -1174,7 +1135,7 @@ contract ZenjiTest is Test {
 
     function testFuzz_deposit(uint256 amount) public {
         // Bound to reasonable range
-        amount = bound(amount, vault.MIN_DEPOSIT(), 5e8);
+        amount = bound(amount, 1e4, 5e8);
 
         vm.prank(user1);
         uint256 shares = vault.deposit(amount, user1);
@@ -1367,7 +1328,7 @@ contract ZenjiTest is Test {
 
     function test_erc4626_maxDeposit_withCap() public {
         vm.prank(owner);
-        vault.setDepositCap(5e8);
+        vault.setParam(2, 5e8);
 
         uint256 max = vault.maxDeposit(user1);
         assertEq(max, 5e8, "Max deposit should equal cap");
@@ -1430,9 +1391,9 @@ contract ZenjiTest is Test {
 
         vm.startPrank(owner);
         vault.enterEmergencyMode();
-        vault.emergencyWithdrawYield();
-        vault.emergencyUnwindLoanAndRecover();
-        vault.setLiquidationComplete();
+        vault.emergencyStep(0);
+        vault.emergencyStep(1);
+        vault.emergencyStep(2);
         vm.stopPrank();
 
         uint256 availableWbtc = wbtc.balanceOf(address(vault));
@@ -1460,9 +1421,9 @@ contract ZenjiTest is Test {
 
         vm.startPrank(owner);
         vault.enterEmergencyMode();
-        vault.emergencyWithdrawYield();
-        vault.emergencyUnwindLoanAndRecover();
-        vault.setLiquidationComplete();
+        vault.emergencyStep(0);
+        vault.emergencyStep(1);
+        vault.emergencyStep(2);
         vm.stopPrank();
 
         uint256 availableWbtc = wbtc.balanceOf(address(vault));
@@ -1596,7 +1557,11 @@ contract ZenjiTest is Test {
         vm.prank(user1);
         vault.deposit(1e8, user1);
 
-        assertGt(vault.loanManager().getCurrentCollateral(), 0, "Collateral should increase after deposit");
+        assertGt(
+            vault.loanManager().getCurrentCollateral(),
+            0,
+            "Collateral should increase after deposit"
+        );
     }
 
     function test_getHealth() public {
@@ -1636,7 +1601,7 @@ contract ZenjiTest is Test {
 
         // Now redeem from yield vault
         vm.prank(owner);
-        vault.emergencyRedeemYield();
+        vault.emergencyRescue(2);
     }
 
     function test_withdrawFees() public {
@@ -1646,23 +1611,23 @@ contract ZenjiTest is Test {
 
         // Set a fee rate (instant now)
         vm.prank(owner);
-        vault.setFeeRate(5e16); // 5%
+        vault.setParam(0, 5e16); // 5%
 
         // Try to withdraw fees (may be 0 if no fees accumulated)
         vm.prank(owner);
         vault.withdrawFees(owner);
     }
 
-    function test_setFeeRate_onlyOwner() public {
+    function test_setParam_feeRate_onlyOwner() public {
         vm.startPrank(user1);
         vm.expectRevert(Zenji.Unauthorized.selector);
-        vault.setFeeRate(5e16);
+        vault.setParam(0, 5e16);
         vm.stopPrank();
     }
 
-    function test_setRebalanceBountyRate() public {
+    function test_setParam_bountyRate() public {
         vm.prank(owner);
-        vault.setRebalanceBountyRate(1e16); // 1%
+        vault.setParam(3, 1e16); // 1%
 
         assertEq(vault.rebalanceBountyRate(), 1e16, "Bounty rate should be updated");
     }
@@ -1679,7 +1644,7 @@ contract ZenjiTest is Test {
 
         // Transfer any WBTC in loan manager back to vault
         vm.prank(owner);
-        vault.transferCollateral();
+        vault.emergencyRescue(0);
     }
 
     function test_transferDebt() public {
@@ -1693,7 +1658,7 @@ contract ZenjiTest is Test {
         vault.enterEmergencyMode();
 
         vm.prank(owner);
-        vault.transferDebt();
+        vault.emergencyRescue(1);
     }
 
     // ============ Phase 4: LlamaLoanManager View Functions ============
@@ -1767,9 +1732,9 @@ contract ZenjiTest is Test {
 
         vm.startPrank(owner);
         vault.enterEmergencyMode();
-        vault.emergencyWithdrawYield();
-        vault.emergencyUnwindLoanAndRecover();
-        vault.setLiquidationComplete();
+        vault.emergencyStep(0);
+        vault.emergencyStep(1);
+        vault.emergencyStep(2);
         vm.stopPrank();
 
         uint256 max = vault.maxRedeem(user1);
@@ -1796,9 +1761,9 @@ contract ZenjiTest is Test {
 
         vm.startPrank(owner);
         vault.enterEmergencyMode();
-        vault.emergencyWithdrawYield();
-        vault.emergencyUnwindLoanAndRecover();
-        vault.setLiquidationComplete();
+        vault.emergencyStep(0);
+        vault.emergencyStep(1);
+        vault.emergencyStep(2);
         vm.stopPrank();
 
         uint256 max = vault.maxWithdraw(user1);
@@ -2030,7 +1995,7 @@ contract ZenjiTest is Test {
         vault.proposeStrategy(address(newStrategy));
 
         // Warp past timelock
-        warpAndMock(block.timestamp + vault.TIMELOCK_DELAY() + 1);
+        warpAndMock(block.timestamp + 2 days + 1);
         mockOracle(89238e8);
 
         vault.executeStrategy();
@@ -2153,7 +2118,7 @@ contract ZenjiTest is Test {
 
         // 1. Set bounty rate and generate profit
         vm.prank(owner);
-        vault.setRebalanceBountyRate(1e17); // 10% bounty
+        vault.setParam(3, 1e17); // 10% bounty
 
         // Simulate strategy profit
         uint256 currentBal = crvUSD.balanceOf(address(mockYield));
@@ -2207,15 +2172,6 @@ contract ZenjiTest is Test {
         assertGt(vault.accumulatedFees(), feesBefore, "Fees should increase with profit");
     }
 
-    function test_toggleYield_offThenOn() public {
-        vm.startPrank(owner);
-        vault.toggleYield(false);
-        assertFalse(vault.yieldEnabled());
-        vault.toggleYield(true);
-        assertTrue(vault.yieldEnabled());
-        vm.stopPrank();
-    }
-
     function test_reportStrategyLoss() public {
         deal(WBTC, user1, 1e8);
         vm.startPrank(user1);
@@ -2247,9 +2203,9 @@ contract ZenjiTest is Test {
 
         vm.startPrank(owner);
         vault.enterEmergencyMode();
-        vault.emergencyWithdrawYield();
-        vault.emergencyUnwindLoanAndRecover();
-        vault.setLiquidationComplete();
+        vault.emergencyStep(0);
+        vault.emergencyStep(1);
+        vault.emergencyStep(2);
         vm.stopPrank();
 
         // user1 approves user2 to redeem on their behalf
@@ -2274,9 +2230,9 @@ contract ZenjiTest is Test {
 
         vm.startPrank(owner);
         vault.enterEmergencyMode();
-        vault.emergencyWithdrawYield();
-        vault.emergencyUnwindLoanAndRecover();
-        vault.setLiquidationComplete();
+        vault.emergencyStep(0);
+        vault.emergencyStep(1);
+        vault.emergencyStep(2);
         vm.stopPrank();
 
         uint256 maxW = vault.maxWithdraw(user1);
@@ -2297,9 +2253,9 @@ contract ZenjiTest is Test {
         // No deposits → supply = 0
         vm.startPrank(owner);
         vault.enterEmergencyMode();
-        vault.emergencyWithdrawYield();
-        vault.emergencyUnwindLoanAndRecover();
-        vault.setLiquidationComplete();
+        vault.emergencyStep(0);
+        vault.emergencyStep(1);
+        vault.emergencyStep(2);
         vm.stopPrank();
 
         assertEq(vault.maxWithdraw(user1), 0, "maxWithdraw should be 0 with zero supply");
@@ -2308,9 +2264,9 @@ contract ZenjiTest is Test {
     function test_postLiquidation_previewRedeem_zeroSupply() public {
         vm.startPrank(owner);
         vault.enterEmergencyMode();
-        vault.emergencyWithdrawYield();
-        vault.emergencyUnwindLoanAndRecover();
-        vault.setLiquidationComplete();
+        vault.emergencyStep(0);
+        vault.emergencyStep(1);
+        vault.emergencyStep(2);
         vm.stopPrank();
 
         assertEq(vault.previewRedeem(1e8), 0, "previewRedeem should be 0 with zero supply");
@@ -2326,9 +2282,9 @@ contract ZenjiTest is Test {
 
         vm.startPrank(owner);
         vault.enterEmergencyMode();
-        vault.emergencyWithdrawYield();
-        vault.emergencyUnwindLoanAndRecover();
-        vault.setLiquidationComplete();
+        vault.emergencyStep(0);
+        vault.emergencyStep(1);
+        vault.emergencyStep(2);
         vm.stopPrank();
 
         // Redeem all shares so vault is drained
@@ -2353,9 +2309,9 @@ contract ZenjiTest is Test {
 
         vm.startPrank(owner);
         vault.enterEmergencyMode();
-        vault.emergencyWithdrawYield();
-        vault.emergencyUnwindLoanAndRecover();
-        vault.setLiquidationComplete();
+        vault.emergencyStep(0);
+        vault.emergencyStep(1);
+        vault.emergencyStep(2);
         vm.stopPrank();
 
         // Deal away the vault's WBTC to simulate 0 balance
@@ -2387,7 +2343,6 @@ contract ZenjiTest is Test {
         vault.setIdle(true);
 
         assertTrue(vault.idle(), "Should be idle");
-        assertFalse(vault.yieldEnabled(), "Yield should be disabled");
         // After idle, WBTC should be in vault, no loan
         assertGt(wbtc.balanceOf(address(vault)), 0, "Should have WBTC in vault");
     }
@@ -2415,7 +2370,7 @@ contract ZenjiTest is Test {
 
         // Set bounty rate
         vm.prank(owner);
-        vault.setRebalanceBountyRate(1e17); // 10% bounty
+        vault.setParam(3, 1e17); // 10% bounty
 
         // Simulate large profit to create fees
         uint256 currentBal = crvUSD.balanceOf(address(mockYield));
@@ -2450,7 +2405,7 @@ contract ZenjiTest is Test {
 
         // Set bounty rate to 0
         vm.prank(owner);
-        vault.setRebalanceBountyRate(0);
+        vault.setParam(3, 0);
 
         warpAndMock(block.timestamp + 2);
         mockOracle(70000e8);
@@ -2476,7 +2431,7 @@ contract ZenjiTest is Test {
         vault.proposeStrategy(address(newStrategy));
 
         // Warp past timelock + expiry (7 days)
-        warpAndMock(block.timestamp + vault.TIMELOCK_DELAY() + 7 days + 1);
+        warpAndMock(block.timestamp + 2 days + 7 days + 1);
         mockOracle(89238e8);
 
         vm.expectRevert(TimelockLib.TimelockExpired.selector);
@@ -2537,16 +2492,17 @@ contract ZenjiTest is Test {
 
         vm.startPrank(owner);
         vault.enterEmergencyMode();
-        vault.emergencyWithdrawYield();
-        vault.emergencyUnwindLoanAndRecover();
-        vault.setLiquidationComplete();
+        vault.emergencyStep(0);
+        vault.emergencyStep(1);
+        vault.emergencyStep(2);
 
-        vm.expectRevert(Zenji.LiquidationAlreadyComplete.selector);
+        // WBTC is collateralAsset, blocked by rescueAssets
+        vm.expectRevert(Zenji.InvalidAddress.selector);
         vault.rescueAssets(address(wbtc), owner);
         vm.stopPrank();
     }
 
-    function test_rescueAssets_allowsNonWbtcAfterLiquidation() public {
+    function test_rescueAssets_allowsNonCoreTokenAfterLiquidation() public {
         vm.prank(user1);
         vault.deposit(1e8, user1);
 
@@ -2555,12 +2511,14 @@ contract ZenjiTest is Test {
 
         vm.startPrank(owner);
         vault.enterEmergencyMode();
-        vault.emergencyWithdrawYield();
-        vault.emergencyUnwindLoanAndRecover();
-        vault.setLiquidationComplete();
+        vault.emergencyStep(0);
+        vault.emergencyStep(1);
+        vault.emergencyStep(2);
 
-        // Rescue crvUSD should work
-        vault.rescueAssets(address(crvUSD), owner);
+        // Rescue a non-core token (not collateralAsset or debtAsset) should work
+        address USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
+        deal(USDT, address(vault), 1000e6);
+        vault.rescueAssets(USDT, owner);
         vm.stopPrank();
     }
 
@@ -2575,12 +2533,12 @@ contract ZenjiTest is Test {
 
         vm.startPrank(owner);
         vault.enterEmergencyMode();
-        vault.emergencyWithdrawYield();
-        vault.emergencyUnwindLoanAndRecover();
-        vault.setLiquidationComplete();
+        vault.emergencyStep(0);
+        vault.emergencyStep(1);
+        vault.emergencyStep(2);
 
         vm.expectRevert(Zenji.LiquidationAlreadyComplete.selector);
-        vault.setLiquidationComplete();
+        vault.emergencyStep(2);
         vm.stopPrank();
     }
 
@@ -2616,11 +2574,10 @@ contract ZenjiTest is Test {
 
     function test_maxDeposit_zeroWhenCapReached() public {
         // Disable yield so totalWbtc == wbtc.balanceOf (exact match)
-        vm.prank(owner);
-        vault.toggleYield(false);
-
-        vm.prank(owner);
-        vault.setDepositCap(1e8);
+        vm.startPrank(owner);
+        vault.setIdle(true);
+        vault.setParam(2, 1e8);
+        vm.stopPrank();
 
         vm.prank(user1);
         vault.deposit(1e8, user1);
@@ -2650,9 +2607,9 @@ contract ZenjiTest is Test {
 
         vm.startPrank(owner);
         vault.enterEmergencyMode();
-        vault.emergencyWithdrawYield();
-        vault.emergencyUnwindLoanAndRecover();
-        vault.setLiquidationComplete();
+        vault.emergencyStep(0);
+        vault.emergencyStep(1);
+        vault.emergencyStep(2);
         vm.stopPrank();
 
         // Drain vault WBTC
@@ -2675,7 +2632,9 @@ contract ZenjiTest is Test {
     // ============ Branch Coverage: getUserValue with zero supply ============
 
     function test_getUserValue_zeroSupply() public view {
-        assertEq(viewHelper.getUserValue(address(vault), user1), 0, "Should return 0 with no supply");
+        assertEq(
+            viewHelper.getUserValue(address(vault), user1), 0, "Should return 0 with no supply"
+        );
     }
 
     // ============ Branch Coverage: isRebalanceNeeded no loan ============
@@ -2696,13 +2655,13 @@ contract ZenjiTest is Test {
     function test_transferCollateral_revertsWhenNotEmergency() public {
         vm.prank(owner);
         vm.expectRevert(Zenji.EmergencyModeNotActive.selector);
-        vault.transferCollateral();
+        vault.emergencyRescue(0);
     }
 
     function test_transferDebt_revertsWhenNotEmergency() public {
         vm.prank(owner);
         vm.expectRevert(Zenji.EmergencyModeNotActive.selector);
-        vault.transferDebt();
+        vault.emergencyRescue(1);
     }
 
     // ============ Branch Coverage: VaultTracker ============
@@ -2719,7 +2678,7 @@ contract ZenjiTest is Test {
         // Simulate a loss by dealing away vault WBTC
         // First set idle so getTotalCollateral just returns wbtc.balanceOf(vault)
         vm.prank(owner);
-        vault.toggleYield(false);
+        vault.setIdle(true);
 
         uint256 vaultWbtc = wbtc.balanceOf(address(vault));
         // Move some WBTC out to simulate loss
@@ -2744,7 +2703,7 @@ contract ZenjiTest is Test {
 
         // Simulate a loss
         vm.prank(owner);
-        vault.toggleYield(false);
+        vault.setIdle(true);
 
         uint256 vaultWbtc = wbtc.balanceOf(address(vault));
         vm.prank(address(vault));
@@ -2773,7 +2732,7 @@ contract ZenjiTest is Test {
 
         // Simulate loss in value
         vm.prank(owner);
-        vault.toggleYield(false);
+        vault.setIdle(true);
 
         uint256 vaultWbtc = wbtc.balanceOf(address(vault));
         vm.prank(address(vault));
@@ -2832,5 +2791,353 @@ contract ZenjiTest is Test {
         tracker.recordProfitLoss();
         assertEq(tracker.cumulativeProfit(), profit1, "Profit should not change");
         assertEq(tracker.cumulativeLoss(), loss1, "Loss should not change");
+    }
+
+    // ============ Additional Coverage Tests ============
+
+    function test_proposeAndExecuteSwapper_functionality() public {
+        CurveTwoCryptoSwapper newSwapper =
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
+
+        vm.prank(owner);
+        vault.proposeSwapper(address(newSwapper));
+
+        warpAndMock(block.timestamp + 2 days + 1);
+
+        vm.prank(owner);
+        vault.executeSwapper();
+
+        assertEq(address(vault.swapper()), address(newSwapper), "Swapper should be updated");
+    }
+
+    function test_proposeSwapper_onlyGov() public {
+        CurveTwoCryptoSwapper newSwapper =
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
+
+        vm.prank(user1);
+        vm.expectRevert(Zenji.Unauthorized.selector);
+        vault.proposeSwapper(address(newSwapper));
+    }
+
+    function test_transferRole_gov() public {
+        address newGov = makeAddr("newGov");
+
+        vm.prank(owner);
+        vault.transferRole(1, newGov);
+        assertEq(vault.pendingGov(), newGov, "Pending gov should be set");
+
+        vm.prank(newGov);
+        vault.acceptRole(1);
+        assertEq(vault.gov(), newGov, "Gov should be updated");
+    }
+
+    function test_transferRole_gov_revertsOnZero() public {
+        vm.prank(owner);
+        vm.expectRevert(Zenji.InvalidAddress.selector);
+        vault.transferRole(1, address(0));
+    }
+
+    function test_acceptRole_gov_revertsIfNotPending() public {
+        vm.prank(user1);
+        vm.expectRevert(Zenji.Unauthorized.selector);
+        vault.acceptRole(1);
+    }
+
+    function test_withdrawFees_withFees() public {
+        // Deposit and create some activity
+        vm.prank(user1);
+        vault.deposit(1e8, user1);
+
+        // Set a fee rate
+        vm.prank(owner);
+        vault.setParam(0, 5e16); // 5%
+
+        // Simulate strategy profit
+        uint256 currentBal = crvUSD.balanceOf(address(mockYield));
+        deal(CRVUSD, address(mockYield), currentBal + 1000e18);
+
+        // Accrue fees
+        vault.accrueYieldFees();
+        uint256 fees = vault.accumulatedFees();
+        assertGt(fees, 0, "Should have accumulated fees");
+
+        // Withdraw fees
+        uint256 ownerBalBefore = crvUSD.balanceOf(owner);
+        vm.prank(owner);
+        vault.withdrawFees(owner);
+        uint256 ownerBalAfter = crvUSD.balanceOf(owner);
+
+        assertGt(ownerBalAfter, ownerBalBefore, "Owner should receive fees");
+        assertEq(vault.accumulatedFees(), 0, "Fees should be reset");
+    }
+
+    function test_setParam_depositCap_zero() public {
+        vm.prank(owner);
+        vault.setParam(2, 0);
+
+        assertEq(vault.depositCap(), 0, "Deposit cap should be set to 0");
+        assertEq(
+            vault.maxDeposit(user1),
+            type(uint256).max,
+            "Max deposit should be unlimited when cap is 0"
+        );
+    }
+
+    function test_proposeLoanManager() public {
+        // Deploy a new loan manager
+        LlamaLoanManager newLoanManager = new LlamaLoanManager(
+            WBTC,
+            CRVUSD,
+            LLAMALEND_WBTC,
+            WBTC_CRVUSD_POOL,
+            BTC_USD_ORACLE,
+            CRVUSD_USD_ORACLE,
+            address(0),
+            address(vault)
+        );
+
+        vm.prank(owner);
+        vault.proposeLoanManager(address(newLoanManager));
+    }
+
+    function test_executeLoanManager() public {
+        // Deposit first to create a position
+        vm.prank(user1);
+        vault.deposit(1e8, user1);
+
+        // Unwind to ensure no active loan before executing
+        vm.prank(owner);
+        vault.setIdle(true);
+
+        // Deploy a new loan manager
+        LlamaLoanManager newLoanManager = new LlamaLoanManager(
+            WBTC,
+            CRVUSD,
+            LLAMALEND_WBTC,
+            WBTC_CRVUSD_POOL,
+            BTC_USD_ORACLE,
+            CRVUSD_USD_ORACLE,
+            address(0),
+            address(vault)
+        );
+
+        vm.startPrank(owner);
+        vault.proposeLoanManager(address(newLoanManager));
+
+        // Warp past timelock
+        warpAndMock(block.timestamp + 2 days + 1);
+        mockOracle(89238e8);
+
+        vault.executeLoanManager();
+        vm.stopPrank();
+
+        assertEq(
+            address(vault.loanManager()), address(newLoanManager), "Loan manager should be updated"
+        );
+    }
+
+    function test_cancelLoanManager() public {
+        LlamaLoanManager newLoanManager = new LlamaLoanManager(
+            WBTC,
+            CRVUSD,
+            LLAMALEND_WBTC,
+            WBTC_CRVUSD_POOL,
+            BTC_USD_ORACLE,
+            CRVUSD_USD_ORACLE,
+            address(0),
+            address(vault)
+        );
+
+        vm.startPrank(owner);
+        vault.proposeLoanManager(address(newLoanManager));
+        vault.cancelLoanManager();
+        vm.stopPrank();
+    }
+
+    function test_proposeLoanManager_invalidAddress() public {
+        vm.prank(owner);
+        vm.expectRevert(Zenji.InvalidAddress.selector);
+        vault.proposeLoanManager(address(0));
+    }
+
+    function test_executeLoanManager_revertsIfLoanExists() public {
+        // Deposit to create a loan
+        vm.prank(user1);
+        vault.deposit(1e8, user1);
+
+        LlamaLoanManager newLoanManager = new LlamaLoanManager(
+            WBTC,
+            CRVUSD,
+            LLAMALEND_WBTC,
+            WBTC_CRVUSD_POOL,
+            BTC_USD_ORACLE,
+            CRVUSD_USD_ORACLE,
+            address(0),
+            address(vault)
+        );
+
+        vm.startPrank(owner);
+        vault.proposeLoanManager(address(newLoanManager));
+
+        warpAndMock(block.timestamp + 2 days + 1);
+        mockOracle(89238e8);
+
+        vm.expectRevert(Zenji.ActiveLoanExists.selector);
+        vault.executeLoanManager();
+        vm.stopPrank();
+    }
+
+    function test_emergencyRedeemYield_withStrategy() public {
+        vm.prank(user1);
+        vault.deposit(1e8, user1);
+
+        vm.startPrank(owner);
+        vault.enterEmergencyMode();
+        vault.emergencyRescue(2);
+        vm.stopPrank();
+    }
+
+    function test_transferCollateral_withCollateral() public {
+        vm.prank(user1);
+        vault.deposit(1e8, user1);
+
+        vm.startPrank(owner);
+        vault.enterEmergencyMode();
+
+        uint256 lmCollateralBefore = vault.loanManager().getCollateralBalance();
+        vault.emergencyRescue(0);
+        uint256 lmCollateralAfter = vault.loanManager().getCollateralBalance();
+
+        // Loan manager may hold collateral in protocol, not in its balance; just ensure no revert
+        assertEq(lmCollateralAfter, lmCollateralBefore, "Collateral balance should be unchanged");
+        vm.stopPrank();
+    }
+
+    function test_transferDebt_withDebt() public {
+        vm.prank(user1);
+        vault.deposit(1e8, user1);
+
+        vm.startPrank(owner);
+        vault.enterEmergencyMode();
+
+        uint256 lmDebtBefore = vault.loanManager().getDebtBalance();
+        vault.emergencyRescue(1);
+        uint256 lmDebtAfter = vault.loanManager().getDebtBalance();
+
+        // Debt balance may be zero in loan manager; just ensure no revert
+        assertEq(lmDebtAfter, lmDebtBefore, "Debt balance should be unchanged");
+        vm.stopPrank();
+    }
+
+    function test_rescueAssets_withTokens() public {
+        // Use a non-core token (not collateralAsset or debtAsset) for rescue
+        address USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
+        deal(USDT, address(vault), 1000e6);
+
+        vm.startPrank(owner);
+        vault.enterEmergencyMode();
+
+        uint256 ownerBalBefore = IERC20(USDT).balanceOf(owner);
+        vault.rescueAssets(USDT, owner);
+        uint256 ownerBalAfter = IERC20(USDT).balanceOf(owner);
+
+        assertGt(ownerBalAfter, ownerBalBefore, "Owner should receive rescued tokens");
+        vm.stopPrank();
+    }
+
+    function test_rescueAssets_revertsForDebtAsset() public {
+        deal(CRVUSD, address(vault), 1000e18);
+
+        vm.startPrank(owner);
+        vault.enterEmergencyMode();
+
+        vm.expectRevert(Zenji.InvalidAddress.selector);
+        vault.rescueAssets(CRVUSD, owner);
+        vm.stopPrank();
+    }
+
+    function test_rescueAssets_revertsForCollateralAsset() public {
+        deal(WBTC, address(vault), 1e8);
+
+        vm.startPrank(owner);
+        vault.enterEmergencyMode();
+
+        vm.expectRevert(Zenji.InvalidAddress.selector);
+        vault.rescueAssets(WBTC, owner);
+        vm.stopPrank();
+    }
+
+    function test_setParam_feeRate_edgeCases() public {
+        vm.startPrank(owner);
+        // Test minimum fee rate (0)
+        vault.setParam(0, 0);
+        assertEq(vault.feeRate(), 0, "Fee rate should be set to 0");
+
+        // Test maximum fee rate
+        vault.setParam(0, 2e17);
+        assertEq(vault.feeRate(), 2e17, "Fee rate should be set to max");
+        vm.stopPrank();
+    }
+
+    function test_setParam_targetLtv_edgeCases() public {
+        vm.startPrank(owner);
+        // Test minimum target LTV
+        vault.setParam(1, 15e16);
+        assertEq(vault.targetLtv(), 15e16, "Target LTV should be set to min");
+
+        // Test maximum target LTV
+        vault.setParam(1, 73e16);
+        assertEq(vault.targetLtv(), 73e16, "Target LTV should be set to max");
+        vm.stopPrank();
+    }
+
+    function test_setParam_bountyRate_edgeCases() public {
+        vm.startPrank(owner);
+        // Test zero bounty rate
+        vault.setParam(3, 0);
+        assertEq(vault.rebalanceBountyRate(), 0, "Bounty rate should be set to 0");
+
+        // Test maximum bounty rate
+        vault.setParam(3, 2e17);
+        assertEq(vault.rebalanceBountyRate(), 2e17, "Bounty rate should be set to max");
+        vm.stopPrank();
+    }
+
+    function test_getTotalCollateral_idleMode() public {
+        vm.prank(user1);
+        vault.deposit(1e8, user1);
+
+        vm.prank(owner);
+        vault.setIdle(true);
+
+        uint256 totalCollateral = vault.getTotalCollateral();
+        assertEq(
+            totalCollateral,
+            wbtc.balanceOf(address(vault)),
+            "Total collateral should equal vault WBTC balance in idle mode"
+        );
+    }
+
+    function test_getTotalCollateral_yieldDisabled() public {
+        vm.prank(user1);
+        vault.deposit(1e8, user1);
+
+        vm.prank(owner);
+        vault.setIdle(true);
+
+        uint256 totalCollateral = vault.getTotalCollateral();
+        assertEq(
+            totalCollateral,
+            wbtc.balanceOf(address(vault)),
+            "Total collateral should equal vault WBTC balance when yield disabled"
+        );
+    }
+
+    function test_decimals() public view {
+        assertEq(vault.decimals(), 8, "Decimals should match WBTC decimals");
+    }
+
+    function test_asset() public view {
+        assertEq(vault.asset(), WBTC, "Asset should be WBTC");
     }
 }

@@ -7,6 +7,7 @@ import { ILoanManager } from "../src/interfaces/ILoanManager.sol";
 import { ILlamaLendController } from "../src/interfaces/ILlamaLendController.sol";
 import { ICurveTwoCrypto } from "../src/interfaces/ICurveTwoCrypto.sol";
 import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
+import { ISwapper } from "../src/interfaces/ISwapper.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
@@ -241,6 +242,41 @@ contract MockLlamaLendController is ILlamaLendController {
     }
 }
 
+contract MockSwapper is ISwapper {
+    MockERC20 public collateralToken;
+    MockERC20 public debtToken;
+    MockTwoCrypto public pool;
+
+    constructor(address _collateral, address _debt, address _pool) {
+        collateralToken = MockERC20(_collateral);
+        debtToken = MockERC20(_debt);
+        pool = MockTwoCrypto(_pool);
+    }
+
+    function quoteCollateralForDebt(uint256 debtAmount) external view returns (uint256) {
+        if (debtAmount == 0) return 0;
+        return pool.get_dy(0, 1, debtAmount);
+    }
+
+    function swapCollateralForDebt(uint256 collateralAmount) external returns (uint256) {
+        if (collateralAmount == 0) return 0;
+        // Tokens are already transferred to this contract by the caller
+        collateralToken.approve(address(pool), collateralAmount);
+        uint256 received = pool.exchange(1, 0, collateralAmount, 0);
+        debtToken.transfer(msg.sender, received);
+        return received;
+    }
+
+    function swapDebtForCollateral(uint256 debtAmount) external returns (uint256) {
+        if (debtAmount == 0) return 0;
+        // Tokens are already transferred to this contract by the caller
+        debtToken.approve(address(pool), debtAmount);
+        uint256 received = pool.exchange(0, 1, debtAmount, 0);
+        collateralToken.transfer(msg.sender, received);
+        return received;
+    }
+}
+
 contract LlamaLoanManagerTest is Test {
     MockERC20 wbtc;
     MockERC20 crvUSD;
@@ -248,6 +284,7 @@ contract LlamaLoanManagerTest is Test {
     MockOracle crvUsdOracle;
     MockTwoCrypto pool;
     MockLlamaLendController llamaLend;
+    MockSwapper swapper;
     LlamaLoanManager manager;
 
     address vault = address(this);
@@ -261,6 +298,7 @@ contract LlamaLoanManagerTest is Test {
         crvUsdOracle = new MockOracle(8, 1e8); // crvUSD at $1.00
         pool = new MockTwoCrypto(address(wbtc), address(crvUSD), 20_000e18);
         llamaLend = new MockLlamaLendController();
+        swapper = new MockSwapper(address(wbtc), address(crvUSD), address(pool));
 
         manager = new LlamaLoanManager(
             address(wbtc),
@@ -269,6 +307,7 @@ contract LlamaLoanManagerTest is Test {
             address(pool),
             address(oracle),
             address(crvUsdOracle),
+            address(swapper),
             vault
         );
     }
@@ -408,7 +447,6 @@ contract LlamaLoanManagerTest is Test {
         vm.expectRevert(ILoanManager.StaleOracle.selector);
         manager.repayDebt(100e18);
     }
-
 
     // ============ Coverage Boost Tests ============
 

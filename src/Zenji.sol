@@ -1,5 +1,3 @@
-    /// @notice Emitted when loan unwinding is attempted in emergency mode
-    event EmergencyLoanUnwound(uint256 collateralRecovered, uint256 debtRecovered);
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
@@ -10,11 +8,10 @@ import { IERC4626 } from "./interfaces/IERC4626.sol";
 import { IYieldStrategy } from "./interfaces/IYieldStrategy.sol";
 import { ILoanManager } from "./interfaces/ILoanManager.sol";
 import { ISwapper } from "./interfaces/ISwapper.sol";
-import { IVaultTracker } from "./interfaces/IVaultTracker.sol";
 import { TimelockLib } from "./libraries/TimelockLib.sol";
 import { SafeTransferLib } from "./libraries/SafeTransferLib.sol";
 import { ZenjiViewHelper } from "./ZenjiViewHelper.sol";
- 
+
 /// @title Zenji
 /// @notice ERC4626-compliant conservative collateral yield vault using loan managers and yield strategies
 /// @dev Deposits collateral to a loan manager, borrows debt asset, deposits to yield strategy
@@ -27,14 +24,14 @@ contract Zenji is ERC20, IERC4626 {
 
     uint256 public constant PRECISION = 1e18;
     uint256 public constant DEADBAND_SPREAD = 3e16; // 3%
-    uint256 public constant MIN_TARGET_LTV = 15e16; // 15%
-    uint256 public constant MAX_TARGET_LTV = 73e16; // 73%
-    uint256 public constant DEFAULT_LOAN_BANDS = 4;
-    uint256 public constant MIN_DEPOSIT = 1e4;
-    uint256 public constant MAX_FEE_RATE = 2e17; // 20%
+    uint256 internal constant MIN_TARGET_LTV = 15e16; // 15%
+    uint256 internal constant MAX_TARGET_LTV = 73e16; // 73%
+    uint256 internal constant DEFAULT_LOAN_BANDS = 4;
+    uint256 internal constant MIN_DEPOSIT = 1e4;
+    uint256 internal constant MAX_FEE_RATE = 2e17; // 20%
     uint256 public constant VIRTUAL_SHARE_OFFSET = 1e5;
-    uint256 public constant MAX_REBALANCE_BOUNTY = 2e17; // 20%
-    uint256 public constant TIMELOCK_DELAY = 1 minutes; //TODO: Change before deployment to 2 days;
+    uint256 internal constant MAX_REBALANCE_BOUNTY = 2e17; // 20%
+    uint256 internal constant TIMELOCK_DELAY = 2 days;
 
     // ============ Immutables ============
 
@@ -48,8 +45,8 @@ contract Zenji is ERC20, IERC4626 {
 
     uint256 public targetLtv;
     address public owner;
+    address public gov;
     bool public idle;
-    bool public yieldEnabled;
     bool public emergencyMode;
     bool public liquidationComplete;
     uint256 public accumulatedFees;
@@ -59,6 +56,7 @@ contract Zenji is ERC20, IERC4626 {
     uint256 private constant _NOT_ENTERED = 1;
     uint256 private constant _ENTERED = 2;
     address public pendingOwner;
+    address public pendingGov;
     uint256 public rebalanceBountyRate;
     uint256 public depositCap;
 
@@ -68,6 +66,7 @@ contract Zenji is ERC20, IERC4626 {
     // Timelock state (using TimelockLib)
     TimelockLib.AddressTimelockData internal _strategyTimelock;
     TimelockLib.AddressTimelockData internal _loanManagerTimelock;
+    TimelockLib.AddressTimelockData internal _swapperTimelock;
 
     // ============ Events ============
 
@@ -82,18 +81,19 @@ contract Zenji is ERC20, IERC4626 {
     // Admin config changes
     event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
     event OwnerUpdated(address indexed newOwner);
-    event TrackerUpdated(address indexed newTracker);
+    event GovernanceTransferStarted(address indexed previousGov, address indexed newGov);
+    event GovernanceUpdated(address indexed newGov);
     event IdleModeEntered();
     event IdleModeExited();
-    event YieldToggled(bool enabled);
-    event DepositCapUpdated(uint256 oldCap, uint256 newCap);
+    event ParamUpdated(uint8 indexed param, uint256 oldValue, uint256 newValue);
     event FeesWithdrawn(address indexed recipient, uint256 amount);
-    event RebalanceBountyRateUpdated(uint256 oldRate, uint256 newRate);
     event SwapperUpdated(address indexed oldSwapper, address indexed newSwapper);
+    event SwapperChangeProposed(
+        address indexed currentSwapper, address indexed newSwapper, uint256 effectiveTime
+    );
+    event SwapperChangeCancelled(address indexed cancelledSwapper);
 
-    // Fee/LTV change events (instant, no timelock)
-    event FeeRateUpdated(uint256 oldRate, uint256 newRate);
-    event TargetLtvUpdated(uint256 oldLtv, uint256 newLtv);
+    // Fee/LTV change events use ParamUpdated above
 
     // Strategy events
     event StrategyChangeProposed(
@@ -101,7 +101,9 @@ contract Zenji is ERC20, IERC4626 {
     );
     event StrategyChangeExecuted(address indexed oldStrategy, address indexed newStrategy);
     event StrategyChangeCancelled(address indexed cancelledStrategy);
-    event StrategyPauseToggled(bool paused, uint256 debtAssetReceived);
+    event StrategyDeposit(
+        address indexed strategy, uint256 debtAssetAmount, uint256 underlyingDeposited
+    );
 
     // Loan manager events
     event LoanManagerChangeProposed(
@@ -115,10 +117,12 @@ contract Zenji is ERC20, IERC4626 {
     event LiquidationComplete(uint256 collateralRecovered, uint256 flashloanAmount);
     event AssetsRescued(address indexed token, address indexed recipient, uint256 amount);
     event FeesAccrued(uint256 profit, uint256 fees, uint256 totalAccumulatedFees);
-    event YieldHarvested(address indexed caller);
+    event YieldHarvested(address indexed caller, uint256 rewardsValue);
     event EmergencyCollateralTransferred(uint256 amount);
     event EmergencyDebtTransferred(uint256 amount);
-    event EmergencyYieldRedeemed();
+    event EmergencyYieldRedeemed(uint256 debtAssetReceived);
+    /// @notice Emitted when loan unwinding is attempted in emergency mode
+    event EmergencyLoanUnwound(uint256 collateralRecovered, uint256 debtRecovered);
 
     // ============ Errors ============
 
@@ -139,11 +143,17 @@ contract Zenji is ERC20, IERC4626 {
     error StrategyAlreadySet();
     error LiquidationAlreadyComplete();
     error ActiveLoanExists();
+    error InsufficientCollateral();
 
     // ============ Modifiers ============
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert Unauthorized();
+        _;
+    }
+
+    modifier onlyGov() {
+        if (msg.sender != gov) revert Unauthorized();
         _;
     }
 
@@ -164,7 +174,7 @@ contract Zenji is ERC20, IERC4626 {
         address _yieldStrategy,
         address _owner,
         address _viewHelper
-    ) ERC20("SiloBooster Vault", "sbVault") {
+    ) ERC20("Zen Wbtc (USDT->IPOR)", "usdtIpor-zenWBTC") {
         if (
             _collateralAsset == address(0) || _debtAsset == address(0) || _loanManager == address(0)
                 || _owner == address(0) || _viewHelper == address(0)
@@ -181,8 +191,9 @@ contract Zenji is ERC20, IERC4626 {
             yieldStrategy = IYieldStrategy(_yieldStrategy);
         }
         owner = _owner;
-        yieldEnabled = _yieldStrategy != address(0);
-        targetLtv = 70e16; // 70% default target LTV
+        gov = _owner; // Initially gov is same as owner
+        idle = _yieldStrategy == address(0);
+        targetLtv = 65e16; // 65% default target LTV
         // Liquidation starts at ~90%
         // Vault can handle about 25% price move in testing without rebalancing.
         rebalanceBountyRate = 2e17; // 20% default rebalance bounty
@@ -193,13 +204,17 @@ contract Zenji is ERC20, IERC4626 {
     }
 
     /// @notice Set initial yield strategy (can only be called once if strategy not set in constructor)
-    /// @param _strategy The yield strategy address
-    function setInitialStrategy(address _strategy) external onlyOwner {
+    /// @param newStrategy The yield strategy address
+    function setInitialStrategy(address newStrategy) external onlyOwner {
         if (address(yieldStrategy) != address(0)) revert StrategyAlreadySet();
-        if (_strategy == address(0)) revert InvalidAddress();
-        if (IYieldStrategy(_strategy).vault() != address(this)) revert InvalidStrategy();
-        yieldStrategy = IYieldStrategy(_strategy);
-        emit StrategyChangeExecuted(address(0), _strategy);
+        if (newStrategy == address(0)) revert InvalidAddress();
+        if (IYieldStrategy(newStrategy).vault() != address(this)) {
+            revert InvalidStrategy();
+        }
+        yieldStrategy = IYieldStrategy(newStrategy);
+        idle = false;
+        emit IdleModeExited();
+        emit StrategyChangeExecuted(address(0), newStrategy);
     }
 
     // ============ ERC4626 Required Functions ============
@@ -240,20 +255,20 @@ contract Zenji is ERC20, IERC4626 {
     }
 
     /// @notice Maximum withdraw allowed for owner
-    function maxWithdraw(address _owner) external view override returns (uint256) {
+    function maxWithdraw(address owner_) external view override returns (uint256) {
         if (emergencyMode && !liquidationComplete) return 0;
         if (emergencyMode && liquidationComplete) {
             uint256 supply = totalSupply();
-            if (supply == 0) return 0;
-            return (collateralAsset.balanceOf(address(this)) * balanceOf(_owner)) / supply;
+            if (supply < 1) return 0;
+            return (collateralAsset.balanceOf(address(this)) * balanceOf(owner_)) / supply;
         }
-        return convertToAssets(balanceOf(_owner));
+        return convertToAssets(balanceOf(owner_));
     }
 
     /// @notice Maximum redeem allowed for owner
-    function maxRedeem(address _owner) external view override returns (uint256) {
+    function maxRedeem(address owner_) external view override returns (uint256) {
         if (emergencyMode && !liquidationComplete) return 0;
-        return balanceOf(_owner);
+        return balanceOf(owner_);
     }
 
     /// @notice Preview shares for deposit
@@ -271,13 +286,11 @@ contract Zenji is ERC20, IERC4626 {
         uint256 supply = totalSupply();
         if (emergencyMode && liquidationComplete) {
             uint256 availableCollateral = collateralAsset.balanceOf(address(this));
-            if (availableCollateral == 0 || supply == 0) return 0;
+            if (availableCollateral < 1 || supply < 1) return 0;
             return (assets * supply + availableCollateral - 1) / availableCollateral;
         }
-
-        // Round up for withdrawals
         uint256 totalCollateral = getTotalCollateral();
-        if (totalCollateral == 0 || supply == 0) return assets;
+        if (totalCollateral < 1 || supply < 1) return assets;
         return (assets * (supply + VIRTUAL_SHARE_OFFSET) + totalCollateral - 1)
             / (totalCollateral + VIRTUAL_SHARE_OFFSET);
     }
@@ -286,7 +299,7 @@ contract Zenji is ERC20, IERC4626 {
     function previewRedeem(uint256 shareAmount) external view override returns (uint256) {
         if (emergencyMode && liquidationComplete) {
             uint256 supply = totalSupply();
-            if (supply == 0) return 0;
+            if (supply < 1) return 0;
             return (collateralAsset.balanceOf(address(this)) * shareAmount) / supply;
         }
         return convertToAssets(shareAmount);
@@ -316,7 +329,7 @@ contract Zenji is ERC20, IERC4626 {
     }
 
     /// @notice ERC4626 withdraw - withdraw exact assets by burning shares
-    function withdraw(uint256 assets, address receiver, address _owner)
+    function withdraw(uint256 assets, address receiver, address owner_)
         external
         override
         nonReentrant
@@ -326,7 +339,7 @@ contract Zenji is ERC20, IERC4626 {
 
         if (emergencyMode && liquidationComplete) {
             uint256 availableCollateral = collateralAsset.balanceOf(address(this));
-            if (availableCollateral == 0) revert ZeroAmount();
+            if (availableCollateral < 1) revert ZeroAmount();
             shareAmount = (assets * totalSupply() + availableCollateral - 1) / availableCollateral;
         } else {
             // Calculate shares to burn (round up)
@@ -336,17 +349,17 @@ contract Zenji is ERC20, IERC4626 {
                 / (totalCollateral + VIRTUAL_SHARE_OFFSET);
         }
 
-        (, shareAmount) = _redeem(shareAmount, receiver, _owner);
+        (, shareAmount) = _redeem(shareAmount, receiver, owner_);
     }
 
     /// @notice ERC4626 redeem - redeem exact shares for assets
-    function redeem(uint256 shareAmount, address receiver, address _owner)
+    function redeem(uint256 shareAmount, address receiver, address owner_)
         external
         override
         nonReentrant
         returns (uint256 collateralAmount)
     {
-        (collateralAmount,) = _redeem(shareAmount, receiver, _owner);
+        (collateralAmount,) = _redeem(shareAmount, receiver, owner_);
     }
 
     // ============ Keeper Functions ============
@@ -355,10 +368,10 @@ contract Zenji is ERC20, IERC4626 {
     function _deployCapital() internal {
         if (idle || emergencyMode) return;
         uint256 idleCollateral = collateralAsset.balanceOf(address(this));
-        if (idleCollateral == 0) revert ZeroAmount();
+        if (idleCollateral < 1) revert ZeroAmount();
 
         uint256 borrowAmount = loanManager.calculateBorrowAmount(idleCollateral, targetLtv);
-        if (borrowAmount == 0) return;
+        if (borrowAmount < 1) return;
 
         loanManager.checkOracleFreshness();
 
@@ -400,11 +413,11 @@ contract Zenji is ERC20, IERC4626 {
 
         if (currentLtv < lowerBand) {
             increased = true;
-            _increaseLtv(targetLtv);
+            _adjustLtv(targetLtv, true);
             newLtv = loanManager.getCurrentLTV();
         } else if (currentLtv > upperBand) {
             increased = false;
-            _decreaseLtv(targetLtv);
+            _adjustLtv(targetLtv, false);
             newLtv = loanManager.getCurrentLTV();
         }
 
@@ -445,35 +458,32 @@ contract Zenji is ERC20, IERC4626 {
         if (emergencyMode) revert EmergencyModeActive();
         if (address(yieldStrategy) == address(0)) revert InvalidStrategy();
         _accrueYieldFees();
-        yieldStrategy.harvest();
+        uint256 harvested = yieldStrategy.harvest();
         lastStrategyBalance = yieldStrategy.balanceOf();
-        emit YieldHarvested(msg.sender);
+        emit YieldHarvested(msg.sender, harvested);
     }
 
     // ============ Admin Functions ============
 
-    /// @notice Toggle yield deployment on/off
-    function toggleYield(bool enabled) external onlyOwner {
-        yieldEnabled = enabled;
-        emit YieldToggled(enabled);
-    }
-
     /// @notice Enter/exit idle mode (unwind carry trade, hold collateral)
-    function setIdle(bool idle_) external onlyOwner nonReentrant {
+    /// @dev Entering idle automatically disables yield. Exiting idle does not re-enable yield.
+    function setIdle(bool idle_) external nonReentrant onlyOwner {
         if (idle_ == idle) return;
 
         if (idle_) {
             _accrueYieldFees();
 
+            uint256 debtBefore = debtAsset.balanceOf(address(this));
+            uint256 withdrawn = 0;
             if (address(yieldStrategy) != address(0)) {
                 uint256 strategyBalance = yieldStrategy.balanceOf();
                 if (strategyBalance > 0) {
-                    yieldStrategy.withdrawAll();
+                    withdrawn = yieldStrategy.withdrawAll();
                 }
             }
             lastStrategyBalance = 0;
 
-            uint256 debtBalance = debtAsset.balanceOf(address(this));
+            uint256 debtBalance = debtBefore + withdrawn;
             if (debtBalance > 0) {
                 debtAsset.safeTransfer(address(loanManager), debtBalance);
             }
@@ -485,7 +495,6 @@ contract Zenji is ERC20, IERC4626 {
             _swapRemainingDebtToCollateral();
 
             idle = true;
-            yieldEnabled = false;
             emit IdleModeEntered();
         } else {
             idle = false;
@@ -494,51 +503,59 @@ contract Zenji is ERC20, IERC4626 {
         }
     }
 
-    /// @notice Pause/unpause the yield strategy
-    /// @dev When pausing: withdraws all from strategy. When unpausing: redeploys idle debt asset.
-    // function pauseStrategy() external onlyOwner nonReentrant returns (uint256 debtAssetReceived) {
-    //     if (address(yieldStrategy) == address(0)) revert InvalidStrategy();
+    /// @notice Propose a new swapper contract (requires timelock)
+    /// @dev Governance-only function for critical infrastructure
+    function proposeSwapper(address newSwapper) external onlyGov {
+        if (newSwapper == address(0)) revert InvalidAddress();
+        if (newSwapper == address(swapper)) revert InvalidAddress();
+        _swapperTimelock.proposeAddress(newSwapper, TIMELOCK_DELAY);
+        emit SwapperChangeProposed(address(swapper), newSwapper, _swapperTimelock.timestamp);
+    }
 
-    //     _accrueYieldFees();
-    //     debtAssetReceived = yieldStrategy.pauseStrategy();
-
-    //     // If we just unpaused, redeploy idle debt asset into the strategy
-    //     if (!yieldStrategy.paused()) {
-    //         uint256 idleDebt = debtAsset.balanceOf(address(this));
-    //         if (idleDebt > 0) {
-    //             _ensureApprove(address(debtAsset), address(yieldStrategy), idleDebt);
-    //             yieldStrategy.deposit(idleDebt);
-    //         }
-    //     }
-
-    //     lastStrategyBalance = yieldStrategy.balanceOf();
-    //     emit StrategyPauseToggled(yieldStrategy.paused(), debtAssetReceived);
-    // }
-
-    /// @notice Set swapper contract (optional)
-    function setSwapper(address newSwapper) external onlyOwner {
+    /// @notice Execute pending swapper change after timelock
+    function executeSwapper() external onlyGov {
         address oldSwapper = address(swapper);
-        swapper = ISwapper(newSwapper);
-        emit SwapperUpdated(oldSwapper, newSwapper);
+        swapper = ISwapper(_swapperTimelock.executeAddress());
+        emit SwapperUpdated(oldSwapper, address(swapper));
     }
 
-    /// @notice Start ownership transfer
-    function transferOwnership(address newOwner_) external onlyOwner {
-        if (newOwner_ == address(0)) revert InvalidAddress();
-        pendingOwner = newOwner_;
-        emit OwnershipTransferStarted(owner, newOwner_);
+    /// @notice Cancel pending swapper change
+    function cancelSwapper() external onlyGov {
+        address cancelled = _swapperTimelock.cancelAddress();
+        emit SwapperChangeCancelled(cancelled);
     }
 
-    /// @notice Accept ownership transfer
-    function acceptOwnership() external {
-        if (msg.sender != pendingOwner) revert Unauthorized();
-        owner = msg.sender;
-        pendingOwner = address(0);
-        emit OwnerUpdated(msg.sender);
+    /// @notice Transfer role: 0=owner, 1=gov
+    function transferRole(uint8 role, address to) external {
+        if (to == address(0)) revert InvalidAddress();
+        if (role == 0) {
+            if (msg.sender != owner) revert Unauthorized();
+            pendingOwner = to;
+            emit OwnershipTransferStarted(owner, to);
+        } else {
+            if (msg.sender != gov) revert Unauthorized();
+            pendingGov = to;
+            emit GovernanceTransferStarted(gov, to);
+        }
+    }
+
+    /// @notice Accept role: 0=owner, 1=gov
+    function acceptRole(uint8 role) external {
+        if (role == 0) {
+            if (msg.sender != pendingOwner) revert Unauthorized();
+            owner = msg.sender;
+            pendingOwner = address(0);
+            emit OwnerUpdated(msg.sender);
+        } else {
+            if (msg.sender != pendingGov) revert Unauthorized();
+            gov = msg.sender;
+            pendingGov = address(0);
+            emit GovernanceUpdated(msg.sender);
+        }
     }
 
     /// @notice Withdraw accumulated fees
-    function withdrawFees(address recipient) external onlyOwner nonReentrant {
+    function withdrawFees(address recipient) external nonReentrant onlyOwner {
         if (recipient == address(0)) revert InvalidAddress();
 
         // Accrue any outstanding fees first
@@ -551,16 +568,18 @@ contract Zenji is ERC20, IERC4626 {
 
         // Withdraw from yield strategy to get actual debt asset
         uint256 strategyBalance = yieldStrategy.balanceOf();
+        uint256 debtBefore = debtAsset.balanceOf(address(this));
         if (strategyBalance > 0 && fees > 0) {
             uint256 toWithdraw = fees > strategyBalance ? strategyBalance : fees;
             if (toWithdraw > 0) {
-                yieldStrategy.withdraw(toWithdraw);
+                uint256 received = yieldStrategy.withdraw(toWithdraw);
+                debtBefore += received;
             }
         }
         lastStrategyBalance = yieldStrategy.balanceOf();
 
         // Transfer fees (includes any idle debt asset)
-        uint256 debtBalance = debtAsset.balanceOf(address(this));
+        uint256 debtBalance = debtBefore;
         uint256 toTransfer = fees > debtBalance ? debtBalance : fees;
 
         if (toTransfer > 0) {
@@ -577,69 +596,52 @@ contract Zenji is ERC20, IERC4626 {
     function enterEmergencyMode() external onlyOwner {
         if (emergencyMode) revert EmergencyModeActive();
         emergencyMode = true;
-        yieldEnabled = false;
         emit EmergencyModeEntered();
     }
 
-
-    /// @notice Step 1: Withdraw all from yield strategy (resilient if bricked)
-    /// @dev Can be called multiple times until successful. Does not set liquidationComplete.
-    function emergencyWithdrawYield() external onlyOwner {
+    /// @notice Emergency step: 0=withdrawYield, 1=unwindLoan, 2=completeLiquidation
+    function emergencyStep(uint8 step) external onlyOwner {
         if (!emergencyMode) revert EmergencyModeNotActive();
         if (liquidationComplete) revert LiquidationAlreadyComplete();
-        if (address(yieldStrategy) != address(0)) {
-            try yieldStrategy.withdrawAll() { }
-            catch {
-                try yieldStrategy.emergencyWithdraw() { } catch { }
+        if (step == 0) {
+            uint256 withdrawn = 0;
+            if (address(yieldStrategy) != address(0)) {
+                try yieldStrategy.withdrawAll() returns (uint256 r) {
+                    withdrawn = r;
+                } catch {
+                    try yieldStrategy.emergencyWithdraw() returns (uint256 r) {
+                        withdrawn = r;
+                    } catch { }
+                }
             }
-        }
-        lastStrategyBalance = 0;
-        accumulatedFees = 0;
-        emit EmergencyYieldRedeemed();
-    }
-
-
-    /// @notice Step 2: Unwind loan and recover all assets to vault. Does NOT set liquidationComplete.
-    /// @dev Can be called after yield is withdrawn. Allows manual asset recovery even if loan manager fails.
-    function emergencyUnwindLoanAndRecover() external onlyOwner {
-        if (!emergencyMode) revert EmergencyModeNotActive();
-        if (liquidationComplete) revert LiquidationAlreadyComplete();
-
-        // If no active loan, just recover and finish
-        if (!loanManager.loanExists()) {
+            lastStrategyBalance = 0;
+            accumulatedFees = 0;
+            emit EmergencyYieldRedeemed(withdrawn);
+        } else if (step == 1) {
+            if (!loanManager.loanExists()) {
+                _recoverLoanManagerFunds();
+                _swapRemainingDebtToCollateral();
+                emit EmergencyLoanUnwound(collateralAsset.balanceOf(address(this)), 0);
+                return;
+            }
+            uint256 totalDebt = loanManager.getCurrentDebt();
+            uint256 availableDebt = debtAsset.balanceOf(address(this));
+            if (availableDebt >= totalDebt) {
+                debtAsset.safeTransfer(address(loanManager), totalDebt);
+                loanManager.repayDebt(totalDebt);
+            } else {
+                if (availableDebt > 0) {
+                    debtAsset.safeTransfer(address(loanManager), availableDebt);
+                }
+                loanManager.unwindPosition(type(uint256).max);
+            }
             _recoverLoanManagerFunds();
             _swapRemainingDebtToCollateral();
             emit EmergencyLoanUnwound(collateralAsset.balanceOf(address(this)), 0);
-            return;
-        }
-
-        // Calculate debt vs available debt asset
-        uint256 totalDebt = loanManager.getCurrentDebt();
-        uint256 availableDebt = debtAsset.balanceOf(address(this));
-
-        if (availableDebt >= totalDebt) {
-            // Yield covers full debt - no flashloan needed
-            debtAsset.safeTransfer(address(loanManager), totalDebt);
-            loanManager.repayDebt(totalDebt);
         } else {
-            if (availableDebt > 0) {
-                debtAsset.safeTransfer(address(loanManager), availableDebt);
-            }
-            loanManager.unwindPosition(type(uint256).max);
+            liquidationComplete = true;
+            emit LiquidationComplete(collateralAsset.balanceOf(address(this)), 0);
         }
-
-        _recoverLoanManagerFunds();
-        _swapRemainingDebtToCollateral();
-        emit EmergencyLoanUnwound(collateralAsset.balanceOf(address(this)), 0);
-    }
-
-    /// @notice Mark liquidation as complete, allowing withdrawals in emergency mode
-    /// @dev Can be called by anyone after asset recovery. One-way latch.
-    function setLiquidationComplete() external {
-        if (!emergencyMode) revert EmergencyModeNotActive();
-        if (liquidationComplete) revert LiquidationAlreadyComplete();
-        liquidationComplete = true;
-        emit LiquidationComplete(collateralAsset.balanceOf(address(this)), 0);
     }
 
     /// @notice Rescue stuck tokens from the vault (emergency mode only)
@@ -647,8 +649,9 @@ contract Zenji is ERC20, IERC4626 {
     function rescueAssets(address token, address recipient) external onlyOwner {
         if (!emergencyMode) revert EmergencyModeNotActive();
         if (recipient == address(0)) revert InvalidAddress();
-        if (liquidationComplete && token == address(collateralAsset)) {
-            revert LiquidationAlreadyComplete();
+        // Cannot rescue core vault assets — use dedicated emergency functions instead
+        if (token == address(collateralAsset) || token == address(debtAsset)) {
+            revert InvalidAddress();
         }
         uint256 balance = IERC20(token).balanceOf(address(this));
         if (balance > 0) {
@@ -659,58 +662,45 @@ contract Zenji is ERC20, IERC4626 {
 
     // ============ Emergency Rescue (Fallback) ============
 
-    function transferCollateral() external onlyOwner {
+    /// @notice Emergency rescue: 0=transferCollateral, 1=transferDebt, 2=redeemYield
+    function emergencyRescue(uint8 action) external onlyOwner {
         if (!emergencyMode) revert EmergencyModeNotActive();
-        uint256 amount = collateralAsset.balanceOf(address(loanManager));
-        loanManager.transferCollateral(address(this), amount);
-        emit EmergencyCollateralTransferred(amount);
-    }
-
-    function transferDebt() external onlyOwner {
-        if (!emergencyMode) revert EmergencyModeNotActive();
-        uint256 amount = debtAsset.balanceOf(address(loanManager));
-        loanManager.transferDebt(address(this), amount);
-        emit EmergencyDebtTransferred(amount);
-    }
-
-    function emergencyRedeemYield() external onlyOwner {
-        if (!emergencyMode) revert EmergencyModeNotActive();
-        yieldStrategy.emergencyWithdraw();
-        lastStrategyBalance = 0;
-        // Convert recovered debt asset to collateral so it's included in pro-rata distribution
-        _swapRemainingDebtToCollateral();
-        emit EmergencyYieldRedeemed();
+        if (action == 0) {
+            uint256 amount = collateralAsset.balanceOf(address(loanManager));
+            loanManager.transferCollateral(address(this), amount);
+            emit EmergencyCollateralTransferred(amount);
+        } else if (action == 1) {
+            uint256 amount = debtAsset.balanceOf(address(loanManager));
+            loanManager.transferDebt(address(this), amount);
+            emit EmergencyDebtTransferred(amount);
+        } else {
+            uint256 withdrawn = yieldStrategy.emergencyWithdraw();
+            lastStrategyBalance = 0;
+            _swapRemainingDebtToCollateral();
+            emit EmergencyYieldRedeemed(withdrawn);
+        }
     }
 
     // ============ Instant Parameter Setters ============
 
-    function setFeeRate(uint256 newFeeRate) external onlyOwner {
-        if (newFeeRate > MAX_FEE_RATE) revert InvalidFeeRate();
-        uint256 oldFeeRate = feeRate;
-        feeRate = newFeeRate;
-        emit FeeRateUpdated(oldFeeRate, newFeeRate);
-    }
-
-    function setTargetLtv(uint256 newTargetLtv) external onlyOwner {
-        if (newTargetLtv < MIN_TARGET_LTV || newTargetLtv > MAX_TARGET_LTV) {
-            revert InvalidTargetLtv();
+    /// @notice Set vault parameter: 0=feeRate, 1=targetLtv, 2=depositCap, 3=bountyRate
+    function setParam(uint8 p, uint256 v) external onlyOwner {
+        if (p == 0) {
+            if (v > MAX_FEE_RATE) revert InvalidFeeRate();
+            emit ParamUpdated(p, feeRate, v);
+            feeRate = v;
+        } else if (p == 1) {
+            if (v < MIN_TARGET_LTV || v > MAX_TARGET_LTV) revert InvalidTargetLtv();
+            emit ParamUpdated(p, targetLtv, v);
+            targetLtv = v;
+        } else if (p == 2) {
+            emit ParamUpdated(p, depositCap, v);
+            depositCap = v;
+        } else if (p == 3) {
+            if (v > MAX_REBALANCE_BOUNTY) revert InvalidBountyRate();
+            emit ParamUpdated(p, rebalanceBountyRate, v);
+            rebalanceBountyRate = v;
         }
-        uint256 oldTargetLtv = targetLtv;
-        targetLtv = newTargetLtv;
-        emit TargetLtvUpdated(oldTargetLtv, newTargetLtv);
-    }
-
-    function setDepositCap(uint256 newCap) external onlyOwner {
-        uint256 oldCap = depositCap;
-        depositCap = newCap;
-        emit DepositCapUpdated(oldCap, newCap);
-    }
-
-    function setRebalanceBountyRate(uint256 newRate) external onlyOwner {
-        if (newRate > MAX_REBALANCE_BOUNTY) revert InvalidBountyRate();
-        uint256 oldRate = rebalanceBountyRate;
-        rebalanceBountyRate = newRate;
-        emit RebalanceBountyRateUpdated(oldRate, newRate);
     }
 
     // ============ Strategy Switching Functions ============
@@ -730,26 +720,27 @@ contract Zenji is ERC20, IERC4626 {
         }
 
         _strategyTimelock.proposeAddress(newStrategy, TIMELOCK_DELAY);
-        emit StrategyChangeProposed(address(yieldStrategy), newStrategy, _strategyTimelock.timestamp);
+        emit StrategyChangeProposed(
+            address(yieldStrategy), newStrategy, _strategyTimelock.timestamp
+        );
     }
 
     /// @notice Execute pending strategy change after timelock
-    function executeStrategy() external onlyOwner nonReentrant {
+    function executeStrategy() external nonReentrant onlyOwner {
         address oldStrategy = address(yieldStrategy);
 
         // Withdraw all from old strategy
-        uint256 debtBefore = debtAsset.balanceOf(address(this));
-        yieldStrategy.withdrawAll();
-        uint256 debtAfter = debtAsset.balanceOf(address(this));
+        uint256 withdrawn = yieldStrategy.withdrawAll();
 
         // Update strategy via timelock
         yieldStrategy = IYieldStrategy(_strategyTimelock.executeAddress());
 
         // Deposit to new strategy
-        uint256 toDeposit = debtAfter - debtBefore;
+        uint256 toDeposit = withdrawn;
         if (toDeposit > 0) {
-            _ensureApprove(address(debtAsset), address(yieldStrategy), toDeposit);
-            yieldStrategy.deposit(toDeposit);
+            IERC20(address(debtAsset)).ensureApproval(address(yieldStrategy), toDeposit);
+            uint256 deposited = yieldStrategy.deposit(toDeposit);
+            emit StrategyDeposit(address(yieldStrategy), toDeposit, deposited);
         }
         lastStrategyBalance = yieldStrategy.balanceOf();
 
@@ -784,7 +775,7 @@ contract Zenji is ERC20, IERC4626 {
     }
 
     /// @notice Execute pending loan manager change after timelock
-    function executeLoanManager() external onlyOwner nonReentrant {
+    function executeLoanManager() external nonReentrant onlyOwner {
         if (loanManager.loanExists()) revert ActiveLoanExists();
 
         address oldLoanManager = address(loanManager);
@@ -802,7 +793,7 @@ contract Zenji is ERC20, IERC4626 {
 
     /// @notice Estimate total value locked in collateral terms
     function getTotalCollateral() public view returns (uint256 totalCollateral) {
-        if (!yieldEnabled) {
+        if (idle) {
             return collateralAsset.balanceOf(address(this));
         }
         return viewHelper.getTotalCollateralValue(address(this));
@@ -813,7 +804,9 @@ contract Zenji is ERC20, IERC4626 {
     /// @notice Recover all collateral and debt assets from the loan manager
     function _recoverLoanManagerFunds() internal {
         uint256 lmCollateral = loanManager.getCollateralBalance();
-        if (lmCollateral > 0) loanManager.transferCollateral(address(this), lmCollateral);
+        if (lmCollateral > 0) {
+            loanManager.transferCollateral(address(this), lmCollateral);
+        }
         uint256 lmDebt = loanManager.getDebtBalance();
         if (lmDebt > 0) loanManager.transferDebt(address(this), lmDebt);
     }
@@ -823,26 +816,19 @@ contract Zenji is ERC20, IERC4626 {
         uint256 debtBal = debtAsset.balanceOf(address(this));
         if (debtBal > 1e16 && address(swapper) != address(0)) {
             debtAsset.safeTransfer(address(swapper), debtBal);
-            swapper.swapDebtForCollateral(debtBal);
+            uint256 collateralReceived = swapper.swapDebtForCollateral(debtBal);
+            if (collateralReceived < 1) return;
         }
     }
 
     /// @notice Calculate shares to mint for a deposit
-    function _calculateSharesForDeposit(uint256 collateralAmount)
-        internal
-        view
-        returns (uint256)
-    {
+    function _calculateSharesForDeposit(uint256 collateralAmount) internal view returns (uint256) {
         return (collateralAmount * (totalSupply() + VIRTUAL_SHARE_OFFSET))
             / (getTotalCollateral() + VIRTUAL_SHARE_OFFSET);
     }
 
     /// @notice Calculate collateral to return for shares (rounds down)
-    function _calculateCollateralForShares(uint256 shareAmount)
-        internal
-        view
-        returns (uint256)
-    {
+    function _calculateCollateralForShares(uint256 shareAmount) internal view returns (uint256) {
         return (shareAmount * (getTotalCollateral() + VIRTUAL_SHARE_OFFSET))
             / (totalSupply() + VIRTUAL_SHARE_OFFSET);
     }
@@ -866,7 +852,7 @@ contract Zenji is ERC20, IERC4626 {
 
         _mint(receiver, sharesToMint);
 
-        if (yieldEnabled) {
+        if (!idle) {
             _deployCapital();
         }
 
@@ -876,50 +862,63 @@ contract Zenji is ERC20, IERC4626 {
     /// @notice Internal redeem logic shared by withdraw(), redeem(), and legacy withdraw()
     /// @return collateralAmount Amount of collateral returned
     /// @return actualShareAmount Amount of shares actually burned
-    function _redeem(uint256 shareAmount, address receiver, address _owner)
+    function _redeem(uint256 shareAmount, address receiver, address owner_)
         internal
         returns (uint256 collateralAmount, uint256 actualShareAmount)
     {
-        if (shareAmount == 0) revert ZeroAmount();
-        if (balanceOf(_owner) < shareAmount) revert InsufficientShares();
+        if (shareAmount < 1) revert ZeroAmount();
+        if (balanceOf(owner_) < shareAmount) revert InsufficientShares();
         if (emergencyMode) {
-            if (!liquidationComplete) revert EmergencyModeActive();
-
-            // Handle allowance if caller is not owner
-            if (msg.sender != _owner) {
-                _spendAllowance(_owner, msg.sender, shareAmount);
-            }
-
-            actualShareAmount = shareAmount;
-            uint256 supply = totalSupply();
-            if (supply == 0) return (0, 0);
-            uint256 availableCollateral = collateralAsset.balanceOf(address(this));
-            collateralAmount = (availableCollateral * actualShareAmount) / supply;
-
-            _burn(_owner, actualShareAmount);
-
-            if (collateralAmount > 0) {
-                collateralAsset.safeTransfer(receiver, collateralAmount);
-            }
-
-            emit Withdraw(msg.sender, receiver, _owner, collateralAmount, actualShareAmount);
-            return (collateralAmount, actualShareAmount);
+            return _redeemEmergency(shareAmount, receiver, owner_);
         }
 
-        // Detect final withdrawal — only the owner themselves can trigger it
-        uint256 leftOverCollateral =
-            _calculateCollateralForShares(totalSupply() - shareAmount);
-        bool isFinalWithdraw = leftOverCollateral < MIN_DEPOSIT && msg.sender == _owner;
+        return _redeemStandard(shareAmount, receiver, owner_);
+    }
+
+    function _redeemEmergency(uint256 shareAmount, address receiver, address owner_)
+        internal
+        returns (uint256 collateralAmount, uint256 actualShareAmount)
+    {
+        if (!liquidationComplete) revert EmergencyModeActive();
 
         // Handle allowance if caller is not owner
-        if (msg.sender != _owner) {
-            _spendAllowance(_owner, msg.sender, shareAmount);
+        if (msg.sender != owner_) {
+            _spendAllowance(owner_, msg.sender, shareAmount);
         }
 
-        actualShareAmount = isFinalWithdraw ? balanceOf(_owner) : shareAmount;
+        actualShareAmount = shareAmount;
+        uint256 supply = totalSupply();
+        if (supply < 1) return (0, 0);
+        uint256 availableCollateral = collateralAsset.balanceOf(address(this));
+        collateralAmount = (availableCollateral * actualShareAmount) / supply;
+
+        _burn(owner_, actualShareAmount);
+
+        if (collateralAmount > 0) {
+            collateralAsset.safeTransfer(receiver, collateralAmount);
+        }
+
+        emit Withdraw(msg.sender, receiver, owner_, collateralAmount, actualShareAmount);
+        return (collateralAmount, actualShareAmount);
+    }
+
+    function _redeemStandard(uint256 shareAmount, address receiver, address owner_)
+        internal
+        returns (uint256 collateralAmount, uint256 actualShareAmount)
+    {
+        // Detect final withdrawal — only the owner themselves can trigger it
+        uint256 leftOverCollateral = _calculateCollateralForShares(totalSupply() - shareAmount);
+        bool isFinalWithdraw = leftOverCollateral < MIN_DEPOSIT && msg.sender == owner_;
+
+        // Handle allowance if caller is not owner
+        if (msg.sender != owner_) {
+            _spendAllowance(owner_, msg.sender, shareAmount);
+        }
+
+        actualShareAmount = isFinalWithdraw ? balanceOf(owner_) : shareAmount;
         collateralAmount = _calculateCollateralForShares(actualShareAmount);
 
-        _burn(_owner, actualShareAmount);
+        _burn(owner_, actualShareAmount);
 
         if (isFinalWithdraw) {
             _unwindPosition(type(uint256).max);
@@ -942,14 +941,14 @@ contract Zenji is ERC20, IERC4626 {
 
                 uint256 totalAvailable = availableCollateral + gained;
                 if (totalAvailable < collateralAmount) {
-                    collateralAmount = totalAvailable;
+                    revert InsufficientCollateral();
                 }
             }
 
             collateralAsset.safeTransfer(receiver, collateralAmount);
         }
 
-        emit Withdraw(msg.sender, receiver, _owner, collateralAmount, actualShareAmount);
+        emit Withdraw(msg.sender, receiver, owner_, collateralAmount, actualShareAmount);
     }
 
     /// @notice Accrue fees from yield strategy profits using checkpoint delta
@@ -967,6 +966,10 @@ contract Zenji is ERC20, IERC4626 {
             }
         }
         lastStrategyBalance = currentBalance;
+        // Cap fees to actual strategy balance to prevent phantom fee accumulation after losses
+        if (accumulatedFees > currentBalance) {
+            accumulatedFees = currentBalance;
+        }
     }
 
     /// @notice Deploy debt asset to yield strategy
@@ -974,8 +977,9 @@ contract Zenji is ERC20, IERC4626 {
         if (yieldStrategy.paused()) return;
         _accrueYieldFees();
 
-        _ensureApprove(address(debtAsset), address(yieldStrategy), debtAmount);
-        yieldStrategy.deposit(debtAmount);
+        IERC20(address(debtAsset)).ensureApproval(address(yieldStrategy), debtAmount);
+        uint256 deposited = yieldStrategy.deposit(debtAmount);
+        emit StrategyDeposit(address(yieldStrategy), debtAmount, deposited);
         lastStrategyBalance = yieldStrategy.balanceOf();
     }
 
@@ -987,7 +991,7 @@ contract Zenji is ERC20, IERC4626 {
         _accrueYieldFees();
 
         uint256 toWithdraw = debtNeeded > strategyBalance ? strategyBalance : debtNeeded;
-        uint256 received;
+        uint256 received = 0;
         if (toWithdraw > 0) {
             received = yieldStrategy.withdraw(toWithdraw);
         }
@@ -998,15 +1002,18 @@ contract Zenji is ERC20, IERC4626 {
     /// @notice Unified position unwind for both partial and full withdrawals
     /// @param collateralNeeded Amount of collateral to free, or type(uint256).max for full close
     function _unwindPosition(uint256 collateralNeeded) internal {
-        bool fullyClose = (collateralNeeded == type(uint256).max);
+        bool fullyClose = (collateralNeeded >= type(uint256).max);
 
         // 1. Accrue yield fees
         _accrueYieldFees();
 
         // 2. Withdraw from yield strategy
+        uint256 debtBalance;
         if (fullyClose) {
-            yieldStrategy.withdrawAll();
+            uint256 debtBefore = debtAsset.balanceOf(address(this));
+            uint256 withdrawn = yieldStrategy.withdrawAll();
             lastStrategyBalance = 0;
+            debtBalance = debtBefore + withdrawn;
         } else {
             if (loanManager.loanExists()) {
                 (uint256 positionCollateral, uint256 positionDebt) = loanManager.getPositionValues();
@@ -1019,10 +1026,10 @@ contract Zenji is ERC20, IERC4626 {
                     _withdrawFromYieldStrategy(debtNeeded);
                 }
             }
+            debtBalance = debtAsset.balanceOf(address(this));
         }
 
         // 3. Transfer idle debt asset to loan manager
-        uint256 debtBalance = debtAsset.balanceOf(address(this));
         if (debtBalance > 0) {
             debtAsset.safeTransfer(address(loanManager), debtBalance);
         }
@@ -1030,54 +1037,42 @@ contract Zenji is ERC20, IERC4626 {
         // 4. Loan manager handles everything and sends collateral back
         loanManager.unwindPosition(collateralNeeded);
 
+        // 5. Recover surplus debt from loan manager (yield profits / buffer surplus)
+        uint256 lmDebtBalance = loanManager.getDebtBalance();
+        if (lmDebtBalance > 0) {
+            loanManager.transferDebt(address(this), lmDebtBalance);
+        }
+        _swapRemainingDebtToCollateral();
+
         emit CapitalUnwound(collateralNeeded, collateralAsset.balanceOf(address(this)));
     }
 
-    /// @notice Increase LTV by borrowing more
-    function _increaseLtv(uint256 _targetLtv) internal {
+    /// @notice Adjust LTV toward target by borrowing more or repaying debt
+    function _adjustLtv(uint256 _targetLtv, bool increase) internal {
         (uint256 collateral, uint256 currentDebt) = loanManager.getPositionValues();
         uint256 collateralValue = loanManager.getCollateralValue(collateral);
-
         uint256 targetDebt = (collateralValue * _targetLtv) / PRECISION;
-        if (targetDebt <= currentDebt) return;
 
-        uint256 additionalBorrow = targetDebt - currentDebt;
-        loanManager.borrowMore(0, additionalBorrow);
-
-        // Get debt asset from loan manager and deploy to yield vault
-        uint256 debtBalance = loanManager.getDebtBalance();
-        if (debtBalance > 0) {
-            loanManager.transferDebt(address(this), debtBalance);
-            _deployDebtToYield(debtBalance);
+        if (increase) {
+            if (targetDebt <= currentDebt) return;
+            uint256 additionalBorrow = targetDebt - currentDebt;
+            loanManager.borrowMore(0, additionalBorrow);
+            uint256 debtBalance = loanManager.getDebtBalance();
+            if (debtBalance > 0) {
+                loanManager.transferDebt(address(this), debtBalance);
+                _deployDebtToYield(debtBalance);
+            }
+        } else {
+            if (targetDebt >= currentDebt) return;
+            uint256 toRepay = currentDebt - targetDebt;
+            _withdrawFromYieldStrategy(toRepay);
+            uint256 debtBalance = debtAsset.balanceOf(address(this));
+            uint256 repayAmount = toRepay < debtBalance ? toRepay : debtBalance;
+            if (repayAmount > 0) {
+                debtAsset.safeTransfer(address(loanManager), repayAmount);
+                loanManager.repayDebt(repayAmount);
+            }
         }
-    }
-
-    /// @notice Decrease LTV by repaying debt
-    function _decreaseLtv(uint256 _targetLtv) internal {
-        (uint256 collateral, uint256 currentDebt) = loanManager.getPositionValues();
-        uint256 collateralValue = loanManager.getCollateralValue(collateral);
-
-        uint256 targetDebt = (collateralValue * _targetLtv) / PRECISION;
-        if (targetDebt >= currentDebt) return;
-
-        uint256 toRepay = currentDebt - targetDebt;
-
-        // Get debt asset from yield strategy
-        _withdrawFromYieldStrategy(toRepay);
-
-        // Transfer debt asset to loan manager and repay
-        uint256 debtBalance = debtAsset.balanceOf(address(this));
-        uint256 repayAmount = toRepay < debtBalance ? toRepay : debtBalance;
-
-        if (repayAmount > 0) {
-            debtAsset.safeTransfer(address(loanManager), repayAmount);
-            loanManager.repayDebt(repayAmount);
-        }
-    }
-
-    /// @notice Ensure token approval for spender
-    function _ensureApprove(address token, address spender, uint256 amount) internal {
-        IERC20(token).ensureApproval(spender, amount);
     }
 
     // ============ ERC20 Overrides for decimals ============
