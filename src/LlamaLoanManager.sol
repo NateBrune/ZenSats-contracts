@@ -88,6 +88,7 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
         address indexed currentSwapper, address indexed newSwapper, uint256 effectiveTime
     );
     event SwapperChangeCancelled(address indexed cancelledSwapper);
+    event VaultInitialized(address indexed vault);
 
     // ============ Immutables ============
 
@@ -110,7 +111,10 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     IChainlinkOracle public immutable debtOracle;
 
     /// @notice The vault that owns this loan manager
-    address public immutable vault;
+    address public vault;
+
+    /// @notice The address authorized to initialize the vault (deployer)
+    address public initializer;
 
     /// @notice Swapper for collateral/debt conversions
     ISwapper public swapper;
@@ -140,7 +144,7 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
         if (
             _collateralAsset == address(0) || _debtAsset == address(0) || _llamaLend == address(0)
                 || _collateralDebtPool == address(0) || _collateralOracle == address(0)
-                || _debtOracle == address(0) || _vault == address(0)
+                || _debtOracle == address(0)
         ) {
             revert InvalidAddress();
         }
@@ -152,7 +156,24 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
         collateralOracle = IChainlinkOracle(_collateralOracle);
         debtOracle = IChainlinkOracle(_debtOracle);
         swapper = ISwapper(_swapper);
+        if (_vault != address(0)) {
+            vault = _vault;
+            initializer = address(0);
+        } else {
+            initializer = msg.sender;
+        }
+    }
+
+    /// @notice Initialize the vault address (can only be called once by deployer)
+    /// @param _vault The vault address to set
+    function initializeVault(address _vault) external {
+        if (vault != address(0)) revert InvalidAddress();
+        if (_vault == address(0)) revert InvalidAddress();
+        if (msg.sender != initializer) revert Unauthorized();
+
         vault = _vault;
+        initializer = address(0);
+        emit VaultInitialized(_vault);
     }
 
     // ============ Loan Management Functions ============

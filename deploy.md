@@ -112,8 +112,8 @@ forge create src/AaveLoanManager.sol:AaveLoanManager \
     0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c \
     0x3E7d1eAB13ad0104d2750B8863b489D65364e32D \
     <SWAPPER> \
-    7500 \
-    8000 \
+    7300 \
+    7800 \
     0x0000000000000000000000000000000000000000 \
   --verify
 ```
@@ -721,4 +721,3 @@ cast call <VAULT> "debtAsset()(address)" --rpc-url $MAINNET_RPC_URL
 | Flashloan Provider | Balancer | Aave V3 |
 | Gas Efficiency | Higher ✓ | Lower (extra swaps) |
 | Code Complexity | Lower ✓ | Higher (swap logic) |
-
