@@ -47,14 +47,15 @@ TimelockLib.sol  - Timelock library for parameter changes
 | Rebalance Bounty | 20% (default) | Of accumulated fees, paid to keeper |
 | Min Deposit | 10,000 sats | Prevents dust deposits |
 | Virtual Offset | 1e5 | Inflation attack prevention |
-| Timelock Delay | 1 minute | **Must be changed to 2 days before mainnet** |
+| Timelock Delay | 2 days | For swapper, strategy, and loan manager changes |
 
 ## Access Control
 
 | Role | Functions |
 |------|-----------|
 | **Public** | `rebalance()`, `accrueYieldFees()`, `harvestYield()` |
-| **Owner** | `setIdle()`, `toggleYield()`, `enterEmergencyMode()`, `liquidateAllWithFlashloan()`, `proposeFeeRate()`, `proposeTargetLtv()`, `proposeStrategy()`, and their execute/cancel counterparts, `withdrawFees()`, `setDepositCap()`, `setRebalanceBountyRate()`, `transferOwnership()`, `rescueAssets()` |
+| **Owner** | `setParam()`, `setIdle()`, `enterEmergencyMode()`, `emergencyStep()`, `emergencyRescue()`, `proposeStrategy()`, `proposeLoanManager()`, and their execute/cancel counterparts, `withdrawFees()`, `setInitialStrategy()`, `transferRole()` |
+| **Governance** | `proposeSwapper()`, `executeSwapper()`, `cancelSwapper()`, `transferRole()` |
 | **User** | `deposit()`, `withdraw()`, `mint()`, `redeem()` (ERC4626), post-liquidation redemption |
 
 ## External Protocol Addresses (Mainnet)
