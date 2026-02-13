@@ -139,7 +139,13 @@ contract UsdcTokemakSmoke is Test {
 
         // 4. Deploy vault
         Zenji vault = new Zenji(
-            WBTC, USDC, address(loanManager), address(strategy), owner, address(viewHelper)
+            WBTC,
+            USDC,
+            address(loanManager),
+            address(strategy),
+            address(swapper),
+            owner,
+            address(viewHelper)
         );
 
         require(address(vault) == expectedVaultAddress, "Vault address mismatch");

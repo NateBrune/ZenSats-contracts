@@ -83,11 +83,11 @@ contract CurveThreeCryptoSwapper is ISwapper {
 
         collateralToken.ensureApproval(address(pool), collateralAmount);
         uint256 balanceBefore = debtToken.balanceOf(address(this));
-        pool.exchange(collateralIndex, debtIndex, collateralAmount, minOut, false);
-        uint256 balanceAfter = debtToken.balanceOf(address(this));
-        debtReceived = balanceAfter > balanceBefore ? balanceAfter - balanceBefore : 0;
+        debtReceived = _exchange(
+            collateralIndex, debtIndex, collateralAmount, minOut, debtToken, balanceBefore
+        );
         if (debtReceived > 0) {
-            debtToken.safeTransfer(msg.sender, debtReceived);
+            _safeTransferDebt(msg.sender, debtReceived);
         }
     }
 
@@ -102,11 +102,41 @@ contract CurveThreeCryptoSwapper is ISwapper {
 
         debtToken.ensureApproval(address(pool), debtAmount);
         uint256 balanceBefore = collateralToken.balanceOf(address(this));
-        pool.exchange(debtIndex, collateralIndex, debtAmount, minOut, false);
-        uint256 balanceAfter = collateralToken.balanceOf(address(this));
-        collateralReceived = balanceAfter > balanceBefore ? balanceAfter - balanceBefore : 0;
+        collateralReceived = _exchange(
+            debtIndex, collateralIndex, debtAmount, minOut, collateralToken, balanceBefore
+        );
         if (collateralReceived > 0) {
             collateralToken.safeTransfer(msg.sender, collateralReceived);
+        }
+    }
+
+    function _exchange(
+        uint256 i,
+        uint256 j,
+        uint256 dx,
+        uint256 minOut,
+        IERC20 outToken,
+        uint256 balanceBefore
+    ) private returns (uint256 amountOut) {
+        (bool ok, bytes memory data) = address(pool).call(
+            abi.encodeWithSignature("exchange(uint256,uint256,uint256,uint256,bool)", i, j, dx, minOut, false)
+        );
+        if (!ok) revert TransferFailed();
+        if (data.length >= 32) {
+            amountOut = abi.decode(data, (uint256));
+        } else {
+            uint256 balanceAfter = outToken.balanceOf(address(this));
+            amountOut = balanceAfter > balanceBefore ? balanceAfter - balanceBefore : 0;
+        }
+    }
+
+    function _safeTransferDebt(address to, uint256 amount) private {
+        (bool ok, bytes memory data) = address(debtToken).call(
+            abi.encodeWithSelector(IERC20.transfer.selector, to, amount)
+        );
+        if (!ok) revert TransferFailed();
+        if (data.length >= 32 && !abi.decode(data, (bool))) {
+            revert TransferFailed();
         }
     }
 

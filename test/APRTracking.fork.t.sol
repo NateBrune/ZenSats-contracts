@@ -4,6 +4,7 @@ pragma solidity ^0.8.33;
 import { Test, console } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
+import { CurveTwoCryptoSwapper } from "../src/CurveTwoCryptoSwapper.sol";
 import { LlamaLoanManager } from "../src/LlamaLoanManager.sol";
 import { VaultTracker } from "../src/VaultTracker.sol";
 import { IporYieldStrategy } from "../src/strategies/IporYieldStrategy.sol";
@@ -193,7 +194,10 @@ contract APRTrackingForkTest is Test {
 
         // Step 1: Deploy vault with IPOR strategy
         uint64 nonce = vm.getNonce(address(this));
-        address predictedVault = vm.computeCreateAddress(address(this), nonce + 2);
+        address predictedVault = vm.computeCreateAddress(address(this), nonce + 3);
+
+        CurveTwoCryptoSwapper swapper =
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
 
         strategy = new IporYieldStrategy(CRVUSD, predictedVault, IPOR_VAULT);
         LlamaLoanManager loanManager = new LlamaLoanManager(
@@ -203,12 +207,18 @@ contract APRTrackingForkTest is Test {
             WBTC_CRVUSD_POOL,
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
-            address(0),
+            address(swapper),
             predictedVault
         );
 
         vault = new Zenji(
-            WBTC, CRVUSD, address(loanManager), address(strategy), owner, address(viewHelper)
+            WBTC,
+            CRVUSD,
+            address(loanManager),
+            address(strategy),
+            address(swapper),
+            owner,
+            address(viewHelper)
         );
         require(address(vault) == predictedVault, "Vault address mismatch");
 
@@ -369,7 +379,10 @@ contract APRTrackingForkTest is Test {
 
         // Deploy full vault
         uint64 nonce = vm.getNonce(address(this));
-        address predictedVault = vm.computeCreateAddress(address(this), nonce + 2);
+        address predictedVault = vm.computeCreateAddress(address(this), nonce + 3);
+
+        CurveTwoCryptoSwapper swapper =
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
 
         strategy = new IporYieldStrategy(CRVUSD, predictedVault, IPOR_VAULT);
         LlamaLoanManager loanManager = new LlamaLoanManager(
@@ -379,12 +392,18 @@ contract APRTrackingForkTest is Test {
             WBTC_CRVUSD_POOL,
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
-            address(0),
+            address(swapper),
             predictedVault
         );
 
         vault = new Zenji(
-            WBTC, CRVUSD, address(loanManager), address(strategy), owner, address(viewHelper)
+            WBTC,
+            CRVUSD,
+            address(loanManager),
+            address(strategy),
+            address(swapper),
+            owner,
+            address(viewHelper)
         );
 
         tracker = new VaultTracker(address(vault));

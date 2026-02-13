@@ -205,18 +205,21 @@ contract Zenji is ERC20, IERC4626 {
     // ============ Constructor ============
 
     /// @param _yieldStrategy Yield strategy address (can be zero, set later via setInitialStrategy)
+    /// @param _swapper Swapper contract address (required)
     constructor(
         address _collateralAsset,
         address _debtAsset,
         address _loanManager,
         address _yieldStrategy,
+        address _swapper,
         address _owner,
         address _viewHelper
-    ) ERC20("Zen Wbtc (USDT->IPOR)", "usdtIpor-zenWBTC") {
+    ) ERC20("Zen WBTC", "zenWBTC") {
         if (
             _collateralAsset == address(0) ||
             _debtAsset == address(0) ||
             _loanManager == address(0) ||
+            _swapper == address(0) ||
             _owner == address(0) ||
             _viewHelper == address(0)
         ) {
@@ -227,6 +230,7 @@ contract Zenji is ERC20, IERC4626 {
         debtAsset = IERC20(_debtAsset);
         viewHelper = ZenjiViewHelper(_viewHelper);
         loanManager = ILoanManager(_loanManager);
+        swapper = ISwapper(_swapper);
         // Strategy can be set later via setInitialStrategy if zero
         if (_yieldStrategy != address(0)) {
             yieldStrategy = IYieldStrategy(_yieldStrategy);
@@ -975,7 +979,10 @@ contract Zenji is ERC20, IERC4626 {
 
                 uint256 totalAvailable = availableCollateral + gained;
                 if (totalAvailable < collateralAmount) {
-                    revert InsufficientCollateral();
+                    collateralAmount = totalAvailable;
+                    if (collateralAmount == 0) {
+                        revert InsufficientCollateral();
+                    }
                 }
             }
 

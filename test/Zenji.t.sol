@@ -392,14 +392,14 @@ contract ZenjiTest is Test {
 
         // Redeploy the vault with the mock strategy
         vault = new Zenji(
-            WBTC, CRVUSD, address(loanManager), address(mockStrategy), owner, address(viewHelper)
+            WBTC,
+            CRVUSD,
+            address(loanManager),
+            address(mockStrategy),
+            address(swapper),
+            owner,
+            address(viewHelper)
         );
-
-        vm.startPrank(owner);
-        vault.proposeSwapper(address(swapper));
-        warpAndMock(block.timestamp + 2 days + 1);
-        vault.executeSwapper();
-        vm.stopPrank();
 
         // Verify the addresses match
         require(address(vault) == expectedVaultAddress, "Vault address mismatch");
@@ -761,7 +761,9 @@ contract ZenjiTest is Test {
     function test_setInitialStrategy_onlyOnce() public {
         // Deploy a vault with no initial strategy
         uint64 nonce = vm.getNonce(address(this));
-        address predictedVault = vm.computeCreateAddress(address(this), nonce + 1);
+        address predictedVault = vm.computeCreateAddress(address(this), nonce + 2);
+        CurveTwoCryptoSwapper swapper =
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
         LlamaLoanManager loanManager = new LlamaLoanManager(
             WBTC,
             CRVUSD,
@@ -769,11 +771,18 @@ contract ZenjiTest is Test {
             WBTC_CRVUSD_POOL,
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
-            address(0),
+            address(swapper),
             predictedVault
         );
-        Zenji freshVault =
-            new Zenji(WBTC, CRVUSD, address(loanManager), address(0), owner, address(viewHelper));
+        Zenji freshVault = new Zenji(
+            WBTC,
+            CRVUSD,
+            address(loanManager),
+            address(0),
+            address(swapper),
+            owner,
+            address(viewHelper)
+        );
 
         MockYieldVault localYield = new MockYieldVault(CRVUSD);
         MockYieldStrategy localStrategy =
@@ -789,7 +798,9 @@ contract ZenjiTest is Test {
 
     function test_setInitialStrategy_revertsOnZero() public {
         uint64 nonce = vm.getNonce(address(this));
-        address predictedVault = vm.computeCreateAddress(address(this), nonce + 1);
+        address predictedVault = vm.computeCreateAddress(address(this), nonce + 2);
+        CurveTwoCryptoSwapper swapper =
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
         LlamaLoanManager loanManager = new LlamaLoanManager(
             WBTC,
             CRVUSD,
@@ -797,11 +808,18 @@ contract ZenjiTest is Test {
             WBTC_CRVUSD_POOL,
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
-            address(0),
+            address(swapper),
             predictedVault
         );
-        Zenji freshVault =
-            new Zenji(WBTC, CRVUSD, address(loanManager), address(0), owner, address(viewHelper));
+        Zenji freshVault = new Zenji(
+            WBTC,
+            CRVUSD,
+            address(loanManager),
+            address(0),
+            address(swapper),
+            owner,
+            address(viewHelper)
+        );
 
         vm.prank(owner);
         vm.expectRevert(Zenji.InvalidAddress.selector);
@@ -947,14 +965,14 @@ contract ZenjiTest is Test {
         );
 
         Zenji brickedVault = new Zenji(
-            WBTC, CRVUSD, address(loanManager), address(bricked), owner, address(viewHelper)
+            WBTC,
+            CRVUSD,
+            address(loanManager),
+            address(bricked),
+            address(swapper),
+            owner,
+            address(viewHelper)
         );
-
-        vm.startPrank(owner);
-        brickedVault.proposeSwapper(address(swapper));
-        warpAndMock(block.timestamp + 2 days + 1);
-        brickedVault.executeSwapper();
-        vm.stopPrank();
 
         require(address(brickedVault) == expectedVaultAddress, "Vault address mismatch");
 
@@ -1030,7 +1048,9 @@ contract ZenjiTest is Test {
 
     function test_harvestYield_revertsWhenNoStrategy() public {
         uint64 nonce = vm.getNonce(address(this));
-        address predictedVault = vm.computeCreateAddress(address(this), nonce + 1);
+        address predictedVault = vm.computeCreateAddress(address(this), nonce + 2);
+        CurveTwoCryptoSwapper swapper =
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
         LlamaLoanManager loanManager = new LlamaLoanManager(
             WBTC,
             CRVUSD,
@@ -1038,11 +1058,18 @@ contract ZenjiTest is Test {
             WBTC_CRVUSD_POOL,
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
-            address(0),
+            address(swapper),
             predictedVault
         );
-        Zenji freshVault =
-            new Zenji(WBTC, CRVUSD, address(loanManager), address(0), owner, address(viewHelper));
+        Zenji freshVault = new Zenji(
+            WBTC,
+            CRVUSD,
+            address(loanManager),
+            address(0),
+            address(swapper),
+            owner,
+            address(viewHelper)
+        );
 
         vm.expectRevert(Zenji.InvalidStrategy.selector);
         freshVault.harvestYield();
@@ -3146,11 +3173,28 @@ contract ZenjiTest is Test {
     function test_withdrawWithNoStrategy() public {
         // Deploy a vault with no yield strategy
         uint64 nonce = vm.getNonce(address(this));
-        address predictedVault = vm.computeCreateAddress(address(this), nonce + 1);
+        address predictedVault = vm.computeCreateAddress(address(this), nonce + 2);
+        CurveTwoCryptoSwapper swapper =
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
         LlamaLoanManager lm = new LlamaLoanManager(
-            WBTC, CRVUSD, LLAMALEND_WBTC, WBTC_CRVUSD_POOL, BTC_USD_ORACLE, CRVUSD_USD_ORACLE, address(0), predictedVault
+            WBTC,
+            CRVUSD,
+            LLAMALEND_WBTC,
+            WBTC_CRVUSD_POOL,
+            BTC_USD_ORACLE,
+            CRVUSD_USD_ORACLE,
+            address(swapper),
+            predictedVault
         );
-        Zenji noStratVault = new Zenji(WBTC, CRVUSD, address(lm), address(0), owner, address(viewHelper));
+        Zenji noStratVault = new Zenji(
+            WBTC,
+            CRVUSD,
+            address(lm),
+            address(0),
+            address(swapper),
+            owner,
+            address(viewHelper)
+        );
         require(address(noStratVault) == predictedVault, "Address mismatch");
 
         // Vault should be idle with no strategy
@@ -3179,11 +3223,28 @@ contract ZenjiTest is Test {
     function test_partialWithdrawWithNoStrategy() public {
         // Deploy a vault with no yield strategy
         uint64 nonce = vm.getNonce(address(this));
-        address predictedVault = vm.computeCreateAddress(address(this), nonce + 1);
+        address predictedVault = vm.computeCreateAddress(address(this), nonce + 2);
+        CurveTwoCryptoSwapper swapper =
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
         LlamaLoanManager lm = new LlamaLoanManager(
-            WBTC, CRVUSD, LLAMALEND_WBTC, WBTC_CRVUSD_POOL, BTC_USD_ORACLE, CRVUSD_USD_ORACLE, address(0), predictedVault
+            WBTC,
+            CRVUSD,
+            LLAMALEND_WBTC,
+            WBTC_CRVUSD_POOL,
+            BTC_USD_ORACLE,
+            CRVUSD_USD_ORACLE,
+            address(swapper),
+            predictedVault
         );
-        Zenji noStratVault = new Zenji(WBTC, CRVUSD, address(lm), address(0), owner, address(viewHelper));
+        Zenji noStratVault = new Zenji(
+            WBTC,
+            CRVUSD,
+            address(lm),
+            address(0),
+            address(swapper),
+            owner,
+            address(viewHelper)
+        );
         require(address(noStratVault) == predictedVault, "Address mismatch");
 
         // Two users deposit

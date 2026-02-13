@@ -104,6 +104,30 @@ contract MockCurveStableSwap is ICurveStableSwap {
     }
 }
 
+contract MockSwapper {
+    MockERC20 public immutable collateral;
+    MockERC20 public immutable debt;
+
+    constructor(address _collateral, address _debt) {
+        collateral = MockERC20(_collateral);
+        debt = MockERC20(_debt);
+    }
+
+    function quoteCollateralForDebt(uint256 debtAmount) external pure returns (uint256) {
+        return debtAmount;
+    }
+
+    function swapCollateralForDebt(uint256 collateralAmount) external returns (uint256) {
+        debt.mint(msg.sender, collateralAmount);
+        return collateralAmount;
+    }
+
+    function swapDebtForCollateral(uint256 debtAmount) external returns (uint256) {
+        collateral.mint(msg.sender, debtAmount);
+        return debtAmount;
+    }
+}
+
 contract MockAavePool is IAavePool {
     IERC20 public immutable collateral;
     IERC20 public immutable debtAsset;
@@ -199,7 +223,9 @@ contract UsdtIporAaveStrategyTest is Test {
         viewHelper = new ZenjiViewHelper();
 
         uint64 nonce = vm.getNonce(address(this));
-        address predictedVault = vm.computeCreateAddress(address(this), nonce + 2);
+        address predictedVault = vm.computeCreateAddress(address(this), nonce + 3);
+
+        MockSwapper swapper = new MockSwapper(address(wbtc), address(usdt));
 
         loanManager = new AaveLoanManager(
             address(wbtc),
@@ -209,7 +235,7 @@ contract UsdtIporAaveStrategyTest is Test {
             address(pool),
             address(collateralOracle),
             address(debtOracle),
-            address(0),
+            address(swapper),
             7500,
             8000,
             predictedVault
@@ -230,6 +256,7 @@ contract UsdtIporAaveStrategyTest is Test {
             address(usdt),
             address(loanManager),
             address(strategy),
+            address(swapper),
             owner,
             address(viewHelper)
         );

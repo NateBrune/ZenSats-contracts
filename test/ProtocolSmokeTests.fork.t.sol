@@ -13,6 +13,7 @@ import { IporYieldStrategy } from "../src/strategies/IporYieldStrategy.sol";
 import { ILoanManager } from "../src/interfaces/ILoanManager.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
+import { SafeTransferLib } from "../src/libraries/SafeTransferLib.sol";
 
 interface IYieldVault {
     function balanceOf(address account) external view returns (uint256);
@@ -39,6 +40,7 @@ interface IChainlinkOracle {
 /// @notice Comprehensive smoke tests for Zenji protocol combinations
 /// @dev Tests both WBTC+USDT+IPOR (Aave) and WBTC+crvUSD+LlamaLend scenarios
 contract ProtocolSmokeTests is Test {
+    using SafeTransferLib for IERC20;
     // Mainnet addresses
     address constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
     address constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
@@ -58,7 +60,7 @@ contract ProtocolSmokeTests is Test {
     // Curve pools
     address constant USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
     address constant WBTC_CRVUSD_POOL = 0xD9FF8396554A0d18B2CFbeC53e1979b7ecCe8373;
-    address constant TRICRYPTO_POOL = 0xD51a44d3FaE010294C616388b506AcdA1bfAAE46;
+    address constant TRICRYPTO_POOL = 0xf5f5B97624542D72A9E06f04804Bf81baA15e2B4;
 
     // Oracles
     address constant BTC_USD_ORACLE = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
@@ -180,20 +182,16 @@ contract ProtocolSmokeTests is Test {
 
         // Deploy vault
         Zenji vault = new Zenji(
-            WBTC, USDT, address(loanManager), address(strategy), owner, address(viewHelper)
+            WBTC,
+            USDT,
+            address(loanManager),
+            address(strategy),
+            address(swapper),
+            owner,
+            address(viewHelper)
         );
 
         require(address(vault) == expectedVaultAddress, "Vault address mismatch");
-
-        // Set swapper on vault
-        vm.startPrank(owner);
-        vault.proposeSwapper(address(swapper));
-        vm.warp(block.timestamp + 2 days + 1);
-        _mockOracle(BTC_USD_ORACLE);
-        _mockOracle(USDT_USD_ORACLE);
-        _mockOracle(CRVUSD_USD_ORACLE);
-        vault.executeSwapper();
-        vm.stopPrank();
 
         // Approve vault for user
         vm.prank(user1);
@@ -279,20 +277,16 @@ contract ProtocolSmokeTests is Test {
 
         // Deploy vault
         Zenji vault = new Zenji(
-            WBTC, CRVUSD, address(loanManager), address(strategy), owner, address(viewHelper)
+            WBTC,
+            CRVUSD,
+            address(loanManager),
+            address(strategy),
+            address(swapper),
+            owner,
+            address(viewHelper)
         );
 
         require(address(vault) == expectedVaultAddress, "Vault address mismatch");
-
-        // Set swapper on vault
-        vm.startPrank(owner);
-        vault.proposeSwapper(address(swapper));
-        vm.warp(block.timestamp + 2 days + 1);
-        _mockOracle(BTC_USD_ORACLE);
-        _mockOracle(USDT_USD_ORACLE);
-        _mockOracle(CRVUSD_USD_ORACLE);
-        vault.executeSwapper();
-        vm.stopPrank();
 
         // Approve vault for user
         vm.prank(user1);
@@ -369,7 +363,13 @@ contract ProtocolSmokeTests is Test {
         );
 
         Zenji vault = new Zenji(
-            WBTC, CRVUSD, address(loanManager), address(strategy), owner, address(viewHelper)
+            WBTC,
+            CRVUSD,
+            address(loanManager),
+            address(strategy),
+            address(swapper),
+            owner,
+            address(viewHelper)
         );
 
         // Test governance transfer
@@ -421,17 +421,14 @@ contract ProtocolSmokeTests is Test {
         );
 
         Zenji vault = new Zenji(
-            WBTC, CRVUSD, address(loanManager), address(strategy), owner, address(viewHelper)
+            WBTC,
+            CRVUSD,
+            address(loanManager),
+            address(strategy),
+            address(swapper),
+            owner,
+            address(viewHelper)
         );
-
-        vm.startPrank(owner);
-        vault.proposeSwapper(address(swapper));
-        vm.warp(block.timestamp + 2 days + 1);
-        _mockOracle(BTC_USD_ORACLE);
-        _mockOracle(USDT_USD_ORACLE);
-        _mockOracle(CRVUSD_USD_ORACLE);
-        vault.executeSwapper();
-        vm.stopPrank();
 
         // Fund and deposit
         vm.prank(user1);
@@ -510,7 +507,7 @@ contract ProtocolSmokeTests is Test {
             assertGt(usdtReceived, 0, "Should receive USDT");
 
             // Test reverse swap
-            usdt.transfer(address(swapper), usdtReceived);
+            usdt.safeTransfer(address(swapper), usdtReceived);
 
             uint256 wbtcReceived = swapper.swapDebtForCollateral(usdtReceived);
             assertGt(wbtcReceived, 0, "Should receive WBTC back");
