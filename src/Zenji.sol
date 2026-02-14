@@ -182,6 +182,7 @@ contract Zenji is ERC20, IERC4626 {
     error LiquidationAlreadyComplete();
     error ActiveLoanExists();
     error InsufficientCollateral();
+    error InsufficientDeposit();
 
     // ============ Modifiers ============
 
@@ -489,6 +490,14 @@ contract Zenji is ERC20, IERC4626 {
             revert RebalanceNotNeeded();
         }
 
+        // Accrue fees and pay keeper bounty before adjusting LTV
+        // (must happen before deposit to avoid IPOR lock conflict)
+        _accrueYieldFees();
+
+        (accumulatedFees, lastStrategyBalance) = ZenjiCoreLib.processRebalanceBounty(
+            yieldStrategy, debtAsset, accumulatedFees, rebalanceBountyRate, PRECISION, msg.sender
+        );
+
         uint256 newLtv = 0;
         bool increased = false;
 
@@ -501,13 +510,6 @@ contract Zenji is ERC20, IERC4626 {
             _adjustLtv(targetLtv, false);
             newLtv = loanManager.getCurrentLTV();
         }
-
-        // Accrue fees and pay keeper bounty
-        _accrueYieldFees();
-
-        (accumulatedFees, lastStrategyBalance) = ZenjiCoreLib.processRebalanceBounty(
-            yieldStrategy, debtAsset, accumulatedFees, rebalanceBountyRate, PRECISION, msg.sender
-        );
 
         emit Rebalance(currentLtv, newLtv, increased);
     }
@@ -1029,9 +1031,13 @@ contract Zenji is ERC20, IERC4626 {
             address(yieldStrategy),
             debtAmount
         );
-        uint256 deposited = yieldStrategy.deposit(debtAmount);
+        uint256 balBefore = yieldStrategy.balanceOf();
+        yieldStrategy.deposit(debtAmount);
+        uint256 balAfter = yieldStrategy.balanceOf();
+        uint256 deposited = balAfter > balBefore ? balAfter - balBefore : 0;
+        if (deposited < (debtAmount * 98) / 100) revert InsufficientDeposit();
         emit StrategyDeposit(address(yieldStrategy), debtAmount, deposited);
-        lastStrategyBalance = yieldStrategy.balanceOf();
+        lastStrategyBalance = balAfter;
     }
 
     /// @notice Withdraw debt asset from yield strategy

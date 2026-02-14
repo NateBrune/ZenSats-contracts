@@ -36,7 +36,7 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     uint256 public constant MIN_COLLATERAL_UNITS = (((LLAMALEND_BANDS * 1000) * 105) / 100); // 4 bands * 1000 units + 5% buffer
 
     /// @notice Minimum health factor required (1.0 = 1e18)
-    int256 public constant MIN_HEALTH = 1e17; // 10% - very conservative
+    int256 public constant MIN_HEALTH = 1e17;
 
     /// @notice Maximum acceptable collateral/USD oracle staleness (1 hour)
     uint256 public constant MAX_ORACLE_STALENESS = 3600;
@@ -77,6 +77,7 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     }
 
     error InsufficientFlashloanRepayment();
+    error HealthTooLow();
 
     event PositionUnwound(
         uint256 collateralRequested, uint256 debtRepaid, uint256 collateralRemoved
@@ -183,6 +184,10 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
         _checkOracleFreshness();
         _ensureApprove(address(collateralToken), address(llamaLend), collateral);
         llamaLend.create_loan(collateral, debt, bands);
+
+        int256 health = this.getHealth();
+        if (health < MIN_HEALTH) revert HealthTooLow();
+
         emit LoanCreated(collateral, debt, bands);
     }
 
@@ -203,6 +208,10 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
             _ensureApprove(address(collateralToken), address(llamaLend), collateral);
         }
         llamaLend.borrow_more(collateral, debt);
+
+        int256 health = this.getHealth();
+        if (health < MIN_HEALTH) revert HealthTooLow();
+
         emit LoanBorrowedMore(collateral, debt);
     }
 
@@ -262,7 +271,7 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
 
         if (needFlashloan) {
             // 5. Debt remains → flashloan the shortfall (+ 0.5% buffer)
-            uint256 flashloanAmount = (remainingDebt * 10050) / 10000;
+            uint256 flashloanAmount = (remainingDebt * 10300) / 10000;
             bytes memory data = abi.encode(collateralNeeded, fullyClose);
             IERC3156FlashLender(DEBT_FLASH_LENDER).flashLoan(
                 IERC3156FlashBorrower(address(this)), address(debtToken), flashloanAmount, data

@@ -3,6 +3,7 @@ pragma solidity ^0.8.33;
 
 import {BaseIporStrategy} from "./BaseIporStrategy.sol";
 import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
+import {IChainlinkOracle} from "../interfaces/IChainlinkOracle.sol";
 import {ICurveStableSwap} from "../interfaces/ICurveStableSwap.sol";
 import {IERC20} from "../interfaces/IERC20.sol";
 
@@ -15,6 +16,10 @@ contract UsdtIporYieldStrategy is BaseIporStrategy {
 
     IERC20 public immutable crvUSD;
     ICurveStableSwap public immutable curvePool;
+    IChainlinkOracle public immutable crvUsdOracle;
+    IChainlinkOracle public immutable usdtOracle;
+    uint256 public constant MAX_CRVUSD_ORACLE_STALENESS = 90000; // 25 hours (Chainlink heartbeat is 24h)
+    uint256 public constant MAX_USDT_ORACLE_STALENESS = 90000; // 25 hours (Chainlink heartbeat is 24h)
     int128 public immutable usdtIndex;
     int128 public immutable crvUsdIndex;
 
@@ -31,11 +36,16 @@ contract UsdtIporYieldStrategy is BaseIporStrategy {
         address _curvePool,
         address _iporVault,
         int128 _usdtIndex,
-        int128 _crvUsdIndex
+        int128 _crvUsdIndex,
+        address _crvUsdOracle,
+        address _usdtOracle
     ) BaseIporStrategy(_usdt, _vault, _iporVault) {
         if (_crvUSD == address(0) || _curvePool == address(0)) revert InvalidAddress();
+        if (_crvUsdOracle == address(0) || _usdtOracle == address(0)) revert InvalidAddress();
         crvUSD = IERC20(_crvUSD);
         curvePool = ICurveStableSwap(_curvePool);
+        crvUsdOracle = IChainlinkOracle(_crvUsdOracle);
+        usdtOracle = IChainlinkOracle(_usdtOracle);
         usdtIndex = _usdtIndex;
         crvUsdIndex = _crvUsdIndex;
     }
@@ -58,8 +68,28 @@ contract UsdtIporYieldStrategy is BaseIporStrategy {
     function balanceOf() public view override returns (uint256) {
         uint256 crvUsdValue = _iporBalance();
         if (crvUsdValue < 1) return 0;
-        // Use 1:1 stablecoin parity (crvUSD 18 decimals -> USDT 6 decimals)
-        return crvUsdValue / 1e12;
+
+        (uint80 crvRoundId, int256 crvUsdPrice,, uint256 crvUsdUpdatedAt, uint80 crvAnswered) =
+            crvUsdOracle.latestRoundData();
+        if (
+            crvUsdPrice <= 0 || crvAnswered < crvRoundId
+                || block.timestamp - crvUsdUpdatedAt > MAX_CRVUSD_ORACLE_STALENESS
+        ) {
+            return crvUsdValue / 1e12; // fallback to 1:1
+        }
+
+        (uint80 usdtRoundId, int256 usdtPrice,, uint256 usdtUpdatedAt, uint80 usdtAnswered) =
+            usdtOracle.latestRoundData();
+        if (
+            usdtPrice <= 0 || usdtAnswered < usdtRoundId
+                || block.timestamp - usdtUpdatedAt > MAX_USDT_ORACLE_STALENESS
+        ) {
+            return crvUsdValue / 1e12; // fallback to 1:1
+        }
+
+        // crvUSD_in_USDT = crvUsdValue * crvUsdPrice / usdtPrice
+        // Then convert 18-decimal to 6-decimal
+        return (crvUsdValue * uint256(crvUsdPrice)) / (uint256(usdtPrice) * 1e12);
     }
 
     /// @inheritdoc IYieldStrategy

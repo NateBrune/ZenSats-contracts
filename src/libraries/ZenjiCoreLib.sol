@@ -17,11 +17,21 @@ library ZenjiCoreLib {
     error InvalidAddress();
 
     event EmergencyYieldRedeemed(uint256 debtAssetReceived);
-    event EmergencyLoanUnwound(uint256 collateralRecovered, uint256 debtRecovered);
-    event LiquidationComplete(uint256 collateralRecovered, uint256 flashloanAmount);
+    event EmergencyLoanUnwound(
+        uint256 collateralRecovered,
+        uint256 debtRecovered
+    );
+    event LiquidationComplete(
+        uint256 collateralRecovered,
+        uint256 flashloanAmount
+    );
     event EmergencyCollateralTransferred(uint256 amount);
     event EmergencyDebtTransferred(uint256 amount);
-    event AssetsRescued(address indexed token, address indexed recipient, uint256 amount);
+    event AssetsRescued(
+        address indexed token,
+        address indexed recipient,
+        uint256 amount
+    );
     event FeesWithdrawn(address indexed recipient, uint256 amount);
     event RebalanceBountyPaid(address indexed keeper, uint256 amount);
 
@@ -40,7 +50,11 @@ library ZenjiCoreLib {
         uint256 accumulatedFees
     )
         external
-        returns (uint256 newLastStrategyBalance, uint256 newAccumulatedFees, bool setLiquidationComplete)
+        returns (
+            uint256 newLastStrategyBalance,
+            uint256 newAccumulatedFees,
+            bool setLiquidationComplete
+        )
     {
         newLastStrategyBalance = lastStrategyBalance;
         newAccumulatedFees = accumulatedFees;
@@ -63,7 +77,10 @@ library ZenjiCoreLib {
             if (!loanManager.loanExists()) {
                 _recoverLoanManagerFunds(loanManager);
                 _swapRemainingDebtToCollateral(debtAsset, swapper);
-                emit EmergencyLoanUnwound(collateralAsset.balanceOf(address(this)), 0);
+                emit EmergencyLoanUnwound(
+                    collateralAsset.balanceOf(address(this)),
+                    0
+                );
                 return (newLastStrategyBalance, newAccumulatedFees, false);
             }
             uint256 totalDebt = loanManager.getCurrentDebt();
@@ -79,10 +96,16 @@ library ZenjiCoreLib {
             }
             _recoverLoanManagerFunds(loanManager);
             _swapRemainingDebtToCollateral(debtAsset, swapper);
-            emit EmergencyLoanUnwound(collateralAsset.balanceOf(address(this)), 0);
+            emit EmergencyLoanUnwound(
+                collateralAsset.balanceOf(address(this)),
+                0
+            );
         } else {
             setLiquidationComplete = true;
-            emit LiquidationComplete(collateralAsset.balanceOf(address(this)), 0);
+            emit LiquidationComplete(
+                collateralAsset.balanceOf(address(this)),
+                0
+            );
         }
     }
 
@@ -140,7 +163,10 @@ library ZenjiCoreLib {
         IYieldStrategy yieldStrategy,
         IERC20 debtAsset,
         uint256 accumulatedFees
-    ) external returns (uint256 newAccumulatedFees, uint256 newLastStrategyBalance) {
+    )
+        external
+        returns (uint256 newAccumulatedFees, uint256 newLastStrategyBalance)
+    {
         uint256 fees = accumulatedFees;
         if (fees == 0) return (0, yieldStrategy.balanceOf());
 
@@ -149,7 +175,9 @@ library ZenjiCoreLib {
         uint256 strategyBalance = yieldStrategy.balanceOf();
         uint256 debtBefore = debtAsset.balanceOf(address(this));
         if (strategyBalance > 0 && fees > 0) {
-            uint256 toWithdraw = fees > strategyBalance ? strategyBalance : fees;
+            uint256 toWithdraw = fees > strategyBalance
+                ? strategyBalance
+                : fees;
             if (toWithdraw > 0) {
                 uint256 received = yieldStrategy.withdraw(toWithdraw);
                 debtBefore += received;
@@ -175,17 +203,25 @@ library ZenjiCoreLib {
         uint256 rebalanceBountyRate,
         uint256 precision,
         address keeper
-    ) external returns (uint256 newAccumulatedFees, uint256 newLastStrategyBalance) {
+    )
+        external
+        returns (uint256 newAccumulatedFees, uint256 newLastStrategyBalance)
+    {
         newAccumulatedFees = accumulatedFees;
 
         if (rebalanceBountyRate > 0 && accumulatedFees > 0) {
-            uint256 bounty = (accumulatedFees * rebalanceBountyRate) / precision;
+            uint256 bounty = (accumulatedFees * rebalanceBountyRate) /
+                precision;
             if (bounty > 0) {
                 uint256 strategyBalance = yieldStrategy.balanceOf();
                 if (strategyBalance > 0) {
-                    uint256 toWithdraw = bounty > strategyBalance ? strategyBalance : bounty;
+                    uint256 toWithdraw = bounty > strategyBalance
+                        ? strategyBalance
+                        : bounty;
                     uint256 received = yieldStrategy.withdraw(toWithdraw);
-                    uint256 actualBounty = received > bounty ? bounty : received;
+                    uint256 actualBounty = received > bounty
+                        ? bounty
+                        : received;
                     newAccumulatedFees = accumulatedFees - actualBounty;
                     debtAsset.safeTransfer(keeper, actualBounty);
                     emit RebalanceBountyPaid(keeper, actualBounty);
@@ -207,7 +243,10 @@ library ZenjiCoreLib {
         if (lmDebt > 0) loanManager.transferDebt(address(this), lmDebt);
     }
 
-    function _swapRemainingDebtToCollateral(IERC20 debtAsset, ISwapper swapper) private {
+    function _swapRemainingDebtToCollateral(
+        IERC20 debtAsset,
+        ISwapper swapper
+    ) private {
         uint256 debtBal = debtAsset.balanceOf(address(this));
         if (debtBal > 1e16 && address(swapper) != address(0)) {
             debtAsset.safeTransfer(address(swapper), debtBal);

@@ -30,6 +30,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
     uint256 public constant DUST_BUFFER = 1;
     uint256 public constant DUST_THRESHOLD = 1e6;
     uint256 public constant TIMELOCK_DELAY = 2 days;
+    int256 public constant MIN_HEALTH = 1.1e18;
 
     // ============ Immutables ============
 
@@ -59,6 +60,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
     event VaultInitialized(address indexed vault);
 
     error InsufficientFlashloanRepayment();
+    error HealthTooLow();
 
     // ============ Modifiers ============
 
@@ -134,6 +136,11 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
             );
         }
 
+        if (debt > 0) {
+            int256 health = this.getHealth();
+            if (health < MIN_HEALTH) revert HealthTooLow();
+        }
+
         emit LoanCreated(collateral, debt, 0);
     }
 
@@ -157,6 +164,11 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
                 address(debtToken), debt, VARIABLE_RATE_MODE, AAVE_REFERRAL_CODE, address(this)
             );
         }
+        if (debt > 0) {
+            int256 health = this.getHealth();
+            if (health < MIN_HEALTH) revert HealthTooLow();
+        }
+
         emit LoanBorrowedMore(collateral, debt);
     }
 
@@ -195,7 +207,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         uint256 remainingDebt = variableDebtToken.balanceOf(address(this));
         bool needFlashloan = fullyClose ? (remainingDebt > 0) : !_isDustDebt(remainingDebt);
         if (needFlashloan) {
-            uint256 flashloanAmount = (remainingDebt * 10050) / 10000;
+            uint256 flashloanAmount = (remainingDebt * 10300) / 10000;
             bytes memory data = abi.encode(collateralNeeded, fullyClose);
             aavePool.flashLoanSimple(
                 address(this), address(debtToken), flashloanAmount, data, AAVE_REFERRAL_CODE

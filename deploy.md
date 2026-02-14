@@ -26,6 +26,7 @@ This guide walks through deploying the Zenji vault with:
 address constant WBTC   = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
 address constant USDT   = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
 address constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
+address constant CBBTC  = 0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf;
 
 // Chainlink Oracles
 address constant BTC_USD_ORACLE  = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
@@ -45,9 +46,14 @@ int128  constant USDT_INDEX   = 0;
 int128  constant CRVUSD_INDEX = 1;
 
 // Curve TriCrypto: WBTC ↔ USDT (for loan-manager swapper)
-address constant TRICRYPTO_POOL       = 0xD51a44d3FaE010294C616388b506AcdA1bfAAE46;
+address constant TRICRYPTO_POOL       = 0xf5f5B97624542D72A9E06f04804Bf81baA15e2B4;
 uint256 constant TRICRYPTO_USDT_INDEX = 0;
 uint256 constant TRICRYPTO_WBTC_INDEX = 1;
+
+// Curve TwoCrypto: cbBTC ↔ WBTC (for cbBTC swapper)
+address constant CBBTC_WBTC_POOL = 0x839d6bDeDFF886404A6d7a788ef241e4e28F4802;
+uint256 constant CBBTC_INDEX = 0;
+uint256 constant WBTC_INDEX = 1;
 ```
 
 ---
@@ -79,7 +85,7 @@ forge create src/CurveThreeCryptoSwapper.sol:CurveThreeCryptoSwapper \
     <GOVERNANCE_ADDRESS> \
     0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599 \
     0xdAC17F958D2ee523a2206206994597C13D831ec7 \
-    0xD51a44d3FaE010294C616388b506AcdA1bfAAE46 \
+    0xf5f5B97624542D72A9E06f04804Bf81baA15e2B4 \
     1 \
     0 \
   --verify
@@ -94,6 +100,38 @@ Constructor args:
 6. `0` - USDT index in tricrypto
 
 Save the deployed address as `SWAPPER`.
+
+For cbBTC vaults, use the two-hop swapper (cbBTC <-> WBTC, then WBTC <-> USDT):
+
+```bash
+forge create src/CbBtcWbtcUsdtSwapper.sol:CbBtcWbtcUsdtSwapper \
+  --rpc-url $MAINNET_RPC_URL \
+  --private-key $PRIVATE_KEY \
+  --constructor-args \
+    <GOVERNANCE_ADDRESS> \
+    0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf \
+    0xdAC17F958D2ee523a2206206994597C13D831ec7 \
+    0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599 \
+    0x839d6bDeDFF886404A6d7a788ef241e4e28F4802 \
+    0 \
+    1 \
+    0xf5f5B97624542D72A9E06f04804Bf81baA15e2B4 \
+    1 \
+    0 \
+  --verify
+```
+
+Constructor args:
+1. `<GOVERNANCE_ADDRESS>` - governance address for slippage control
+2. `cbBTC` - collateral token
+3. `USDT` - debt token
+4. `WBTC` - intermediate token
+5. `CBBTC_WBTC_POOL` - Curve pool address
+6. `0` - cbBTC index
+7. `1` - WBTC index
+8. `TRICRYPTO_POOL` - Curve TriCrypto pool
+9. `1` - WBTC index in tricrypto
+10. `0` - USDT index in tricrypto
 
 ---
 
@@ -149,6 +187,8 @@ forge create src/strategies/UsdtIporYieldStrategy.sol:UsdtIporYieldStrategy \
     0xbfA9d6EC0E04B6691fCAE5F8b48838C3918eC117 \
     0 \
     1 \
+    0xEEf0C605546958c1f899b6fB336C20671f9cD49F \
+    0x3E7d1eAB13ad0104d2750B8863b489D65364e32D \
   --verify
 ```
 
@@ -160,6 +200,8 @@ Constructor args:
 5. `IPOR_PLASMA_VAULT` - yield venue
 6. `0` - USDT index in Curve pool
 7. `1` - crvUSD index in Curve pool
+8. `CRVUSD_USD_ORACLE` - Chainlink crvUSD/USD oracle
+9. `USDT_USD_ORACLE` - Chainlink USDT/USD oracle
 
 Save the deployed address as `STRATEGY`.
 
@@ -176,18 +218,37 @@ forge create src/Zenji.sol:Zenji \
     0xdAC17F958D2ee523a2206206994597C13D831ec7 \
     <LOAN_MANAGER> \
     <STRATEGY> \
+    <SWAPPER> \
     <OWNER> \
     <VIEW_HELPER> \
   --verify
 ```
 
+Optional: deploy a per-asset implementation instead of the base vault:
+
+```bash
+forge create src/implementations/ZenjiWbtc.sol:ZenjiWbtc \
+  --rpc-url $MAINNET_RPC_URL \
+  --private-key $PRIVATE_KEY \
+  --constructor-args \
+    <LOAN_MANAGER> \
+    <STRATEGY> \
+    <SWAPPER> \
+    <OWNER> \
+    <VIEW_HELPER> \
+  --verify
+```
+
+For cbBTC, use `src/implementations/ZenjiCbBtc.sol:ZenjiCbBtc` with the same constructor args.
+
 Constructor args:
 1. `WBTC` - collateral asset
 2. `USDT` - debt asset
 3. `LOAN_MANAGER` - from Step 3
-4. `address(0)` - strategy set later
-5. `OWNER` - vault owner address (handles day-to-day operations)
-6. `VIEW_HELPER` - from Step 1
+4. `address(0)` - strategy set later (or pass `STRATEGY` and skip Step 7)
+5. `SWAPPER` - from Step 2
+6. `OWNER` - vault owner address (handles day-to-day operations)
+7. `VIEW_HELPER` - from Step 1
 
 **Note**: Governance address is initially set to OWNER in constructor. You can transfer it to a multisig later.
 
@@ -227,25 +288,19 @@ cast send <VAULT> "setInitialStrategy(address)" <STRATEGY> \
 
 ---
 
-### Step 8: Set Swapper on Vault
+### Step 8: (Optional) Change Swapper Later
 
-**Must be called by GOVERNANCE (owner initially):**
-
-The swapper is set via a timelocked propose/execute flow (2-day delay):
+If you need to change the swapper after deployment, use the timelocked governance flow:
 
 ```bash
-# Propose the swapper
-cast send <VAULT> "proposeSwapper(address)" <SWAPPER> \
+cast send <VAULT> "proposeSwapper(address)" <NEW_SWAPPER> \
   --rpc-url $MAINNET_RPC_URL \
   --private-key $OWNER_PRIVATE_KEY
 
-# Wait 2 days, then execute
 cast send <VAULT> "executeSwapper()" \
   --rpc-url $MAINNET_RPC_URL \
   --private-key $OWNER_PRIVATE_KEY
 ```
-
-**Note**: The vault cannot unwind positions without a swapper. This must be done before any deposits.
 
 ---
 
@@ -287,7 +342,7 @@ cast send <SWAPPER> "acceptGovernance()" \
 | 5    | Zenji                   | No             | Deployer   |
 | 6    | initializeVault (x2)    | -              | Deployer   |
 | 7    | setInitialStrategy      | -              | Owner      |
-| 8    | proposeSwapper (+ wait + executeSwapper) | - | Gov |
+| 8    | changeSwapper (optional) | -             | Gov        |
 | 9    | Transfer Governance     | -              | Gov/Owner  |
 
 ---
@@ -501,6 +556,7 @@ forge create src/Zenji.sol:Zenji \
     0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E \
     <LOAN_MANAGER> \
     0x0000000000000000000000000000000000000000 \
+    <SWAPPER> \
     <OWNER> \
     <VIEW_HELPER> \
   --verify
@@ -511,8 +567,9 @@ Constructor args:
 2. `crvUSD` - debt asset
 3. `LOAN_MANAGER` - from Step 3
 4. `address(0)` - strategy set later
-5. `OWNER` - vault owner address
-6. `VIEW_HELPER` - from Step 1
+5. `SWAPPER` - from Step 2
+6. `OWNER` - vault owner address
+7. `VIEW_HELPER` - from Step 1
 
 Save the deployed address as `VAULT`.
 
@@ -573,19 +630,15 @@ cast send <VAULT> "setParam(uint8,uint256)" 2 1000000000 \
 
 ---
 
-### Step 9: Set Swapper on Vault
+### Step 9: (Optional) Change Swapper Later
 
-**Must be called by GOVERNANCE (owner initially):**
-
-The swapper is set via a timelocked propose/execute flow (2-day delay):
+If you need to change the swapper after deployment, use the timelocked governance flow:
 
 ```bash
-# Propose the swapper
-cast send <VAULT> "proposeSwapper(address)" <SWAPPER> \
+cast send <VAULT> "proposeSwapper(address)" <NEW_SWAPPER> \
   --rpc-url $MAINNET_RPC_URL \
   --private-key $OWNER_PRIVATE_KEY
 
-# Wait 2 days, then execute
 cast send <VAULT> "executeSwapper()" \
   --rpc-url $MAINNET_RPC_URL \
   --private-key $OWNER_PRIVATE_KEY
@@ -632,7 +685,7 @@ cast send <SWAPPER> "acceptGovernance()" \
 | 6    | initializeVault      | -              | Deployer  |
 | 7    | setInitialStrategy   | -              | Owner     |
 | 8    | Configure parameters | -              | Owner     |
-| 9    | proposeSwapper (+ wait + executeSwapper) | - | Gov |
+| 9    | changeSwapper (optional) | -           | Gov       |
 | 10   | Transfer Governance  | -              | Gov/Owner |
 
 \* LlamaLoanManager needs vault address at construction (see Step 3 note)

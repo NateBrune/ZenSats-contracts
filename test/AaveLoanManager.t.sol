@@ -229,7 +229,7 @@ contract AaveLoanManagerTest is Test {
 
     function test_unwindPosition_fullClose_usesFlashloanAndSwapper() public {
         collateral.mint(address(manager), 100e18);
-        manager.createLoan(100e18, 80e18, 0);
+        manager.createLoan(100e18, 65e18, 0);
 
         debt.burnFrom(address(manager), debt.balanceOf(address(manager)));
 

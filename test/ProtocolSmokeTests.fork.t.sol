@@ -162,7 +162,9 @@ contract ProtocolSmokeTests is Test {
             USDT_CRVUSD_POOL,
             IPOR_PLASMA_VAULT,
             0, // USDT index in pool
-            1 // crvUSD index in pool
+            1, // crvUSD index in pool
+            CRVUSD_USD_ORACLE,
+            USDT_USD_ORACLE
         );
 
         // Deploy loan manager

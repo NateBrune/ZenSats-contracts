@@ -70,21 +70,28 @@ contract MockCurveStableSwap is ICurveStableSwap {
 
     function exchange(int128 i, int128 j, uint256 dx, uint256) external returns (uint256) {
         if (i == usdtIndex && j == crvUsdIndex) {
+            // USDT (6 dec) -> crvUSD (18 dec): scale up by 1e12
             usdt.transferFrom(msg.sender, address(this), dx);
-            MockERC20(address(crvUSD)).mint(msg.sender, dx);
-            return dx;
+            uint256 out = dx * 1e12;
+            MockERC20(address(crvUSD)).mint(msg.sender, out);
+            return out;
         }
         if (i == crvUsdIndex && j == usdtIndex) {
+            // crvUSD (18 dec) -> USDT (6 dec): scale down by 1e12
             crvUSD.transferFrom(msg.sender, address(this), dx);
-            MockERC20(address(usdt)).mint(msg.sender, dx);
-            return dx;
+            uint256 out = dx / 1e12;
+            MockERC20(address(usdt)).mint(msg.sender, out);
+            return out;
         }
         return 0;
     }
 
     function get_dy(int128 i, int128 j, uint256 dx) external view returns (uint256) {
-        if ((i == usdtIndex && j == crvUsdIndex) || (i == crvUsdIndex && j == usdtIndex)) {
-            return dx;
+        if (i == usdtIndex && j == crvUsdIndex) {
+            return dx * 1e12; // USDT -> crvUSD
+        }
+        if (i == crvUsdIndex && j == usdtIndex) {
+            return dx / 1e12; // crvUSD -> USDT
         }
         return 0;
     }
@@ -196,6 +203,8 @@ contract UsdtIporAaveStrategyTest is Test {
     MockAavePool pool;
     MockOracle collateralOracle;
     MockOracle debtOracle;
+    MockOracle crvUsdOracle;
+    MockOracle usdtOracle;
     MockYieldVault iporVault;
     MockCurveStableSwap curvePool;
 
@@ -209,14 +218,16 @@ contract UsdtIporAaveStrategyTest is Test {
 
     function setUp() public {
         wbtc = new MockERC20("WBTC", "WBTC", 8);
-        usdt = new MockERC20("USDT", "USDT", 18);
+        usdt = new MockERC20("USDT", "USDT", 6);
         crvUSD = new MockERC20("crvUSD", "crvUSD", 18);
         aToken = new MockERC20("aWBTC", "aWBTC", 8);
-        debtToken = new MockERC20("vUSDT", "vUSDT", 18);
+        debtToken = new MockERC20("vUSDT", "vUSDT", 6);
 
         pool = new MockAavePool(address(wbtc), address(usdt), address(aToken), address(debtToken));
         collateralOracle = new MockOracle(8, 1e8);
         debtOracle = new MockOracle(8, 1e8);
+        crvUsdOracle = new MockOracle(8, 1e8); // crvUSD at $1.00
+        usdtOracle = new MockOracle(8, 1e8); // USDT at $1.00
         iporVault = new MockYieldVault(address(crvUSD));
         curvePool = new MockCurveStableSwap(address(usdt), address(crvUSD), 0, 1);
 
@@ -248,7 +259,9 @@ contract UsdtIporAaveStrategyTest is Test {
             address(curvePool),
             address(iporVault),
             0,
-            1
+            1,
+            address(crvUsdOracle),
+            address(usdtOracle)
         );
 
         vault = new Zenji(

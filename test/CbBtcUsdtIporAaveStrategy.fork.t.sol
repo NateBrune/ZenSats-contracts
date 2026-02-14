@@ -36,6 +36,7 @@ contract CbBtcUsdtIporAaveStrategyForkTest is Test {
 
     address constant CBBTC_USD_ORACLE = 0x2665701293fCbEB223D11A08D826563EDcCE423A;
     address constant USDT_USD_ORACLE = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
+    address constant CRVUSD_USD_ORACLE = 0xEEf0C605546958c1f899b6fB336C20671f9cD49F;
 
     address constant IPOR_PLASMA_VAULT = 0xbfA9d6EC0E04B6691fCAE5F8b48838C3918eC117;
 
@@ -123,7 +124,9 @@ contract CbBtcUsdtIporAaveStrategyForkTest is Test {
             CURVE_USDT_CRVUSD_POOL,
             IPOR_PLASMA_VAULT,
             USDT_INDEX,
-            CRVUSD_INDEX
+            CRVUSD_INDEX,
+            CRVUSD_USD_ORACLE,
+            USDT_USD_ORACLE
         );
 
         vault = new Zenji(
