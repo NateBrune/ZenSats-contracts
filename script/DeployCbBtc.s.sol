@@ -1,0 +1,121 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.33;
+
+import "forge-std/Script.sol";
+import "forge-std/console2.sol";
+
+import {ZenjiViewHelper} from "../src/ZenjiViewHelper.sol";
+import {CbBtcWbtcUsdtSwapper} from "../src/CbBtcWbtcUsdtSwapper.sol";
+import {AaveLoanManager} from "../src/AaveLoanManager.sol";
+import {UsdtIporYieldStrategy} from "../src/strategies/UsdtIporYieldStrategy.sol";
+import {ZenjiCbBtc} from "../src/implementations/ZenjiCbBtc.sol";
+
+contract DeployCbBtc is Script {
+    // Assets
+    address constant CBBTC = 0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf;
+    address constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
+    address constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
+    address constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
+
+    // Chainlink oracles
+    address constant BTC_USD_ORACLE = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
+    address constant USDT_USD_ORACLE = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
+    address constant CRVUSD_USD_ORACLE = 0xEEf0C605546958c1f899b6fB336C20671f9cD49F;
+
+    // Aave V3
+    address constant AAVE_POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
+    address constant AAVE_A_CBBTC = 0x5c647cE0Ae10658ec44FA4E11A51c96e94efd1Dd;
+    address constant AAVE_VAR_DEBT_USDT = 0x6df1C1E379bC5a00a7b4C6e67A203333772f45A8;
+
+    // Curve pools for swapper
+    address constant CBBTC_WBTC_POOL = 0x839d6bDeDFF886404A6d7a788ef241e4e28F4802;
+    uint256 constant CBBTC_INDEX = 0;
+    uint256 constant WBTC_INDEX = 1;
+    address constant TRICRYPTO_POOL = 0xf5f5B97624542D72A9E06f04804Bf81baA15e2B4;
+    uint256 constant TRICRYPTO_WBTC_INDEX = 1;
+    uint256 constant TRICRYPTO_USDT_INDEX = 0;
+
+    // IPOR / Curve
+    address constant IPOR_PLASMA_VAULT = 0xbfA9d6EC0E04B6691fCAE5F8b48838C3918eC117;
+    address constant CURVE_USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
+    int128 constant USDT_INDEX = 0;
+    int128 constant CRVUSD_INDEX = 1;
+
+    function run() external {
+        uint256 pk = vm.envUint("PRIVATE_KEY");
+        address owner = _envOrAddress("OWNER", vm.addr(pk));
+        address gov = _envOrAddress("GOV", owner);
+
+        vm.startBroadcast(pk);
+
+        ZenjiViewHelper viewHelper = new ZenjiViewHelper();
+
+        CbBtcWbtcUsdtSwapper swapper = new CbBtcWbtcUsdtSwapper(
+            gov,
+            CBBTC,
+            USDT,
+            WBTC,
+            CBBTC_WBTC_POOL,
+            CBBTC_INDEX,
+            WBTC_INDEX,
+            TRICRYPTO_POOL,
+            TRICRYPTO_WBTC_INDEX,
+            TRICRYPTO_USDT_INDEX
+        );
+
+        AaveLoanManager loanManager = new AaveLoanManager(
+            CBBTC,
+            USDT,
+            AAVE_A_CBBTC,
+            AAVE_VAR_DEBT_USDT,
+            AAVE_POOL,
+            BTC_USD_ORACLE,
+            USDT_USD_ORACLE,
+            address(swapper),
+            7500,
+            8000,
+            address(0)
+        );
+
+        UsdtIporYieldStrategy strategy = new UsdtIporYieldStrategy(
+            USDT,
+            CRVUSD,
+            address(0),
+            CURVE_USDT_CRVUSD_POOL,
+            IPOR_PLASMA_VAULT,
+            USDT_INDEX,
+            CRVUSD_INDEX,
+            CRVUSD_USD_ORACLE,
+            USDT_USD_ORACLE
+        );
+
+        ZenjiCbBtc vault = new ZenjiCbBtc(
+            address(loanManager),
+            address(strategy),
+            address(swapper),
+            owner,
+            address(viewHelper)
+        );
+
+        loanManager.initializeVault(address(vault));
+        strategy.initializeVault(address(vault));
+        vault.setInitialStrategy(address(strategy));
+
+        vm.stopBroadcast();
+
+        console2.log("ViewHelper", address(viewHelper));
+        console2.log("Swapper", address(swapper));
+        console2.log("LoanManager", address(loanManager));
+        console2.log("Strategy", address(strategy));
+        console2.log("Vault", address(vault));
+    }
+
+    function _envOrAddress(string memory key, address defaultValue) internal view returns (address) {
+        try vm.envAddress(key) returns (address val) {
+            if (val != address(0)) return val;
+            return defaultValue;
+        } catch {
+            return defaultValue;
+        }
+    }
+}

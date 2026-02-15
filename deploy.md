@@ -1,5 +1,12 @@
 # Deploy: Aave + USDT + IPOR (Zenji)
 
+📂 Per-strategy runbooks now live in `deployments/`:
+- [deployments/wbtc_ipor_aave_usdt.md](deployments/wbtc_ipor_aave_usdt.md)
+- [deployments/cbBTC_ipor_aave_usdt.md](deployments/cbBTC_ipor_aave_usdt.md)
+- [deployments/wstETH_ipor_aave_usdt.md](deployments/wstETH_ipor_aave_usdt.md)
+
+The sections below retain the original WBTC notes and scratch material.
+
 This guide walks through deploying the Zenji vault with:
 - **Loan Manager**: Aave V3 (deposit WBTC, borrow USDT)
 - **Yield Strategy**: IPOR Plasma Vault (deposit crvUSD via USDT→crvUSD swap)

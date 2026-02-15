@@ -205,9 +205,13 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         }
 
         uint256 remainingDebt = variableDebtToken.balanceOf(address(this));
-        bool needFlashloan = fullyClose ? (remainingDebt > 0) : !_isDustDebt(remainingDebt);
+        // For partial unwinds: only flashloan if the proportional debt wasn't fully repaid.
+        // The remaining Aave debt stays backed by remaining collateral.
+        uint256 unrepaidDebt = debtToRepay > repayNow ? debtToRepay - repayNow : 0;
+        bool needFlashloan = fullyClose ? (remainingDebt > 0) : !_isDustDebt(unrepaidDebt);
         if (needFlashloan) {
-            uint256 flashloanAmount = (remainingDebt * 10300) / 10000;
+            uint256 flashDebt = fullyClose ? remainingDebt : unrepaidDebt;
+            uint256 flashloanAmount = (flashDebt * 10300) / 10000;
             bytes memory data = abi.encode(collateralNeeded, fullyClose);
             aavePool.flashLoanSimple(
                 address(this), address(debtToken), flashloanAmount, data, AAVE_REFERRAL_CODE

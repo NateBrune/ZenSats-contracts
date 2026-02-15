@@ -243,7 +243,7 @@ contract Zenji is ERC20, IERC4626 {
         // Liquidation starts at ~90%
         // Vault can handle about 25% price move in testing without rebalancing.
         rebalanceBountyRate = 2e17; // 20% default rebalance bounty
-        feeRate = 1e17; // 10% fee on yield
+        feeRate = 0; // Default fee rate disabled
         _status = _NOT_ENTERED;
 
         // Loan manager is provided externally and can be swapped via timelock
@@ -405,6 +405,8 @@ contract Zenji is ERC20, IERC4626 {
     ) external override nonReentrant returns (uint256 shareAmount) {
         if (assets == 0) revert ZeroAmount();
 
+        if (emergencyMode && !liquidationComplete) revert EmergencyModeActive();
+
         if (emergencyMode && liquidationComplete) {
             uint256 availableCollateral = collateralAsset.balanceOf(
                 address(this)
@@ -434,6 +436,7 @@ contract Zenji is ERC20, IERC4626 {
         address receiver,
         address owner_
     ) external override nonReentrant returns (uint256 collateralAmount) {
+        if (emergencyMode && !liquidationComplete) revert EmergencyModeActive();
         (collateralAmount, ) = _redeem(shareAmount, receiver, owner_);
     }
 

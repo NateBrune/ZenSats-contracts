@@ -416,6 +416,10 @@ contract ZenjiTest is Test {
         wbtc.approve(address(vault), type(uint256).max);
         vm.prank(user3);
         wbtc.approve(address(vault), type(uint256).max);
+
+        // Enable fee accrual (default feeRate is 0)
+        vm.prank(owner);
+        vault.setParam(0, 1e17);
     }
 
     uint256 constant STAMP = 1710000000;
@@ -2144,8 +2148,10 @@ contract ZenjiTest is Test {
         vm.stopPrank();
 
         // 1. Set bounty rate and generate profit
-        vm.prank(owner);
+        vm.startPrank(owner);
+        vault.setParam(0, 1e17); // 10% fee rate
         vault.setParam(3, 1e17); // 10% bounty
+        vm.stopPrank();
 
         // Simulate strategy profit
         uint256 currentBal = crvUSD.balanceOf(address(mockYield));
@@ -2396,8 +2402,10 @@ contract ZenjiTest is Test {
         vault.deposit(1e8, user1);
 
         // Set bounty rate
-        vm.prank(owner);
+        vm.startPrank(owner);
+        vault.setParam(0, 1e17); // 10% fee rate
         vault.setParam(3, 1e17); // 10% bounty
+        vm.stopPrank();
 
         // Simulate large profit to create fees
         uint256 currentBal = crvUSD.balanceOf(address(mockYield));
