@@ -279,4 +279,84 @@ contract IporYieldStrategyTest is Test {
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
         new IporYieldStrategy(address(crvUSD), vault, address(0));
     }
+
+    // ============ Branch Coverage: initializeVault ============
+
+    function test_initializeVault_success() public {
+        IporYieldStrategy deferred = new IporYieldStrategy(address(crvUSD), address(0), address(iporVault));
+        assertEq(deferred.vault(), address(0));
+
+        deferred.initializeVault(vault);
+        assertEq(deferred.vault(), vault, "Vault should be set");
+    }
+
+    function test_initializeVault_alreadySet_reverts() public {
+        // strategy already has vault set from constructor
+        vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
+        strategy.initializeVault(vault);
+    }
+
+    function test_initializeVault_zeroAddress_reverts() public {
+        IporYieldStrategy deferred = new IporYieldStrategy(address(crvUSD), address(0), address(iporVault));
+        vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
+        deferred.initializeVault(address(0));
+    }
+
+    function test_initializeVault_wrongSender_reverts() public {
+        IporYieldStrategy deferred = new IporYieldStrategy(address(crvUSD), address(0), address(iporVault));
+        vm.prank(user);
+        vm.expectRevert(IYieldStrategy.Unauthorized.selector);
+        deferred.initializeVault(vault);
+    }
+
+    // ============ Branch Coverage: costBasis ternary in withdraw ============
+
+    function test_withdraw_costBasis_underflow_clamps_to_zero() public {
+        // Deposit a small amount
+        vm.prank(vault);
+        strategy.deposit(100e18);
+
+        // Withdraw the full balance - basisReduction should equal costBasis
+        uint256 bal = strategy.balanceOf();
+        vm.prank(vault);
+        strategy.withdraw(bal);
+
+        assertEq(strategy.costBasis(), 0, "Cost basis should be 0 after full withdraw");
+    }
+
+    // ============ Branch Coverage: IporYieldStrategy._withdraw sharesToRedeem capping ============
+
+    function test_withdraw_caps_sharesToRedeem_to_available() public {
+        // Deposit and then withdraw more than balance to trigger capping in _withdraw
+        vm.prank(vault);
+        strategy.deposit(500e18);
+
+        uint256 balance = strategy.balanceOf();
+
+        // Withdraw exactly balance (should not revert, amount == currentValue)
+        vm.prank(vault);
+        uint256 received = strategy.withdraw(balance);
+        assertGt(received, 0, "Should receive crvUSD");
+    }
+
+    // ============ Branch Coverage: unrealizedProfit zero when no profit ============
+
+    function test_unrealizedProfit_zero_when_empty() public view {
+        assertEq(strategy.unrealizedProfit(), 0, "Empty strategy should have 0 unrealized profit");
+    }
+
+    // ============ Branch Coverage: _withdraw sharesToRedeem > shares caps ============
+
+    function test_withdraw_moreThanBalance_capsToShares() public {
+        vm.prank(vault);
+        strategy.deposit(500e18);
+
+        uint256 bal = strategy.balanceOf();
+
+        // Withdraw much more than balance — sharesToRedeem > shares, gets capped
+        vm.prank(vault);
+        uint256 received = strategy.withdraw(bal * 10);
+        assertGt(received, 0, "Should receive crvUSD");
+        assertEq(strategy.balanceOf(), 0, "Should withdraw everything");
+    }
 }

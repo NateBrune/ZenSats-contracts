@@ -4,9 +4,9 @@ pragma solidity ^0.8.33;
 import { Test } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
-import { AaveLoanManager } from "../src/AaveLoanManager.sol";
+import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UsdtIporYieldStrategy } from "../src/strategies/UsdtIporYieldStrategy.sol";
-import { CurveThreeCryptoSwapper } from "../src/CurveThreeCryptoSwapper.sol";
+import { CurveThreeCryptoSwapper } from "../src/swappers/base/CurveThreeCryptoSwapper.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { IYieldVault } from "../src/interfaces/IYieldVault.sol";
 
@@ -118,7 +118,7 @@ contract UsdtIporAaveStrategyForkTest is Test {
             WBTC,
             USDT,
             address(loanManager),
-            address(0),
+            address(strategy),
             address(swapper),
             owner,
             address(viewHelper)
@@ -126,9 +126,6 @@ contract UsdtIporAaveStrategyForkTest is Test {
 
         loanManager.initializeVault(address(vault));
         strategy.initializeVault(address(vault));
-
-        vm.prank(owner);
-        vault.setInitialStrategy(address(strategy));
 
         vm.prank(address(vault));
         strategy.setSlippage(5e16);

@@ -202,7 +202,8 @@ library ZenjiCoreLib {
         uint256 accumulatedFees,
         uint256 rebalanceBountyRate,
         uint256 precision,
-        address keeper
+        address keeper,
+        address owner
     )
         external
         returns (uint256 newAccumulatedFees, uint256 newLastStrategyBalance)
@@ -210,22 +211,31 @@ library ZenjiCoreLib {
         newAccumulatedFees = accumulatedFees;
 
         if (rebalanceBountyRate > 0 && accumulatedFees > 0) {
-            uint256 bounty = (accumulatedFees * rebalanceBountyRate) /
-                precision;
-            if (bounty > 0) {
-                uint256 strategyBalance = yieldStrategy.balanceOf();
-                if (strategyBalance > 0) {
-                    uint256 toWithdraw = bounty > strategyBalance
-                        ? strategyBalance
-                        : bounty;
-                    uint256 received = yieldStrategy.withdraw(toWithdraw);
-                    uint256 actualBounty = received > bounty
-                        ? bounty
-                        : received;
-                    newAccumulatedFees = accumulatedFees - actualBounty;
+            uint256 bounty = (accumulatedFees * rebalanceBountyRate) / precision;
+            uint256 strategyBalance = yieldStrategy.balanceOf();
+            uint256 toWithdraw = accumulatedFees > strategyBalance
+                ? strategyBalance
+                : accumulatedFees;
+            uint256 withdrawn = 0;
+            if (toWithdraw > 0) {
+                withdrawn = yieldStrategy.withdraw(toWithdraw);
+            }
+            if (withdrawn > 0) {
+                uint256 actualBounty = bounty > withdrawn ? withdrawn : bounty;
+                if (actualBounty > 0) {
                     debtAsset.safeTransfer(keeper, actualBounty);
                     emit RebalanceBountyPaid(keeper, actualBounty);
                 }
+                uint256 ownerShare = withdrawn > actualBounty
+                    ? withdrawn - actualBounty
+                    : 0;
+                if (ownerShare > 0) {
+                    debtAsset.safeTransfer(owner, ownerShare);
+                    emit FeesWithdrawn(owner, ownerShare);
+                }
+                newAccumulatedFees = accumulatedFees > withdrawn
+                    ? accumulatedFees - withdrawn
+                    : 0;
             }
         }
 

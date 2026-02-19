@@ -6,15 +6,19 @@ import "forge-std/console2.sol";
 
 import {ZenjiViewHelper} from "../src/ZenjiViewHelper.sol";
 import {CurveThreeCryptoSwapper} from "../src/swappers/base/CurveThreeCryptoSwapper.sol";
+import {CrvToCrvUsdSwapper} from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import {AaveLoanManager} from "../src/lenders/AaveLoanManager.sol";
-import {UsdtIporYieldStrategy} from "../src/strategies/UsdtIporYieldStrategy.sol";
-import {ZenjiWbtc} from "../src/implementations/ZenjiWbtc.sol";
+import {PmUsdCrvUsdStrategy} from "../src/strategies/PmUsdCrvUsdStrategy.sol";
+import {ICurveStableSwapNG} from "../src/interfaces/ICurveStableSwapNG.sol";
+import {ZenjiWbtcPmUsd} from "../src/implementations/ZenjiWbtcPmUsd.sol";
 
-contract DeployWbtc is Script {
+/// @notice Deploys WBTC/USDT vault with pmUSD/crvUSD Stake DAO strategy on Aave
+contract DeployPmUsdWbtc is Script {
     // Assets
     address constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
     address constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
     address constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
+    address constant CRV = 0xD533a949740bb3306d119CC777fa900bA034cd52;
 
     // Chainlink oracles
     address constant BTC_USD_ORACLE = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
@@ -26,14 +30,16 @@ contract DeployWbtc is Script {
     address constant AAVE_A_WBTC = 0x5Ee5bf7ae06D1Be5997A1A72006FE6C607eC6DE8;
     address constant AAVE_VAR_DEBT_USDT = 0x6df1C1E379bC5a00a7b4C6e67A203333772f45A8;
 
-    // Curve TriCrypto
-    address constant TRICRYPTO_POOL = 0xf5f5B97624542D72A9E06f04804Bf81baA15e2B4;
+    // Curve / Stake DAO
+    address constant TRICRYPTO_POOL = 0xf5f5B97624542D72A9E06f04804Bf81baA15e2B4; // WBTC/USDT
     uint256 constant TRICRYPTO_WBTC_INDEX = 1;
     uint256 constant TRICRYPTO_USDT_INDEX = 0;
+    address constant USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
+    address constant PMUSD_CRVUSD_POOL = 0xEcb0F0d68C19BdAaDAEbE24f6752A4Db34e2c2cb;
+    address constant PMUSD_CRVUSD_GAUGE = 0xF3c43E7D722963b9569d1E39873dF9E2dFE8C087;
+    address constant STAKE_DAO_REWARD_VAULT = 0x7d3CDe9cCf0109423E672c17bD36481CF8CE437D;
+    address constant CRV_CRVUSD_TRICRYPTO = 0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14; // CRV/crvUSD
 
-    // IPOR / Curve
-    address constant IPOR_PLASMA_VAULT = 0xbfA9d6EC0E04B6691fCAE5F8b48838C3918eC117;
-    address constant CURVE_USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
     int128 constant USDT_INDEX = 0;
     int128 constant CRVUSD_INDEX = 1;
 
@@ -46,6 +52,13 @@ contract DeployWbtc is Script {
 
         ZenjiViewHelper viewHelper = new ZenjiViewHelper();
 
+        CrvToCrvUsdSwapper crvSwapper = new CrvToCrvUsdSwapper(
+            gov,
+            CRV,
+            CRVUSD,
+            CRV_CRVUSD_TRICRYPTO
+        );
+
         CurveThreeCryptoSwapper swapper = new CurveThreeCryptoSwapper(
             gov,
             WBTC,
@@ -53,6 +66,25 @@ contract DeployWbtc is Script {
             TRICRYPTO_POOL,
             TRICRYPTO_WBTC_INDEX,
             TRICRYPTO_USDT_INDEX
+        );
+
+        int128 lpCrvUsdIndex = _lpCrvUsdIndex();
+
+        PmUsdCrvUsdStrategy strategy = new PmUsdCrvUsdStrategy(
+            USDT,
+            CRVUSD,
+            CRV,
+            address(0),
+            USDT_CRVUSD_POOL,
+            PMUSD_CRVUSD_POOL,
+            STAKE_DAO_REWARD_VAULT,
+            address(crvSwapper),
+            PMUSD_CRVUSD_GAUGE,
+            USDT_INDEX,
+            CRVUSD_INDEX,
+            lpCrvUsdIndex,
+            CRVUSD_USD_ORACLE,
+            USDT_USD_ORACLE
         );
 
         AaveLoanManager loanManager = new AaveLoanManager(
@@ -64,24 +96,12 @@ contract DeployWbtc is Script {
             BTC_USD_ORACLE,
             USDT_USD_ORACLE,
             address(swapper),
-            7300,           
-            7800,
+            7500,
+            8000,
             address(0)
         );
 
-        UsdtIporYieldStrategy strategy = new UsdtIporYieldStrategy(
-            USDT,
-            CRVUSD,
-            address(0),
-            CURVE_USDT_CRVUSD_POOL,
-            IPOR_PLASMA_VAULT,
-            USDT_INDEX,
-            CRVUSD_INDEX,
-            CRVUSD_USD_ORACLE,
-            USDT_USD_ORACLE
-        );
-
-        ZenjiWbtc vault = new ZenjiWbtc(
+        ZenjiWbtcPmUsd vault = new ZenjiWbtcPmUsd(
             address(loanManager),
             address(strategy),
             address(swapper),
@@ -95,10 +115,19 @@ contract DeployWbtc is Script {
         vm.stopBroadcast();
 
         console2.log("ViewHelper", address(viewHelper));
-        console2.log("Swapper", address(swapper));
+        console2.log("CrvToCrvUsdSwapper", address(crvSwapper));
+        console2.log("TriCryptoSwapper", address(swapper));
         console2.log("LoanManager", address(loanManager));
         console2.log("Strategy", address(strategy));
         console2.log("Vault", address(vault));
+    }
+
+    function _lpCrvUsdIndex() internal view returns (int128) {
+        address coin0 = ICurveStableSwapNG(PMUSD_CRVUSD_POOL).coins(0);
+        if (coin0 == CRVUSD) return int128(0);
+        address coin1 = ICurveStableSwapNG(PMUSD_CRVUSD_POOL).coins(1);
+        if (coin1 == CRVUSD) return int128(1);
+        revert("crvUSD not in pmUSD pool");
     }
 
     function _envOrAddress(string memory key, address defaultValue) internal view returns (address) {

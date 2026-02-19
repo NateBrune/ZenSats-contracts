@@ -6,8 +6,8 @@ import "forge-std/console2.sol";
 
 import {ZenjiViewHelper} from "../src/ZenjiViewHelper.sol";
 import {WstEthOracle} from "../src/WstEthOracle.sol";
-import {UniswapV3TwoHopSwapper} from "../src/UniswapV3TwoHopSwapper.sol";
-import {AaveLoanManager} from "../src/AaveLoanManager.sol";
+import {UniswapV3TwoHopSwapper} from "../src/swappers/base/UniswapV3TwoHopSwapper.sol";
+import {AaveLoanManager} from "../src/lenders/AaveLoanManager.sol";
 import {UsdtIporYieldStrategy} from "../src/strategies/UsdtIporYieldStrategy.sol";
 import {ZenjiWstEth} from "../src/implementations/ZenjiWstEth.sol";
 
@@ -72,8 +72,8 @@ contract DeployWstEth is Script {
             address(wstEthOracle),
             USDT_USD_ORACLE,
             address(swapper),
-            7100,
-            7600,
+            7800,           
+            8100,
             address(0)
         );
 
@@ -99,7 +99,6 @@ contract DeployWstEth is Script {
 
         loanManager.initializeVault(address(vault));
         strategy.initializeVault(address(vault));
-        vault.setInitialStrategy(address(strategy));
 
         vm.stopBroadcast();
 

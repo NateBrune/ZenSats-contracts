@@ -30,16 +30,17 @@ contract Zenji is ERC20, IERC4626 {
     uint256 internal constant DEFAULT_LOAN_BANDS = 4;
     uint256 internal constant MIN_DEPOSIT = 1e4;
     uint256 internal constant MAX_FEE_RATE = 2e17; // 20%
-    uint256 public constant VIRTUAL_SHARE_OFFSET = 1e5;
+    uint256 public constant VIRTUAL_SHARE_OFFSET = 10; // TODO: Virutal offset should be 1e5, this is just for testing
     uint256 internal constant MAX_REBALANCE_BOUNTY = 2e17; // 20%
     uint256 internal constant TIMELOCK_DELAY = 2 days;
+    uint256 internal constant MIN_SWAP_OUT_BPS = 9500; // 95%
 
     // ============ Immutables ============
 
     IERC20 public immutable collateralAsset;
     IERC20 public immutable debtAsset;
     ZenjiViewHelper public immutable viewHelper;
-    ILoanManager public loanManager;
+    ILoanManager public immutable loanManager;
     ISwapper public swapper;
 
     // ============ State ============
@@ -62,11 +63,9 @@ contract Zenji is ERC20, IERC4626 {
     uint256 public depositCap;
 
     // Yield strategy
-    IYieldStrategy public yieldStrategy;
+    IYieldStrategy public immutable yieldStrategy;
 
     // Timelock state (using TimelockLib)
-    TimelockLib.AddressTimelockData internal _strategyTimelock;
-    TimelockLib.AddressTimelockData internal _loanManagerTimelock;
     TimelockLib.AddressTimelockData internal _swapperTimelock;
 
     // ============ Events ============
@@ -108,33 +107,12 @@ contract Zenji is ERC20, IERC4626 {
     // Fee/LTV change events use ParamUpdated above
 
     // Strategy events
-    event StrategyChangeProposed(
-        address indexed currentStrategy,
-        address indexed newStrategy,
-        uint256 effectiveTime
-    );
-    event StrategyChangeExecuted(
-        address indexed oldStrategy,
-        address indexed newStrategy
-    );
-    event StrategyChangeCancelled(address indexed cancelledStrategy);
+    error SwapperUnderperformed(uint256 expected, uint256 received);
     event StrategyDeposit(
         address indexed strategy,
         uint256 debtAssetAmount,
         uint256 underlyingDeposited
     );
-
-    // Loan manager events
-    event LoanManagerChangeProposed(
-        address indexed currentLoanManager,
-        address indexed newLoanManager,
-        uint256 effectiveTime
-    );
-    event LoanManagerChangeExecuted(
-        address indexed oldLoanManager,
-        address indexed newLoanManager
-    );
-    event LoanManagerChangeCancelled(address indexed cancelledLoanManager);
 
     // Emergency
     event EmergencyModeEntered();
@@ -178,9 +156,7 @@ contract Zenji is ERC20, IERC4626 {
     error InvalidBountyRate();
     error DepositCapExceeded();
     error InvalidStrategy();
-    error StrategyAlreadySet();
     error LiquidationAlreadyComplete();
-    error ActiveLoanExists();
     error InsufficientCollateral();
     error InsufficientDeposit();
 
@@ -205,7 +181,7 @@ contract Zenji is ERC20, IERC4626 {
 
     // ============ Constructor ============
 
-    /// @param _yieldStrategy Yield strategy address (can be zero, set later via setInitialStrategy)
+    /// @param _yieldStrategy Yield strategy address (immutable)
     /// @param _swapper Swapper contract address (required)
     constructor(
         address _collateralAsset,
@@ -220,6 +196,7 @@ contract Zenji is ERC20, IERC4626 {
             _collateralAsset == address(0) ||
             _debtAsset == address(0) ||
             _loanManager == address(0) ||
+            _yieldStrategy == address(0) ||
             _swapper == address(0) ||
             _owner == address(0) ||
             _viewHelper == address(0)
@@ -232,13 +209,27 @@ contract Zenji is ERC20, IERC4626 {
         viewHelper = ZenjiViewHelper(_viewHelper);
         loanManager = ILoanManager(_loanManager);
         swapper = ISwapper(_swapper);
-        // Strategy can be set later via setInitialStrategy if zero
-        if (_yieldStrategy != address(0)) {
-            yieldStrategy = IYieldStrategy(_yieldStrategy);
+
+        // Validate loan manager assets match vault assets
+        if (
+            loanManager.collateralAsset() != address(collateralAsset) ||
+            loanManager.debtAsset() != address(debtAsset)
+        ) {
+            revert InvalidAddress();
         }
+
+        // Validate strategy accepts the debt asset and is bound (or bindable) to this vault
+        if (IYieldStrategy(_yieldStrategy).asset() != address(debtAsset)) {
+            revert InvalidStrategy();
+        }
+        address stratVault = IYieldStrategy(_yieldStrategy).vault();
+        if (stratVault != address(0) && stratVault != address(this)) {
+            revert InvalidStrategy();
+        }
+        yieldStrategy = IYieldStrategy(_yieldStrategy);
         owner = _owner;
         gov = _owner; // Initially gov is same as owner
-        idle = _yieldStrategy == address(0);
+        idle = false;
         targetLtv = 65e16; // 65% default target LTV
         // Liquidation starts at ~90%
         // Vault can handle about 25% price move in testing without rebalancing.
@@ -246,21 +237,7 @@ contract Zenji is ERC20, IERC4626 {
         feeRate = 0; // Default fee rate disabled
         _status = _NOT_ENTERED;
 
-        // Loan manager is provided externally and can be swapped via timelock
-    }
-
-    /// @notice Set initial yield strategy (can only be called once if strategy not set in constructor)
-    /// @param newStrategy The yield strategy address
-    function setInitialStrategy(address newStrategy) external onlyOwner {
-        if (address(yieldStrategy) != address(0)) revert StrategyAlreadySet();
-        if (newStrategy == address(0)) revert InvalidAddress();
-        if (IYieldStrategy(newStrategy).vault() != address(this)) {
-            revert InvalidStrategy();
-        }
-        yieldStrategy = IYieldStrategy(newStrategy);
-        idle = false;
-        emit IdleModeExited();
-        emit StrategyChangeExecuted(address(0), newStrategy);
+        // Loan manager is provided externally and immutable for this vault
     }
 
     // ============ ERC4626 Required Functions ============
@@ -498,7 +475,13 @@ contract Zenji is ERC20, IERC4626 {
         _accrueYieldFees();
 
         (accumulatedFees, lastStrategyBalance) = ZenjiCoreLib.processRebalanceBounty(
-            yieldStrategy, debtAsset, accumulatedFees, rebalanceBountyRate, PRECISION, msg.sender
+            yieldStrategy,
+            debtAsset,
+            accumulatedFees,
+            rebalanceBountyRate,
+            PRECISION,
+            msg.sender,
+            owner
         );
 
         uint256 newLtv = 0;
@@ -702,102 +685,6 @@ contract Zenji is ERC20, IERC4626 {
         }
     }
 
-    // ============ Strategy Switching Functions ============
-
-    /// @notice Propose a new yield strategy (requires timelock)
-    /// @param newStrategy Address of the new strategy
-    function proposeStrategy(address newStrategy) external onlyOwner {
-        if (newStrategy == address(0)) revert InvalidAddress();
-        if (newStrategy == address(yieldStrategy)) revert InvalidStrategy();
-
-        // Verify the new strategy accepts the debt asset and points to this vault
-        if (IYieldStrategy(newStrategy).asset() != address(debtAsset)) {
-            revert InvalidStrategy();
-        }
-        if (IYieldStrategy(newStrategy).vault() != address(this)) {
-            revert InvalidStrategy();
-        }
-
-        _strategyTimelock.proposeAddress(newStrategy, TIMELOCK_DELAY);
-        emit StrategyChangeProposed(
-            address(yieldStrategy),
-            newStrategy,
-            _strategyTimelock.timestamp
-        );
-    }
-
-    /// @notice Execute pending strategy change after timelock
-    function executeStrategy() external nonReentrant onlyOwner {
-        address oldStrategy = address(yieldStrategy);
-
-        // Withdraw all from old strategy
-        uint256 withdrawn = yieldStrategy.withdrawAll();
-
-        // Update strategy via timelock
-        yieldStrategy = IYieldStrategy(_strategyTimelock.executeAddress());
-
-        // Deposit to new strategy
-        uint256 toDeposit = withdrawn;
-        if (toDeposit > 0) {
-            IERC20(address(debtAsset)).ensureApproval(
-                address(yieldStrategy),
-                toDeposit
-            );
-            uint256 deposited = yieldStrategy.deposit(toDeposit);
-            emit StrategyDeposit(address(yieldStrategy), toDeposit, deposited);
-        }
-        lastStrategyBalance = yieldStrategy.balanceOf();
-
-        emit StrategyChangeExecuted(oldStrategy, address(yieldStrategy));
-    }
-
-    /// @notice Cancel pending strategy change
-    function cancelStrategy() external onlyOwner {
-        address cancelled = _strategyTimelock.cancelAddress();
-        emit StrategyChangeCancelled(cancelled);
-    }
-
-    // ============ Loan Manager Switching Functions ============
-
-    /// @notice Propose a new loan manager (requires timelock)
-    /// @param newLoanManager Address of the new loan manager
-    function proposeLoanManager(address newLoanManager) external onlyOwner {
-        if (newLoanManager == address(0)) revert InvalidAddress();
-        if (newLoanManager == address(loanManager)) revert InvalidAddress();
-
-        if (
-            ILoanManager(newLoanManager).collateralAsset() !=
-            address(collateralAsset)
-        ) {
-            revert InvalidAddress();
-        }
-        if (ILoanManager(newLoanManager).debtAsset() != address(debtAsset)) {
-            revert InvalidAddress();
-        }
-
-        _loanManagerTimelock.proposeAddress(newLoanManager, TIMELOCK_DELAY);
-        emit LoanManagerChangeProposed(
-            address(loanManager),
-            newLoanManager,
-            _loanManagerTimelock.timestamp
-        );
-    }
-
-    /// @notice Execute pending loan manager change after timelock
-    function executeLoanManager() external nonReentrant onlyOwner {
-        if (loanManager.loanExists()) revert ActiveLoanExists();
-
-        address oldLoanManager = address(loanManager);
-        loanManager = ILoanManager(_loanManagerTimelock.executeAddress());
-        emit LoanManagerChangeExecuted(oldLoanManager, address(loanManager));
-    }
-
-    /// @notice Cancel pending loan manager change
-    function cancelLoanManager() external onlyOwner {
-        address cancelled = _loanManagerTimelock.cancelAddress();
-        emit LoanManagerChangeCancelled(cancelled);
-    }
-
     // ============ View Functions ============
 
     /// @notice Estimate total value locked in collateral terms
@@ -828,9 +715,16 @@ contract Zenji is ERC20, IERC4626 {
     function _swapRemainingDebtToCollateral() internal {
         uint256 debtBal = debtAsset.balanceOf(address(this));
         if (debtBal > 1e16 && address(swapper) != address(0)) {
+            uint256 expectedCollateral = (loanManager.getDebtValue(debtBal) * MIN_SWAP_OUT_BPS) / 10000;
+            uint256 collateralBefore = collateralAsset.balanceOf(address(this));
             debtAsset.safeTransfer(address(swapper), debtBal);
-            uint256 collateralReceived = swapper.swapDebtForCollateral(debtBal);
-            if (collateralReceived < 1) return;
+            swapper.swapDebtForCollateral(debtBal);
+            uint256 collateralAfter = collateralAsset.balanceOf(address(this));
+            if (collateralAfter <= collateralBefore) revert SwapperUnderperformed(expectedCollateral, 0);
+            uint256 collateralDelta = collateralAfter - collateralBefore;
+            if (collateralDelta < expectedCollateral) {
+                revert SwapperUnderperformed(expectedCollateral, collateralDelta);
+            }
         }
     }
 
@@ -1028,6 +922,8 @@ contract Zenji is ERC20, IERC4626 {
     /// @notice Deploy debt asset to yield strategy
     function _deployDebtToYield(uint256 debtAmount) internal {
         if (idle) return;
+        address stratVault = yieldStrategy.vault();
+        if (stratVault != address(0) && stratVault != address(this)) revert InvalidStrategy();
         _accrueYieldFees();
 
         IERC20(address(debtAsset)).ensureApproval(

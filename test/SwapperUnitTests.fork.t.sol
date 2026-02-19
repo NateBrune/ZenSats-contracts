@@ -2,8 +2,12 @@
 pragma solidity ^0.8.33;
 
 import { Test } from "forge-std/Test.sol";
-import { CurveTwoCryptoSwapper } from "../src/CurveTwoCryptoSwapper.sol";
-import { CurveThreeCryptoSwapper } from "../src/CurveThreeCryptoSwapper.sol";
+import { BaseSwapper } from "../src/swappers/base/BaseSwapper.sol";
+import { CurveTwoCryptoSwapper } from "../src/swappers/base/CurveTwoCryptoSwapper.sol";
+import { CurveThreeCryptoSwapper } from "../src/swappers/base/CurveThreeCryptoSwapper.sol";
+import { CbBtcWbtcUsdtSwapper } from "../src/swappers/base/CbBtcWbtcUsdtSwapper.sol";
+import { UniswapV3TwoHopSwapper } from "../src/swappers/base/UniswapV3TwoHopSwapper.sol";
+import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 
 /// @title SwapperUnitTests
@@ -44,7 +48,7 @@ contract SwapperUnitTests is Test {
 
         // Test unauthorized access
         vm.prank(nonGov);
-        vm.expectRevert(CurveTwoCryptoSwapper.Unauthorized.selector);
+        vm.expectRevert(BaseSwapper.Unauthorized.selector);
         swapper.proposeSlippage(10e16);
 
         // Test slippage proposal
@@ -81,12 +85,12 @@ contract SwapperUnitTests is Test {
 
         // Test zero slippage
         vm.prank(owner);
-        vm.expectRevert(CurveTwoCryptoSwapper.InvalidSlippage.selector);
+        vm.expectRevert(BaseSwapper.InvalidSlippage.selector);
         swapper.proposeSlippage(0);
 
         // Test excessive slippage
         vm.prank(owner);
-        vm.expectRevert(CurveTwoCryptoSwapper.InvalidSlippage.selector);
+        vm.expectRevert(BaseSwapper.InvalidSlippage.selector);
         swapper.proposeSlippage(1e18 + 1); // > 100%
     }
 
@@ -121,7 +125,7 @@ contract SwapperUnitTests is Test {
 
         // Test unauthorized access
         vm.prank(nonGov);
-        vm.expectRevert(CurveThreeCryptoSwapper.Unauthorized.selector);
+        vm.expectRevert(BaseSwapper.Unauthorized.selector);
         swapper.proposeSlippage(10e16);
 
         // Test slippage proposal and execution
@@ -152,12 +156,12 @@ contract SwapperUnitTests is Test {
 
         // Test zero slippage
         vm.prank(owner);
-        vm.expectRevert(CurveThreeCryptoSwapper.InvalidSlippage.selector);
+        vm.expectRevert(BaseSwapper.InvalidSlippage.selector);
         swapper.proposeSlippage(0);
 
         // Test excessive slippage
         vm.prank(owner);
-        vm.expectRevert(CurveThreeCryptoSwapper.InvalidSlippage.selector);
+        vm.expectRevert(BaseSwapper.InvalidSlippage.selector);
         swapper.proposeSlippage(1e18 + 1); // > 100%
     }
 
@@ -225,5 +229,82 @@ contract SwapperUnitTests is Test {
 
         received = swapper.swapDebtForCollateral(0);
         assertEq(received, 0, "Zero swap should return zero");
+    }
+
+    // ============ CbBtcWbtcUsdtSwapper Zero-Amount Tests ============
+
+    address constant CBBTC = 0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf;
+    address constant CBBTC_WBTC_POOL = 0x839d6bDeDFF886404A6d7a788ef241e4e28F4802;
+    uint256 constant CBBTC_INDEX = 0;
+    uint256 constant WBTC_INDEX_CB = 1;
+    uint256 constant TRICRYPTO_WBTC_INDEX = 1;
+    uint256 constant TRICRYPTO_USDT_INDEX = 0;
+
+    function test_cbBtcWbtcUsdtSwapper_zero_quote() public {
+        CbBtcWbtcUsdtSwapper swapper = new CbBtcWbtcUsdtSwapper(
+            owner, CBBTC, USDT, WBTC, CBBTC_WBTC_POOL, CBBTC_INDEX, WBTC_INDEX_CB,
+            TRICRYPTO_POOL, TRICRYPTO_WBTC_INDEX, TRICRYPTO_USDT_INDEX
+        );
+        assertEq(swapper.quoteCollateralForDebt(0), 0, "Zero quote should return zero");
+    }
+
+    function test_cbBtcWbtcUsdtSwapper_zero_swapCollateralForDebt() public {
+        CbBtcWbtcUsdtSwapper swapper = new CbBtcWbtcUsdtSwapper(
+            owner, CBBTC, USDT, WBTC, CBBTC_WBTC_POOL, CBBTC_INDEX, WBTC_INDEX_CB,
+            TRICRYPTO_POOL, TRICRYPTO_WBTC_INDEX, TRICRYPTO_USDT_INDEX
+        );
+        assertEq(swapper.swapCollateralForDebt(0), 0, "Zero swap should return zero");
+    }
+
+    function test_cbBtcWbtcUsdtSwapper_zero_swapDebtForCollateral() public {
+        CbBtcWbtcUsdtSwapper swapper = new CbBtcWbtcUsdtSwapper(
+            owner, CBBTC, USDT, WBTC, CBBTC_WBTC_POOL, CBBTC_INDEX, WBTC_INDEX_CB,
+            TRICRYPTO_POOL, TRICRYPTO_WBTC_INDEX, TRICRYPTO_USDT_INDEX
+        );
+        assertEq(swapper.swapDebtForCollateral(0), 0, "Zero swap should return zero");
+    }
+
+    // ============ UniswapV3TwoHopSwapper Zero-Amount Tests ============
+
+    address constant WSTETH = 0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0;
+    address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    address constant UNISWAP_ROUTER = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
+    address constant WSTETH_USD_ORACLE = 0xCfE54B5cD566aB89272946F602D76Ea879CAb4a8;
+    address constant USDT_USD_ORACLE = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
+    uint24 constant FEE_WSTETH_WETH = 100;
+    uint24 constant FEE_WETH_USDT = 500;
+
+    function test_uniswapV3TwoHopSwapper_zero_quote() public {
+        UniswapV3TwoHopSwapper swapper = new UniswapV3TwoHopSwapper(
+            owner, WSTETH, USDT, WETH, UNISWAP_ROUTER, FEE_WSTETH_WETH, FEE_WETH_USDT,
+            WSTETH_USD_ORACLE, USDT_USD_ORACLE
+        );
+        assertEq(swapper.quoteCollateralForDebt(0), 0, "Zero quote should return zero");
+    }
+
+    function test_uniswapV3TwoHopSwapper_zero_swapCollateralForDebt() public {
+        UniswapV3TwoHopSwapper swapper = new UniswapV3TwoHopSwapper(
+            owner, WSTETH, USDT, WETH, UNISWAP_ROUTER, FEE_WSTETH_WETH, FEE_WETH_USDT,
+            WSTETH_USD_ORACLE, USDT_USD_ORACLE
+        );
+        assertEq(swapper.swapCollateralForDebt(0), 0, "Zero swap should return zero");
+    }
+
+    function test_uniswapV3TwoHopSwapper_zero_swapDebtForCollateral() public {
+        UniswapV3TwoHopSwapper swapper = new UniswapV3TwoHopSwapper(
+            owner, WSTETH, USDT, WETH, UNISWAP_ROUTER, FEE_WSTETH_WETH, FEE_WETH_USDT,
+            WSTETH_USD_ORACLE, USDT_USD_ORACLE
+        );
+        assertEq(swapper.swapDebtForCollateral(0), 0, "Zero swap should return zero");
+    }
+
+    // ============ CrvToCrvUsdSwapper Zero-Amount Tests ============
+
+    address constant CRV = 0xD533a949740bb3306d119CC777fa900bA034cd52;
+    address constant CRV_CRVUSD_TRICRYPTO = 0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14;
+
+    function test_crvToCrvUsdSwapper_zero_swap() public {
+        CrvToCrvUsdSwapper swapper = new CrvToCrvUsdSwapper(owner, CRV, CRVUSD, CRV_CRVUSD_TRICRYPTO);
+        assertEq(swapper.swap(0), 0, "Zero swap should return zero");
     }
 }

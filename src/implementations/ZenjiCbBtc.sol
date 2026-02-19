@@ -22,6 +22,6 @@ contract ZenjiCbBtc is Zenji {
     }
 
     function symbol() public pure override(ERC20, IERC20Metadata) returns (string memory) {
-        return "usdtIpor-zencbBTC";
+        return "zencbBTC-usdtIpor";
     }
 }

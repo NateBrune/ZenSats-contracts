@@ -4,8 +4,8 @@ pragma solidity ^0.8.33;
 import { Test, console } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
-import { AaveLoanManager } from "../src/AaveLoanManager.sol";
-import { UniswapV3TwoHopSwapper } from "../src/UniswapV3TwoHopSwapper.sol";
+import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
+import { UniswapV3TwoHopSwapper } from "../src/swappers/base/UniswapV3TwoHopSwapper.sol";
 import { WstEthOracle } from "../src/WstEthOracle.sol";
 import { UsdtIporYieldStrategy } from "../src/strategies/UsdtIporYieldStrategy.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
@@ -705,6 +705,106 @@ contract WstEthAaveExtensive is Test {
         uint256 withdrawn = _redeemAllAs(user1);
         _assertValuePreserved(20e18, withdrawn, 500, "Idle enter/exit: >5% loss");
         console.log("Idle enter/exit: deposited=20e18 withdrawn=%d", withdrawn);
+    }
+
+    // ============ I. Fuzz Tests ============
+
+    function testFuzz_deposit_and_redeem(uint256 amount) public {
+        _deployVault();
+        amount = bound(amount, 1e18, 50e18); // Min 0.01 wstETH
+        deal(WSTETH, user1, amount);
+
+        _depositAs(user1, amount);
+        _refreshOracles();
+        uint256 withdrawn = _redeemAllAs(user1);
+
+        assertGt(withdrawn, 0, "Should receive collateral back");
+        assertEq(vault.balanceOf(user1), 0, "Shares should be zero");
+        _assertValuePreserved(amount, withdrawn, 500, "Fuzz deposit/redeem: >5% loss");
+    }
+
+    function testFuzz_deposit_and_withdraw(uint256 amount) public {
+        _deployVault();
+        amount = bound(amount, 1e18, 50e18);
+        deal(WSTETH, user1, amount);
+
+        uint256 shares = _depositAs(user1, amount);
+        _refreshOracles();
+
+        uint256 assets = vault.convertToAssets(shares);
+        if (assets > 0) {
+            vm.prank(user1);
+            vault.withdraw(assets, user1, user1);
+            assertGt(wstETH.balanceOf(user1), 0, "Should receive wstETH back");
+        }
+    }
+
+    function testFuzz_multiUser_deposit_redeem(uint256 a1, uint256 a2) public {
+        _deployVault();
+        a1 = bound(a1, 1e18, 25e18);
+        a2 = bound(a2, 1e18, 25e18);
+        deal(WSTETH, user1, a1);
+        deal(WSTETH, user2, a2);
+
+        _depositAs(user1, a1);
+        _depositAs(user2, a2);
+
+        _refreshOracles();
+        uint256 w1 = _redeemAllAs(user1);
+        _refreshOracles();
+        uint256 w2 = _redeemAllAs(user2);
+
+        assertGt(w1, 0, "User1 should receive collateral");
+        assertGt(w2, 0, "User2 should receive collateral");
+
+        uint256 ratio_in = (a1 * 1e18) / a2;
+        uint256 ratio_out = (w1 * 1e18) / w2;
+        uint256 diff = ratio_in > ratio_out ? ratio_in - ratio_out : ratio_out - ratio_in;
+        assertLe(diff, ratio_in / 10, "Proportional fairness: >10% deviation");
+    }
+
+    function testFuzz_emergency_proRata(uint256 depositAmount, uint256 sharesFraction) public {
+        _deployVault();
+        depositAmount = bound(depositAmount, 1e18, 25e18);
+        deal(WSTETH, user1, depositAmount);
+
+        uint256 shares = _depositAs(user1, depositAmount);
+        _refreshOracles();
+
+        vm.startPrank(owner);
+        vault.enterEmergencyMode();
+        vault.emergencyStep(0);
+        vault.emergencyStep(1);
+        vault.emergencyStep(2);
+        vm.stopPrank();
+
+        sharesFraction = bound(sharesFraction, 1, shares);
+        uint256 availableBefore = wstETH.balanceOf(address(vault));
+        uint256 supplyBefore = vault.totalSupply();
+
+        vm.prank(user1);
+        uint256 collateral = vault.redeem(sharesFraction, user1, user1);
+
+        uint256 expected = (availableBefore * sharesFraction) / supplyBefore;
+        assertApproxEqAbs(collateral, expected, 1, "Pro-rata mismatch");
+    }
+
+    function testFuzz_deposit_withdraw_neverZeroAssets(uint256 depositAmount, uint256 withdrawShares) public {
+        _deployVault();
+        depositAmount = bound(depositAmount, 1e18, 25e18);
+        deal(WSTETH, user1, depositAmount);
+
+        uint256 shares = _depositAs(user1, depositAmount);
+        _refreshOracles();
+
+        uint256 minShares = shares / 10;
+        if (minShares < 1) minShares = 1;
+        withdrawShares = bound(withdrawShares, minShares, shares);
+
+        vm.prank(user1);
+        uint256 collateral = vault.redeem(withdrawShares, user1, user1);
+
+        assertGt(collateral, 0, "Must receive collateral for non-zero share burn");
     }
 
     function test_idleMode_depositWhileIdle() public {

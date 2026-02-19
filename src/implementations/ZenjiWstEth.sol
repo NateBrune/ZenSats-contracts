@@ -22,6 +22,6 @@ contract ZenjiWstEth is Zenji {
     }
 
     function symbol() public pure override(ERC20, IERC20Metadata) returns (string memory) {
-        return "zenWstETH";
+        return "zenWstETH-usdtIpor";
     }
 }

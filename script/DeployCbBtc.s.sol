@@ -5,8 +5,8 @@ import "forge-std/Script.sol";
 import "forge-std/console2.sol";
 
 import {ZenjiViewHelper} from "../src/ZenjiViewHelper.sol";
-import {CbBtcWbtcUsdtSwapper} from "../src/CbBtcWbtcUsdtSwapper.sol";
-import {AaveLoanManager} from "../src/AaveLoanManager.sol";
+import {CbBtcWbtcUsdtSwapper} from "../src/swappers/base/CbBtcWbtcUsdtSwapper.sol";
+import {AaveLoanManager} from "../src/lenders/AaveLoanManager.sol";
 import {UsdtIporYieldStrategy} from "../src/strategies/UsdtIporYieldStrategy.sol";
 import {ZenjiCbBtc} from "../src/implementations/ZenjiCbBtc.sol";
 
@@ -72,8 +72,8 @@ contract DeployCbBtc is Script {
             BTC_USD_ORACLE,
             USDT_USD_ORACLE,
             address(swapper),
-            7500,
-            8000,
+            7300,           
+            7800,
             address(0)
         );
 
@@ -99,7 +99,6 @@ contract DeployCbBtc is Script {
 
         loanManager.initializeVault(address(vault));
         strategy.initializeVault(address(vault));
-        vault.setInitialStrategy(address(strategy));
 
         vm.stopBroadcast();
 

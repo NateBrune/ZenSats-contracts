@@ -6,6 +6,7 @@ import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
 import {IChainlinkOracle} from "../interfaces/IChainlinkOracle.sol";
 import {ICurveStableSwap} from "../interfaces/ICurveStableSwap.sol";
 import {IERC20} from "../interfaces/IERC20.sol";
+import {CurveUsdtSwapLib} from "../libraries/CurveUsdtSwapLib.sol";
 
 /// @title UsdtIporYieldStrategy
 /// @notice Swaps USDT to crvUSD and deposits into IPOR PlasmaVault
@@ -68,28 +69,9 @@ contract UsdtIporYieldStrategy is BaseIporStrategy {
     function balanceOf() public view override returns (uint256) {
         uint256 crvUsdValue = _iporBalance();
         if (crvUsdValue < 1) return 0;
-
-        (uint80 crvRoundId, int256 crvUsdPrice,, uint256 crvUsdUpdatedAt, uint80 crvAnswered) =
-            crvUsdOracle.latestRoundData();
-        if (
-            crvUsdPrice <= 0 || crvAnswered < crvRoundId
-                || block.timestamp - crvUsdUpdatedAt > MAX_CRVUSD_ORACLE_STALENESS
-        ) {
-            return crvUsdValue / 1e12; // fallback to 1:1
-        }
-
-        (uint80 usdtRoundId, int256 usdtPrice,, uint256 usdtUpdatedAt, uint80 usdtAnswered) =
-            usdtOracle.latestRoundData();
-        if (
-            usdtPrice <= 0 || usdtAnswered < usdtRoundId
-                || block.timestamp - usdtUpdatedAt > MAX_USDT_ORACLE_STALENESS
-        ) {
-            return crvUsdValue / 1e12; // fallback to 1:1
-        }
-
-        // crvUSD_in_USDT = crvUsdValue * crvUsdPrice / usdtPrice
-        // Then convert 18-decimal to 6-decimal
-        return (crvUsdValue * uint256(crvUsdPrice)) / (uint256(usdtPrice) * 1e12);
+        return CurveUsdtSwapLib.convertCrvUsdToUsdt(
+            crvUsdValue, crvUsdOracle, usdtOracle, MAX_CRVUSD_ORACLE_STALENESS
+        );
     }
 
     /// @inheritdoc IYieldStrategy
@@ -143,11 +125,9 @@ contract UsdtIporYieldStrategy is BaseIporStrategy {
         internal
         returns (uint256 crvUsdReceived)
     {
-        uint256 expectedOut = curvePool.get_dy(usdtIndex, crvUsdIndex, usdtAmount);
-        uint256 minOut = (expectedOut * (PRECISION - slippage)) / PRECISION;
-
         _ensureApprove(address(debtAsset), address(curvePool), usdtAmount);
-        crvUsdReceived = _exchange(usdtIndex, crvUsdIndex, usdtAmount, minOut);
+        crvUsdReceived =
+            CurveUsdtSwapLib.swapUsdtToCrvUsd(curvePool, usdtIndex, crvUsdIndex, usdtAmount, slippage);
         emit SwappedUsdtToCrvUsd(usdtAmount, crvUsdReceived);
     }
 
@@ -155,29 +135,9 @@ contract UsdtIporYieldStrategy is BaseIporStrategy {
         internal
         returns (uint256 usdtReceived)
     {
-        uint256 expectedOut = curvePool.get_dy(crvUsdIndex, usdtIndex, crvUsdAmount);
-        uint256 minOut = (expectedOut * (PRECISION - slippage)) / PRECISION;
-
         _ensureApprove(address(crvUSD), address(curvePool), crvUsdAmount);
-        usdtReceived = _exchange(crvUsdIndex, usdtIndex, crvUsdAmount, minOut);
+        usdtReceived =
+            CurveUsdtSwapLib.swapCrvUsdToUsdt(curvePool, crvUsdIndex, usdtIndex, crvUsdAmount, slippage);
         emit SwappedCrvUsdToUsdt(crvUsdAmount, usdtReceived);
-    }
-
-    function _exchange(int128 i, int128 j, uint256 dx, uint256 minOut)
-        internal
-        returns (uint256 amountOut)
-    {
-        (bool ok, bytes memory data) = address(curvePool).call(
-            abi.encodeWithSignature(
-                "exchange(int128,int128,uint256,uint256,address)", i, j, dx, minOut, address(this)
-            )
-        );
-        if (!ok) {
-            (ok, data) = address(curvePool).call(
-                abi.encodeWithSignature("exchange(int128,int128,uint256,uint256)", i, j, dx, minOut)
-            );
-        }
-        if (!ok || data.length < 32) revert TransferFailed();
-        amountOut = abi.decode(data, (uint256));
     }
 }

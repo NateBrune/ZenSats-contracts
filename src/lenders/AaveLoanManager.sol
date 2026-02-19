@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import { IERC20 } from "./interfaces/IERC20.sol";
-import { IAavePool } from "./interfaces/IAavePool.sol";
-import { IChainlinkOracle } from "./interfaces/IChainlinkOracle.sol";
-import { IFlashLoanSimpleReceiver } from "./interfaces/IFlashLoanSimpleReceiver.sol";
-import { ILoanManager } from "./interfaces/ILoanManager.sol";
-import { ISwapper } from "./interfaces/ISwapper.sol";
-import { SafeTransferLib } from "./libraries/SafeTransferLib.sol";
-import { TimelockLib } from "./libraries/TimelockLib.sol";
-import { AaveOracleLib } from "./libraries/AaveOracleLib.sol";
+import { IERC20 } from "../interfaces/IERC20.sol";
+import { IAavePool } from "../interfaces/IAavePool.sol";
+import { IChainlinkOracle } from "../interfaces/IChainlinkOracle.sol";
+import { IFlashLoanSimpleReceiver } from "../interfaces/IFlashLoanSimpleReceiver.sol";
+import { ILoanManager } from "../interfaces/ILoanManager.sol";
+import { ISwapper } from "../interfaces/ISwapper.sol";
+import { SafeTransferLib } from "../libraries/SafeTransferLib.sol";
+import { TimelockLib } from "../libraries/TimelockLib.sol";
+import { OracleLib } from "../libraries/OracleLib.sol";
 
 /// @title AaveLoanManager
 /// @notice Manages Aave V3 collateralized borrowing positions for Zenji
@@ -31,6 +31,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
     uint256 public constant DUST_THRESHOLD = 1e6;
     uint256 public constant TIMELOCK_DELAY = 2 days;
     int256 public constant MIN_HEALTH = 1.1e18;
+    uint256 public constant MIN_SWAP_OUT_BPS = 9500; // 95% of oracle quote
 
     // ============ Immutables ============
 
@@ -61,6 +62,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
 
     error InsufficientFlashloanRepayment();
     error HealthTooLow();
+    error SwapperUnderperformed(uint256 expected, uint256 received);
 
     // ============ Modifiers ============
 
@@ -208,7 +210,24 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         // For partial unwinds: only flashloan if the proportional debt wasn't fully repaid.
         // The remaining Aave debt stays backed by remaining collateral.
         uint256 unrepaidDebt = debtToRepay > repayNow ? debtToRepay - repayNow : 0;
-        bool needFlashloan = fullyClose ? (remainingDebt > 0) : !_isDustDebt(unrepaidDebt);
+        bool needFlashloan;
+        if (fullyClose) {
+            needFlashloan = remainingDebt > 0;
+        } else if (!_isDustDebt(unrepaidDebt)) {
+            needFlashloan = true;
+        } else if (remainingDebt > 0) {
+            // Dust unrepaid debt but Aave still has remaining debt.
+            // Check if remaining collateral can safely back that debt.
+            uint256 remainingCollateral = collateral > collateralNeeded ? collateral - collateralNeeded : 0;
+            uint256 remainingCollateralUsd = _getCollateralUsdValue(remainingCollateral);
+            uint256 remainingDebtUsd = _getDebtUsdValue(remainingDebt);
+            // Health factor: (collateralUsd * liquidationThreshold) / debtUsd must be >= 1e18
+            if (remainingCollateralUsd * liquidationThresholdBps * 1e14 < remainingDebtUsd * 1e18) {
+                // Withdrawing would violate health factor — escalate to full close
+                needFlashloan = true;
+                fullyClose = true;
+            }
+        }
         if (needFlashloan) {
             uint256 flashDebt = fullyClose ? remainingDebt : unrepaidDebt;
             uint256 flashloanAmount = (flashDebt * 10300) / 10000;
@@ -287,16 +306,29 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
             uint256 toSwap =
                 collateralNeededForSwap < collateralBal ? collateralNeededForSwap : collateralBal;
             if (toSwap > 0) {
+                uint256 debtBefore = debtToken.balanceOf(address(this));
+                uint256 expectedDebt = (_getCollateralValue(toSwap) * MIN_SWAP_OUT_BPS) / 10000;
                 collateralToken.safeTransfer(address(swapper), toSwap);
                 swapper.swapCollateralForDebt(toSwap);
+                uint256 debtAfter = debtToken.balanceOf(address(this));
+                if (debtAfter <= debtBefore) revert SwapperUnderperformed(expectedDebt, 0);
+                uint256 debtDelta = debtAfter - debtBefore;
+                if (debtDelta < expectedDebt) revert SwapperUnderperformed(expectedDebt, debtDelta);
             }
 
             debtAvailable = debtToken.balanceOf(address(this));
             if (debtAvailable < repaymentNeeded) {
                 uint256 remainingCollateral = collateralToken.balanceOf(address(this));
                 if (remainingCollateral > 0) {
+                    uint256 debtBefore = debtToken.balanceOf(address(this));
+                    uint256 expectedDebt = (_getCollateralValue(remainingCollateral) * MIN_SWAP_OUT_BPS)
+                        / 10000;
                     collateralToken.safeTransfer(address(swapper), remainingCollateral);
                     swapper.swapCollateralForDebt(remainingCollateral);
+                    uint256 debtAfter = debtToken.balanceOf(address(this));
+                    if (debtAfter <= debtBefore) revert SwapperUnderperformed(expectedDebt, 0);
+                    uint256 debtDelta = debtAfter - debtBefore;
+                    if (debtDelta < expectedDebt) revert SwapperUnderperformed(expectedDebt, debtDelta);
                 }
             }
         }
@@ -491,13 +523,13 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
     }
 
     function _checkOracleFreshness() internal view {
-        AaveOracleLib.checkOracleFreshness(
+        OracleLib.checkOracleFreshness(
             collateralOracle, MAX_ORACLE_STALENESS, debtOracle, MAX_DEBT_ORACLE_STALENESS
         );
     }
 
     function _getCollateralValue(uint256 collateralAmount) internal view returns (uint256) {
-        return AaveOracleLib.getCollateralValue(
+        return OracleLib.getCollateralValue(
             collateralAmount,
             collateralOracle,
             MAX_ORACLE_STALENESS,
@@ -509,7 +541,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
     }
 
     function _getDebtValue(uint256 debtAmount) internal view returns (uint256) {
-        return AaveOracleLib.getDebtValue(
+        return OracleLib.getDebtValue(
             debtAmount,
             collateralOracle,
             MAX_ORACLE_STALENESS,
@@ -521,13 +553,13 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
     }
 
     function _getCollateralUsdValue(uint256 collateralAmount) internal view returns (uint256) {
-        return AaveOracleLib.getCollateralUsdValue(
+        return OracleLib.getCollateralUsdValue(
             collateralAmount, collateralOracle, MAX_ORACLE_STALENESS, collateralToken
         );
     }
 
     function _getDebtUsdValue(uint256 debtAmount) internal view returns (uint256) {
-        return AaveOracleLib.getDebtUsdValue(
+        return OracleLib.getDebtUsdValue(
             debtAmount, debtOracle, MAX_DEBT_ORACLE_STALENESS, debtToken
         );
     }

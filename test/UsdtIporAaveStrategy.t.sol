@@ -4,7 +4,7 @@ pragma solidity ^0.8.33;
 import { Test } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
-import { AaveLoanManager } from "../src/AaveLoanManager.sol";
+import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UsdtIporYieldStrategy } from "../src/strategies/UsdtIporYieldStrategy.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
 import { IAavePool } from "../src/interfaces/IAavePool.sol";
@@ -40,14 +40,20 @@ contract MockERC20 is ERC20 {
 contract MockOracle {
     uint8 public immutable decimals;
     int256 public price;
+    uint256 public updatedAt;
 
     constructor(uint8 decimals_, int256 price_) {
         decimals = decimals_;
         price = price_;
+        updatedAt = block.timestamp;
+    }
+
+    function setStale() external {
+        updatedAt = block.timestamp - 100000;
     }
 
     function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) {
-        return (1, price, block.timestamp, block.timestamp, 1);
+        return (1, price, block.timestamp, updatedAt, 1);
     }
 }
 
@@ -355,5 +361,172 @@ contract UsdtIporAaveStrategyTest is Test {
         vm.prank(user);
         vm.expectRevert(IYieldStrategy.Unauthorized.selector);
         strategy.withdrawAll();
+    }
+
+    // ============ Branch Coverage Tests ============
+
+    function test_strategy_name() public view {
+        string memory n = strategy.name();
+        assertGt(bytes(n).length, 0, "Name should not be empty");
+    }
+
+    function test_strategy_underlyingAsset() public view {
+        assertEq(strategy.underlyingAsset(), address(crvUSD), "Underlying asset should be crvUSD");
+    }
+
+    function test_strategy_setSlippage_onlyVault() public {
+        vm.prank(user);
+        vm.expectRevert(IYieldStrategy.Unauthorized.selector);
+        strategy.setSlippage(5e16);
+    }
+
+    // ============ Additional Branch Coverage ============
+
+    function test_balanceOf_returns_zero_when_ipor_empty() public view {
+        // Strategy has no deposits, IPOR balance is 0
+        assertEq(strategy.balanceOf(), 0, "Empty strategy should return 0");
+    }
+
+    function test_withdraw_returns_zero_when_currentValue_zero() public {
+        // No deposit → balanceOf() is 0 → _withdraw returns 0
+        vm.prank(address(vault));
+        // Withdraw from empty strategy should not revert, just return 0
+        strategy.withdraw(1e6);
+        // Strategy balance should still be 0
+        assertEq(strategy.balanceOf(), 0);
+    }
+
+    function test_balanceOf_oracle_stale_fallback() public {
+        vm.prank(user);
+        vault.deposit(1e8, user);
+
+        uint256 normalBalance = strategy.balanceOf();
+        assertGt(normalBalance, 0, "Should have balance after deposit");
+
+        // Make crvUSD oracle stale → triggers 1:1 fallback in CurveUsdtSwapLib
+        vm.warp(block.timestamp + 100001);
+        crvUsdOracle.setStale();
+
+        uint256 staleBalance = strategy.balanceOf();
+        assertGt(staleBalance, 0, "Stale fallback should still return value");
+        // With 1:1 mock oracles, stale fallback should give same result
+        assertApproxEqRel(staleBalance, normalBalance, 1e16, "Stale balance close to normal");
+    }
+
+    // ============ More Branch Coverage ============
+
+    function test_withdrawAll_returns_zero_when_empty() public {
+        // No deposit → _withdrawAll with 0 crvUSD → returns 0
+        vm.prank(address(vault));
+        uint256 received = strategy.withdrawAll();
+        assertEq(received, 0, "Empty withdrawAll returns 0");
+    }
+
+    function test_emergencyWithdraw_returns_zero_when_empty() public {
+        vm.prank(address(vault));
+        uint256 received = strategy.emergencyWithdraw();
+        assertEq(received, 0, "Empty emergencyWithdraw returns 0");
+    }
+
+    function test_withdraw_partial_proportional_shares() public {
+        vm.prank(user);
+        vault.deposit(1e8, user);
+
+        uint256 balBefore = strategy.balanceOf();
+        assertGt(balBefore, 0);
+
+        // Withdraw half
+        vm.prank(address(vault));
+        uint256 received = strategy.withdraw(balBefore / 2);
+        assertGt(received, 0, "Should receive some USDT");
+    }
+
+    function test_setSlippage_maxSlippage_reverts() public {
+        vm.prank(address(vault));
+        vm.expectRevert(IYieldStrategy.SlippageExceeded.selector);
+        strategy.setSlippage(6e16); // > 5%
+    }
+
+    function test_deposit_onlyVault_reverts() public {
+        vm.prank(user);
+        vm.expectRevert(IYieldStrategy.Unauthorized.selector);
+        strategy.deposit(1e6);
+    }
+
+    // ============ Branch Coverage: _withdraw sharesToRedeem < 1 ============
+
+    function test_withdraw_moreThanBalance_capsToShares() public {
+        vm.prank(user);
+        vault.deposit(1e8, user);
+
+        uint256 bal = strategy.balanceOf();
+        assertGt(bal, 0);
+
+        // Withdraw much more than balance — sharesToRedeem > shares, gets capped
+        vm.prank(address(vault));
+        uint256 received = strategy.withdraw(bal * 10);
+        assertGt(received, 0, "Should receive some USDT");
+    }
+
+    // ============ Branch Coverage: constructor zero-address checks ============
+
+    function test_constructor_zeroCrvUSD_reverts() public {
+        vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
+        new UsdtIporYieldStrategy(
+            address(usdt),
+            address(0), // crvUSD = 0
+            address(vault),
+            address(curvePool),
+            address(iporVault),
+            0,
+            1,
+            address(crvUsdOracle),
+            address(usdtOracle)
+        );
+    }
+
+    function test_constructor_zeroCurvePool_reverts() public {
+        vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
+        new UsdtIporYieldStrategy(
+            address(usdt),
+            address(crvUSD),
+            address(vault),
+            address(0), // curvePool = 0
+            address(iporVault),
+            0,
+            1,
+            address(crvUsdOracle),
+            address(usdtOracle)
+        );
+    }
+
+    function test_constructor_zeroCrvUsdOracle_reverts() public {
+        vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
+        new UsdtIporYieldStrategy(
+            address(usdt),
+            address(crvUSD),
+            address(vault),
+            address(curvePool),
+            address(iporVault),
+            0,
+            1,
+            address(0), // crvUsdOracle = 0
+            address(usdtOracle)
+        );
+    }
+
+    function test_constructor_zeroUsdtOracle_reverts() public {
+        vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
+        new UsdtIporYieldStrategy(
+            address(usdt),
+            address(crvUSD),
+            address(vault),
+            address(curvePool),
+            address(iporVault),
+            0,
+            1,
+            address(crvUsdOracle),
+            address(0) // usdtOracle = 0
+        );
     }
 }

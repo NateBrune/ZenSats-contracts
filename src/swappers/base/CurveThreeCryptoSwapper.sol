@@ -1,45 +1,22 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import { IERC20 } from "./interfaces/IERC20.sol";
-import { ICurveThreeCrypto } from "./interfaces/ICurveThreeCrypto.sol";
-import { ISwapper } from "./interfaces/ISwapper.sol";
-import { SafeTransferLib } from "./libraries/SafeTransferLib.sol";
-import { TimelockLib } from "./libraries/TimelockLib.sol";
+import { IERC20 } from "../../interfaces/IERC20.sol";
+import { ICurveThreeCrypto } from "../../interfaces/ICurveThreeCrypto.sol";
+import { ISwapper } from "../../interfaces/ISwapper.sol";
+import { SafeTransferLib } from "../../libraries/SafeTransferLib.sol";
+import { BaseSwapper } from "./BaseSwapper.sol";
 
 /// @title CurveThreeCryptoSwapper
 /// @notice Swapper for Curve TriCrypto-style pools (3-token crypto pools)
-contract CurveThreeCryptoSwapper is ISwapper {
+contract CurveThreeCryptoSwapper is BaseSwapper, ISwapper {
     using SafeTransferLib for IERC20;
-    using TimelockLib for TimelockLib.TimelockData;
-
-    uint256 public constant PRECISION = 1e18;
-    uint256 public constant TIMELOCK_DELAY = 2 days;
-    uint256 public slippage; // Initially 5%
-
-    address public gov;
-    address public pendingGov;
-    TimelockLib.TimelockData private _slippageTimelock;
 
     IERC20 public immutable collateralToken;
     IERC20 public immutable debtToken;
     ICurveThreeCrypto public immutable pool;
     uint256 public immutable collateralIndex;
     uint256 public immutable debtIndex;
-
-    event GovernanceTransferStarted(address indexed previousGov, address indexed newGov);
-    event GovernanceUpdated(address indexed newGov);
-    event SlippageProposed(uint256 newSlippage, uint256 executeAfter);
-    event SlippageExecuted(uint256 newSlippage);
-    event SlippageCancelled();
-
-    error Unauthorized();
-    error InvalidSlippage();
-
-    modifier onlyGov() {
-        if (msg.sender != gov) revert Unauthorized();
-        _;
-    }
 
     constructor(
         address _gov,
@@ -48,15 +25,10 @@ contract CurveThreeCryptoSwapper is ISwapper {
         address _pool,
         uint256 _collateralIndex,
         uint256 _debtIndex
-    ) {
-        if (
-            _gov == address(0) || _collateralToken == address(0) || _debtToken == address(0)
-                || _pool == address(0)
-        ) {
+    ) BaseSwapper(_gov) {
+        if (_collateralToken == address(0) || _debtToken == address(0) || _pool == address(0)) {
             revert InvalidAddress();
         }
-        gov = _gov;
-        slippage = 5e16; // 5% initial slippage
         collateralToken = IERC20(_collateralToken);
         debtToken = IERC20(_debtToken);
         pool = ICurveThreeCrypto(_pool);
@@ -118,13 +90,14 @@ contract CurveThreeCryptoSwapper is ISwapper {
         IERC20 outToken,
         uint256 balanceBefore
     ) private returns (uint256 amountOut) {
-        (bool ok, bytes memory data) = address(pool).call(
-            abi.encodeWithSignature("exchange(uint256,uint256,uint256,uint256,bool)", i, j, dx, minOut, false)
-        );
-        if (!ok) revert TransferFailed();
-        if (data.length >= 32) {
-            amountOut = abi.decode(data, (uint256));
-        } else {
+        try pool.exchange(i, j, dx, minOut, false) returns (uint256 outAmount) {
+            amountOut = outAmount;
+        } catch {
+            revert TransferFailed();
+        }
+
+        // Some Curve pools historically returned no value; fall back to balance delta when zero
+        if (amountOut == 0) {
             uint256 balanceAfter = outToken.balanceOf(address(this));
             amountOut = balanceAfter > balanceBefore ? balanceAfter - balanceBefore : 0;
         }
@@ -138,43 +111,5 @@ contract CurveThreeCryptoSwapper is ISwapper {
         if (data.length >= 32 && !abi.decode(data, (bool))) {
             revert TransferFailed();
         }
-    }
-
-    // ============ Governance Functions ============
-
-    /// @notice Propose new slippage tolerance
-    /// @param newSlippage New slippage in 1e18 precision (e.g., 5e16 = 5%)
-    function proposeSlippage(uint256 newSlippage) external onlyGov {
-        if (newSlippage == 0 || newSlippage >= PRECISION) revert InvalidSlippage();
-        _slippageTimelock.propose(newSlippage, TIMELOCK_DELAY);
-        emit SlippageProposed(newSlippage, block.timestamp + TIMELOCK_DELAY);
-    }
-
-    /// @notice Execute slippage change after timelock
-    function executeSlippage() external onlyGov {
-        uint256 newSlippage = _slippageTimelock.execute();
-        slippage = newSlippage;
-        emit SlippageExecuted(newSlippage);
-    }
-
-    /// @notice Cancel pending slippage change
-    function cancelSlippage() external onlyGov {
-        _slippageTimelock.cancel();
-        emit SlippageCancelled();
-    }
-
-    /// @notice Start governance transfer
-    function transferGovernance(address newGov_) external onlyGov {
-        if (newGov_ == address(0)) revert InvalidAddress();
-        pendingGov = newGov_;
-        emit GovernanceTransferStarted(gov, newGov_);
-    }
-
-    /// @notice Accept governance transfer
-    function acceptGovernance() external {
-        if (msg.sender != pendingGov) revert Unauthorized();
-        gov = msg.sender;
-        pendingGov = address(0);
-        emit GovernanceUpdated(msg.sender);
     }
 }
