@@ -5,6 +5,7 @@ import "forge-std/Script.sol";
 import "forge-std/console2.sol";
 
 import {ZenjiViewHelper} from "../src/ZenjiViewHelper.sol";
+import {VaultTracker} from "../src/VaultTracker.sol";
 import {CbBtcWbtcUsdtSwapper} from "../src/swappers/base/CbBtcWbtcUsdtSwapper.sol";
 import {AaveLoanManager} from "../src/lenders/AaveLoanManager.sol";
 import {UsdtIporYieldStrategy} from "../src/strategies/UsdtIporYieldStrategy.sol";
@@ -100,6 +101,8 @@ contract DeployCbBtc is Script {
         loanManager.initializeVault(address(vault));
         strategy.initializeVault(address(vault));
 
+        VaultTracker vaultTracker = new VaultTracker(address(vault));
+
         vm.stopBroadcast();
 
         console2.log("ViewHelper", address(viewHelper));
@@ -107,6 +110,7 @@ contract DeployCbBtc is Script {
         console2.log("LoanManager", address(loanManager));
         console2.log("Strategy", address(strategy));
         console2.log("Vault", address(vault));
+        console2.log("VaultTracker", address(vaultTracker));
     }
 
     function _envOrAddress(string memory key, address defaultValue) internal view returns (address) {

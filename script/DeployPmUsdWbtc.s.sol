@@ -5,6 +5,7 @@ import "forge-std/Script.sol";
 import "forge-std/console2.sol";
 
 import {ZenjiViewHelper} from "../src/ZenjiViewHelper.sol";
+import {VaultTracker} from "../src/VaultTracker.sol";
 import {CurveThreeCryptoSwapper} from "../src/swappers/base/CurveThreeCryptoSwapper.sol";
 import {CrvToCrvUsdSwapper} from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import {AaveLoanManager} from "../src/lenders/AaveLoanManager.sol";
@@ -24,6 +25,7 @@ contract DeployPmUsdWbtc is Script {
     address constant BTC_USD_ORACLE = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
     address constant USDT_USD_ORACLE = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
     address constant CRVUSD_USD_ORACLE = 0xEEf0C605546958c1f899b6fB336C20671f9cD49F;
+    address constant CRV_USD_ORACLE = 0xCd627aA160A6fA45Eb793D19Ef54f5062F20f33f;
 
     // Aave V3
     address constant AAVE_POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
@@ -84,7 +86,8 @@ contract DeployPmUsdWbtc is Script {
             CRVUSD_INDEX,
             lpCrvUsdIndex,
             CRVUSD_USD_ORACLE,
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            CRV_USD_ORACLE
         );
 
         AaveLoanManager loanManager = new AaveLoanManager(
@@ -112,6 +115,8 @@ contract DeployPmUsdWbtc is Script {
         loanManager.initializeVault(address(vault));
         strategy.initializeVault(address(vault));
 
+        VaultTracker vaultTracker = new VaultTracker(address(vault));
+
         vm.stopBroadcast();
 
         console2.log("ViewHelper", address(viewHelper));
@@ -120,6 +125,7 @@ contract DeployPmUsdWbtc is Script {
         console2.log("LoanManager", address(loanManager));
         console2.log("Strategy", address(strategy));
         console2.log("Vault", address(vault));
+        console2.log("VaultTracker", address(vaultTracker));
     }
 
     function _lpCrvUsdIndex() internal view returns (int128) {

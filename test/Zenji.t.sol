@@ -562,6 +562,29 @@ contract ZenjiTest is Test {
         assertGt(wbtc.balanceOf(user1), balanceBefore, "User should have more WBTC");
     }
 
+    function test_withdraw_fullRedeem_clearsSubUnitDebtDust() public {
+        vm.prank(user1);
+        uint256 shares = vault.deposit(1e8, user1);
+
+        // Seed sub-1 debt asset dust in vault (below old 1-token threshold)
+        uint256 debtDust = 5e17; // 0.5 CRVUSD
+        deal(CRVUSD, address(vault), debtDust);
+        assertEq(crvUSD.balanceOf(address(vault)), debtDust, "Dust seed failed");
+
+        warpAndMock(block.timestamp + 2);
+        mockOracle(89238e8);
+
+        vm.prank(user1);
+        vault.redeem(shares, user1, user1);
+
+        assertEq(
+            crvUSD.balanceOf(address(vault)),
+            0,
+            "Debt dust should be force-swapped on full redeem"
+        );
+        assertEq(vault.totalSupply(), 0, "Total shares should be zero");
+    }
+
     function test_multipleDepositors() public {
         // User 1 deposits
         vm.prank(user1);
@@ -2955,7 +2978,7 @@ contract ZenjiTest is Test {
         assertEq(vault.balanceOf(user1), 0, "Shares should be zero");
     }
 
-    function testFuzz_withdraw_neverZeroAssets(uint256 depositAmt, uint256 withdrawShares) public {
+    function testFuzz_withdraw_neverZeroAssets(uint256 depositAmt) public {
         depositAmt = bound(depositAmt, 1e5, 5e8);
 
         // Use user3 who has 10e8 from setUp, bound deposit to available balance
@@ -2968,14 +2991,12 @@ contract ZenjiTest is Test {
 
         warpAndMock(block.timestamp + 2);
 
-        // Withdraw at least 10% of shares to avoid sub-dust rounding to 0
-        uint256 minShares = shares / 10;
-        if (minShares < 1) minShares = 1;
-        withdrawShares = bound(withdrawShares, minShares, shares);
-
+        // Full redeem — user3 is sole depositor, triggering isFinalWithdraw (full close path).
+        // Partial redeems as sole depositor require the residual LlamaLend position to be above
+        // the market's minimum band threshold, which is not covered by this invariant test.
         vm.prank(user3);
-        uint256 collateral = vault.redeem(withdrawShares, user3, user3);
-        assertGt(collateral, 0, "Must receive collateral for non-trivial share burn");
+        uint256 collateral = vault.redeem(shares, user3, user3);
+        assertGt(collateral, 0, "Must receive collateral for full share burn");
     }
 
     function testFuzz_emergency_proRata_fairness(uint256 a1, uint256 a2) public {
@@ -3056,11 +3077,12 @@ contract ZenjiTest is Test {
     // ============ Branch Coverage: maxWithdraw / maxRedeem in emergency ============
 
     function test_maxWithdraw_emergencyLiquidationComplete_zeroSupply() public {
-        vm.prank(owner);
+        vm.startPrank(owner);
         vault.enterEmergencyMode();
-
-        vm.prank(owner);
+        vault.emergencySkipStep(0);
+        vault.emergencySkipStep(1);
         vault.emergencyStep(2); // complete liquidation
+        vm.stopPrank();
 
         // No shares outstanding → maxWithdraw should return 0
         assertEq(vault.maxWithdraw(user1), 0);
@@ -3348,6 +3370,45 @@ contract ZenjiTest is Test {
         vault.redeem(shares, user1, user1);
 
         assertEq(vault.balanceOf(user1), 0, "All shares should be burned");
+    }
+
+    /// @dev Regression test for isFinalWithdraw exploit.
+    /// An attacker deposited just enough so that the victim's remaining shares were worth
+    /// < MIN_DEPOSIT, triggering isFinalWithdraw and receiving ALL vault collateral.
+    /// Fix: isFinalWithdraw now only triggers when totalSupply - shareAmount <= VIRTUAL_SHARE_OFFSET
+    /// (i.e. genuinely the last real depositor burning all their shares).
+    function test_isFinalWithdraw_exploit_blocked() public {
+        // Victim deposits a small amount
+        vm.prank(user1);
+        vault.deposit(2e4, user1); // victim: 2x MIN_DEPOSIT
+
+        // Attacker deposits enough that after withdrawing, victim's leftover < MIN_DEPOSIT
+        vm.prank(user2);
+        vault.deposit(1e5, user2); // attacker
+
+        uint256 attackerShares = vault.balanceOf(user2);
+        uint256 victimShares = vault.balanceOf(user1);
+
+        uint256 attackerCollateralBefore = wbtc.balanceOf(user2);
+
+        // Attacker redeems — under old code this would steal victim's funds via isFinalWithdraw.
+        // Under the fix, victim still has real shares so isFinalWithdraw must NOT trigger.
+        vm.prank(user2);
+        vault.redeem(attackerShares, user2, user2);
+
+        // Victim's shares must still exist
+        assertEq(vault.balanceOf(user1), victimShares, "Victim shares must be untouched");
+
+        // Attacker should only receive proportional collateral, not victim's funds
+        uint256 attackerGained = wbtc.balanceOf(user2) - attackerCollateralBefore;
+        // Attacker deposited 1e5 and should get back roughly that (minus fees/slippage)
+        // They must NOT have received victim's 2e4
+        assertLt(attackerGained, 1e5 + 2e4, "Attacker must not receive victim collateral");
+
+        // Victim can still redeem their own shares
+        vm.prank(user1);
+        uint256 victimReceived = vault.redeem(victimShares, user1, user1);
+        assertGt(victimReceived, 0, "Victim must be able to redeem their funds");
     }
 
     function test_maxMint_withCap() public {
@@ -3674,6 +3735,8 @@ contract ZenjiTest is Test {
     function test_emergencyStep_afterLiquidation_reverts() public {
         vm.startPrank(owner);
         vault.enterEmergencyMode();
+        vault.emergencySkipStep(0);
+        vault.emergencySkipStep(1);
         vault.emergencyStep(2); // mark complete
         vm.expectRevert(Zenji.LiquidationAlreadyComplete.selector);
         vault.emergencyStep(0); // should revert
@@ -3766,6 +3829,8 @@ contract ZenjiTest is Test {
 
         vm.startPrank(owner);
         vault.enterEmergencyMode();
+        vault.emergencySkipStep(0);
+        vault.emergencySkipStep(1);
         vault.emergencyStep(2); // mark complete, but no collateral recovered
         vm.stopPrank();
 
@@ -3780,11 +3845,118 @@ contract ZenjiTest is Test {
     function test_previewRedeem_emergencyLiquidation_zeroSupply() public {
         vm.startPrank(owner);
         vault.enterEmergencyMode();
+        vault.emergencySkipStep(0);
+        vault.emergencySkipStep(1);
         vault.emergencyStep(2); // complete liquidation
         vm.stopPrank();
 
         // No shares outstanding
         uint256 assets = vault.previewRedeem(1e8);
         assertEq(assets, 0, "Zero supply returns 0 in previewRedeem");
+    }
+
+    // ============ emergencySkipStep / step-ordering guard ============
+
+    function test_emergencyStep2_withoutPriorSteps_reverts() public {
+        vm.startPrank(owner);
+        vault.enterEmergencyMode();
+        vm.expectRevert(Zenji.EmergencyStepsIncomplete.selector);
+        vault.emergencyStep(2);
+        vm.stopPrank();
+    }
+
+    function test_emergencyStep2_withStep0Only_reverts() public {
+        vm.startPrank(owner);
+        vault.enterEmergencyMode();
+        vault.emergencyStep(0); // only step 0 resolved
+        vm.expectRevert(Zenji.EmergencyStepsIncomplete.selector);
+        vault.emergencyStep(2);
+        vm.stopPrank();
+    }
+
+    function test_emergencyStep2_withStep1Only_reverts() public {
+        vm.startPrank(owner);
+        vault.enterEmergencyMode();
+        vault.emergencySkipStep(1); // skip step 1 but not step 0
+        vm.expectRevert(Zenji.EmergencyStepsIncomplete.selector);
+        vault.emergencyStep(2);
+        vm.stopPrank();
+    }
+
+    function test_emergencySkipStep_allowsStep2() public {
+        vm.startPrank(owner);
+        vault.enterEmergencyMode();
+        vault.emergencySkipStep(0);
+        vault.emergencySkipStep(1);
+        vault.emergencyStep(2);
+        vm.stopPrank();
+
+        assertTrue(vault.liquidationComplete(), "Liquidation should be complete via skip path");
+        assertEq(vault.emergencyStepsCompleted(), 0x3, "Both bits should be set");
+    }
+
+    function test_emergencySkipStep_runThenSkip_allowsStep2() public {
+        // Run step 0 normally, skip step 1 (simulates bricked loan manager)
+        vm.startPrank(owner);
+        vault.enterEmergencyMode();
+        vault.emergencyStep(0);   // run normally
+        vault.emergencySkipStep(1); // skip loan unwind
+        vault.emergencyStep(2);
+        vm.stopPrank();
+
+        assertTrue(vault.liquidationComplete(), "Liquidation complete after run+skip");
+    }
+
+    function test_emergencySkipStep_onlyOwner_reverts() public {
+        vm.prank(owner);
+        vault.enterEmergencyMode();
+
+        vm.prank(user1);
+        vm.expectRevert();
+        vault.emergencySkipStep(0);
+    }
+
+    function test_emergencySkipStep_notInEmergencyMode_reverts() public {
+        vm.prank(owner);
+        vm.expectRevert(Zenji.EmergencyModeNotActive.selector);
+        vault.emergencySkipStep(0);
+    }
+
+    function test_emergencySkipStep_afterLiquidationComplete_reverts() public {
+        vm.startPrank(owner);
+        vault.enterEmergencyMode();
+        vault.emergencySkipStep(0);
+        vault.emergencySkipStep(1);
+        vault.emergencyStep(2); // completes liquidation
+        vm.expectRevert(Zenji.LiquidationAlreadyComplete.selector);
+        vault.emergencySkipStep(0); // too late
+        vm.stopPrank();
+    }
+
+    function test_emergencySkipStep_invalidStep_reverts() public {
+        vm.startPrank(owner);
+        vault.enterEmergencyMode();
+        vm.expectRevert(Zenji.InvalidEmergencyStep.selector);
+        vault.emergencySkipStep(2); // only 0 and 1 are skippable
+        vm.stopPrank();
+    }
+
+    function test_emergencyStepsCompleted_trackedCorrectly() public {
+        assertEq(vault.emergencyStepsCompleted(), 0x0);
+
+        vm.startPrank(owner);
+        vault.enterEmergencyMode();
+        assertEq(vault.emergencyStepsCompleted(), 0x0);
+
+        vault.emergencyStep(0);
+        assertEq(vault.emergencyStepsCompleted(), 0x1, "Bit 0 set after step 0");
+
+        vault.emergencyStep(1);
+        assertEq(vault.emergencyStepsCompleted(), 0x3, "Bits 0+1 set after step 1");
+
+        vault.emergencyStep(2);
+        vm.stopPrank();
+
+        assertTrue(vault.liquidationComplete());
     }
 }

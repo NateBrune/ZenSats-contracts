@@ -10,6 +10,10 @@ library OracleLib {
     error InvalidPrice();
     error StaleOracle();
 
+    function _pow10(uint8 exp) private pure returns (uint256) {
+        return 10 ** uint256(exp);
+    }
+
     function _validatedPrice(IChainlinkOracle oracle, uint256 maxStaleness)
         private
         view
@@ -47,13 +51,19 @@ library OracleLib {
         if (collateralAmount == 0) return 0;
         uint256 collateralPrice = _validatedPrice(collateralOracle, maxCollateralStaleness);
         uint256 debtPrice = _validatedPrice(debtOracle, maxDebtStaleness);
-        uint8 collateralOracleDecimals = collateralOracle.decimals();
-        uint8 debtOracleDecimals = debtOracle.decimals();
-        uint8 collateralDecimals = collateralToken.decimals();
-        uint8 debtDecimals = debtToken.decimals();
-        return (
-            collateralAmount * collateralPrice * (10 ** debtDecimals) * (10 ** debtOracleDecimals)
-        ) / ((10 ** collateralOracleDecimals) * (10 ** collateralDecimals) * debtPrice);
+        uint256 debtTokenScale = _pow10(debtToken.decimals());
+        uint256 debtOracleScale = _pow10(debtOracle.decimals());
+        uint256 collateralOracleScale = _pow10(collateralOracle.decimals());
+        uint256 collateralTokenScale = _pow10(collateralToken.decimals());
+
+        uint256 numerator = collateralAmount * collateralPrice;
+        numerator = numerator * debtTokenScale;
+        numerator = numerator * debtOracleScale;
+
+        uint256 denominator = collateralOracleScale * collateralTokenScale;
+        denominator = denominator * debtPrice;
+
+        return numerator / denominator;
     }
 
     function getDebtValue(
@@ -68,13 +78,19 @@ library OracleLib {
         if (debtAmount == 0) return 0;
         uint256 collateralPrice = _validatedPrice(collateralOracle, maxCollateralStaleness);
         uint256 debtPrice = _validatedPrice(debtOracle, maxDebtStaleness);
-        uint8 collateralOracleDecimals = collateralOracle.decimals();
-        uint8 debtOracleDecimals = debtOracle.decimals();
-        uint8 collateralDecimals = collateralToken.decimals();
-        uint8 debtDecimals = debtToken.decimals();
-        return (
-            debtAmount * debtPrice * (10 ** collateralOracleDecimals) * (10 ** collateralDecimals)
-        ) / ((10 ** debtOracleDecimals) * collateralPrice * (10 ** debtDecimals));
+        uint256 collateralOracleScale = _pow10(collateralOracle.decimals());
+        uint256 collateralTokenScale = _pow10(collateralToken.decimals());
+        uint256 debtOracleScale = _pow10(debtOracle.decimals());
+        uint256 debtTokenScale = _pow10(debtToken.decimals());
+
+        uint256 numerator = debtAmount * debtPrice;
+        numerator = numerator * collateralOracleScale;
+        numerator = numerator * collateralTokenScale;
+
+        uint256 denominator = debtOracleScale * collateralPrice;
+        denominator = denominator * debtTokenScale;
+
+        return numerator / denominator;
     }
 
     // ============ Llama overloads (debt is 1e18 native) ============
@@ -90,11 +106,18 @@ library OracleLib {
         if (collateralAmount == 0) return 0;
         uint256 collateralPrice = _validatedPrice(collateralOracle, maxCollateralStaleness);
         uint256 debtPrice = _validatedPrice(debtOracle, maxDebtStaleness);
-        uint8 collateralOracleDecimals = collateralOracle.decimals();
-        uint8 debtOracleDecimals = debtOracle.decimals();
-        uint8 collateralDecimals = collateralToken.decimals();
-        return (collateralAmount * collateralPrice * 1e18 * (10 ** debtOracleDecimals))
-            / ((10 ** collateralOracleDecimals) * (10 ** collateralDecimals) * debtPrice);
+        uint256 debtOracleScale = _pow10(debtOracle.decimals());
+        uint256 collateralOracleScale = _pow10(collateralOracle.decimals());
+        uint256 collateralTokenScale = _pow10(collateralToken.decimals());
+
+        uint256 numerator = collateralAmount * collateralPrice;
+        numerator = numerator * 1e18;
+        numerator = numerator * debtOracleScale;
+
+        uint256 denominator = collateralOracleScale * collateralTokenScale;
+        denominator = denominator * debtPrice;
+
+        return numerator / denominator;
     }
 
     function getDebtValue(
@@ -108,12 +131,18 @@ library OracleLib {
         if (debtAmount == 0) return 0;
         uint256 collateralPrice = _validatedPrice(collateralOracle, maxCollateralStaleness);
         uint256 debtPrice = _validatedPrice(debtOracle, maxDebtStaleness);
-        uint8 collateralOracleDecimals = collateralOracle.decimals();
-        uint8 debtOracleDecimals = debtOracle.decimals();
-        uint8 collateralDecimals = collateralToken.decimals();
-        return (
-            debtAmount * debtPrice * (10 ** collateralOracleDecimals) * (10 ** collateralDecimals)
-        ) / ((10 ** debtOracleDecimals) * collateralPrice * 1e18);
+        uint256 collateralOracleScale = _pow10(collateralOracle.decimals());
+        uint256 collateralTokenScale = _pow10(collateralToken.decimals());
+        uint256 debtOracleScale = _pow10(debtOracle.decimals());
+
+        uint256 numerator = debtAmount * debtPrice;
+        numerator = numerator * collateralOracleScale;
+        numerator = numerator * collateralTokenScale;
+
+        uint256 denominator = debtOracleScale * collateralPrice;
+        denominator = denominator * 1e18;
+
+        return numerator / denominator;
     }
 
     // ============ USD value helpers (Aave only) ============
@@ -126,9 +155,9 @@ library OracleLib {
     ) external view returns (uint256) {
         if (collateralAmount == 0) return 0;
         uint256 price = _validatedPrice(collateralOracle, maxCollateralStaleness);
-        uint8 oracleDecimals = collateralOracle.decimals();
-        uint8 tokenDecimals = collateralToken.decimals();
-        return (collateralAmount * price * 1e18) / ((10 ** oracleDecimals) * (10 ** tokenDecimals));
+        uint256 oracleScale = _pow10(collateralOracle.decimals());
+        uint256 tokenScale = _pow10(collateralToken.decimals());
+        return (collateralAmount * price * 1e18) / (oracleScale * tokenScale);
     }
 
     function getDebtUsdValue(
@@ -139,8 +168,8 @@ library OracleLib {
     ) external view returns (uint256) {
         if (debtAmount == 0) return 0;
         uint256 price = _validatedPrice(debtOracle, maxDebtStaleness);
-        uint8 oracleDecimals = debtOracle.decimals();
-        uint8 tokenDecimals = debtToken.decimals();
-        return (debtAmount * price * 1e18) / ((10 ** oracleDecimals) * (10 ** tokenDecimals));
+        uint256 oracleScale = _pow10(debtOracle.decimals());
+        uint256 tokenScale = _pow10(debtToken.decimals());
+        return (debtAmount * price * 1e18) / (oracleScale * tokenScale);
     }
 }

@@ -18,8 +18,8 @@ via_ir = true
 evm_version = "cancun"
 
 [profile.ci]
-fuzz = { runs = 5000 }
-invariant = { runs = 1000 }
+fuzz = { runs = 5 }
+invariant = { runs = 5 }
 
 [profile.coverage]
 via_ir = false

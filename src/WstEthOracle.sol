@@ -29,7 +29,10 @@ contract WstEthOracle is IChainlinkOracle {
         returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
     {
         // Get stETH/ETH price (18 decimals)
-        (, int256 stEthEthPrice,, uint256 stEthEthUpdatedAt,) = stEthEthFeed.latestRoundData();
+        (uint80 stEthRoundId, int256 stEthEthPrice,, uint256 stEthEthUpdatedAt, uint80 stEthAnsweredInRound) =
+            stEthEthFeed.latestRoundData();
+        require(stEthEthPrice > 0, "stETH/ETH: invalid price");
+        require(stEthAnsweredInRound >= stEthRoundId, "stETH/ETH: stale round");
 
         // Get ETH/USD price (8 decimals)
         (uint80 ethUsdRoundId, int256 ethUsdPrice, uint256 ethUsdStartedAt, uint256 ethUsdUpdatedAt, uint80 ethUsdAnsweredInRound) =

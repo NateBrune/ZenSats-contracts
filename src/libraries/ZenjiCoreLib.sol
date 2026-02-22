@@ -86,8 +86,13 @@ library ZenjiCoreLib {
             uint256 totalDebt = loanManager.getCurrentDebt();
             uint256 availableDebt = debtAsset.balanceOf(address(this));
             if (availableDebt >= totalDebt) {
-                debtAsset.safeTransfer(address(loanManager), totalDebt);
-                loanManager.repayDebt(totalDebt);
+                if (totalDebt > 0) {
+                    debtAsset.safeTransfer(address(loanManager), totalDebt);
+                    loanManager.repayDebt(totalDebt);
+                }
+                // Debt is fully repaid; withdraw collateral (e.g. aTokens) from the lending protocol.
+                // unwindPosition handles zero-debt by skipping the flashloan and calling withdraw directly.
+                loanManager.unwindPosition(type(uint256).max);
             } else {
                 if (availableDebt > 0) {
                     debtAsset.safeTransfer(address(loanManager), availableDebt);
@@ -212,27 +217,15 @@ library ZenjiCoreLib {
 
         if (rebalanceBountyRate > 0 && accumulatedFees > 0) {
             uint256 bounty = (accumulatedFees * rebalanceBountyRate) / precision;
-            uint256 strategyBalance = yieldStrategy.balanceOf();
-            uint256 toWithdraw = accumulatedFees > strategyBalance
-                ? strategyBalance
-                : accumulatedFees;
-            uint256 withdrawn = 0;
-            if (toWithdraw > 0) {
-                withdrawn = yieldStrategy.withdraw(toWithdraw);
-            }
+            uint256 withdrawn = _withdrawForBounty(yieldStrategy, accumulatedFees);
             if (withdrawn > 0) {
-                uint256 actualBounty = bounty > withdrawn ? withdrawn : bounty;
-                if (actualBounty > 0) {
-                    debtAsset.safeTransfer(keeper, actualBounty);
-                    emit RebalanceBountyPaid(keeper, actualBounty);
-                }
-                uint256 ownerShare = withdrawn > actualBounty
-                    ? withdrawn - actualBounty
-                    : 0;
-                if (ownerShare > 0) {
-                    debtAsset.safeTransfer(owner, ownerShare);
-                    emit FeesWithdrawn(owner, ownerShare);
-                }
+                _distributeBountyAndFees(
+                    debtAsset,
+                    keeper,
+                    owner,
+                    bounty,
+                    withdrawn
+                );
                 newAccumulatedFees = accumulatedFees > withdrawn
                     ? accumulatedFees - withdrawn
                     : 0;
@@ -240,6 +233,41 @@ library ZenjiCoreLib {
         }
 
         newLastStrategyBalance = yieldStrategy.balanceOf();
+    }
+
+    function _withdrawForBounty(
+        IYieldStrategy yieldStrategy,
+        uint256 accumulatedFees
+    ) private returns (uint256 withdrawn) {
+        uint256 strategyBalance = yieldStrategy.balanceOf();
+        uint256 toWithdraw = accumulatedFees > strategyBalance
+            ? strategyBalance
+            : accumulatedFees;
+        if (toWithdraw > 0) {
+            withdrawn = yieldStrategy.withdraw(toWithdraw);
+        }
+    }
+
+    function _distributeBountyAndFees(
+        IERC20 debtAsset,
+        address keeper,
+        address owner,
+        uint256 bounty,
+        uint256 withdrawn
+    ) private {
+        uint256 actualBounty = bounty > withdrawn ? withdrawn : bounty;
+        if (actualBounty > 0) {
+            debtAsset.safeTransfer(keeper, actualBounty);
+            emit RebalanceBountyPaid(keeper, actualBounty);
+        }
+
+        uint256 ownerShare = withdrawn > actualBounty
+            ? withdrawn - actualBounty
+            : 0;
+        if (ownerShare > 0) {
+            debtAsset.safeTransfer(owner, ownerShare);
+            emit FeesWithdrawn(owner, ownerShare);
+        }
     }
 
     // ============ Internal Helpers ============
@@ -258,7 +286,7 @@ library ZenjiCoreLib {
         ISwapper swapper
     ) private {
         uint256 debtBal = debtAsset.balanceOf(address(this));
-        if (debtBal > 1e16 && address(swapper) != address(0)) {
+        if (debtBal > 10 ** debtAsset.decimals() && address(swapper) != address(0)) {
             debtAsset.safeTransfer(address(swapper), debtBal);
             swapper.swapDebtForCollateral(debtBal);
         }

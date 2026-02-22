@@ -35,6 +35,7 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
     ICurveStableSwapNG public immutable lpPool;
     IChainlinkOracle public immutable crvUsdOracle;
     IChainlinkOracle public immutable usdtOracle;
+    IChainlinkOracle public immutable crvOracle;
     ICrvSwapper public immutable crvSwapper;
     address public immutable gauge;
 
@@ -71,6 +72,7 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
     /// @param _lpCrvUsdIndex crvUSD coin index in pmUSD/crvUSD pool
     /// @param _crvUsdOracle Chainlink crvUSD/USD oracle
     /// @param _usdtOracle Chainlink USDT/USD oracle
+    /// @param _crvOracle Chainlink CRV/USD oracle
     constructor(
         address _usdt,
         address _crvUsd,
@@ -85,13 +87,14 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         int128 _crvUsdIndex,
         int128 _lpCrvUsdIndex,
         address _crvUsdOracle,
-        address _usdtOracle
+        address _usdtOracle,
+        address _crvOracle
     ) BaseCurveRewardVaultStrategy(_usdt, _vault, _rewardVault) {
         if (_crvUsd == address(0) || _crv == address(0)) revert InvalidAddress();
         if (_usdtCrvUsdPool == address(0) || _lpPool == address(0)) revert InvalidAddress();
         if (_crvSwapper == address(0)) revert InvalidAddress();
         if (_gauge == address(0)) revert InvalidAddress();
-        if (_crvUsdOracle == address(0) || _usdtOracle == address(0)) revert InvalidAddress();
+        if (_crvUsdOracle == address(0) || _usdtOracle == address(0) || _crvOracle == address(0)) revert InvalidAddress();
 
         crvUSD = IERC20(_crvUsd);
         crv = IERC20(_crv);
@@ -104,6 +107,7 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         lpCrvUsdIndex = _lpCrvUsdIndex;
         crvUsdOracle = IChainlinkOracle(_crvUsdOracle);
         usdtOracle = IChainlinkOracle(_usdtOracle);
+        crvOracle = IChainlinkOracle(_crvOracle);
     }
 
     // ============ Admin ============
@@ -146,7 +150,22 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         address accountant = rewardVault.ACCOUNTANT();
         try IAccountant(accountant).getPendingRewards(address(rewardVault), address(this)) returns (uint256 pendingCrv)
         {
-            return pendingCrv / 2e12; // rough CRV->USDT view conversion
+            if (pendingCrv < 1) return 0;
+
+            // CRV (18 dec) -> USDT (6 dec) using CRV/USD and USDT/USD Chainlink oracles
+            (uint80 crvRoundId, int256 crvPrice,, uint256 crvUpdatedAt, uint80 crvAnswered) =
+                crvOracle.latestRoundData();
+            if (crvPrice <= 0 || crvAnswered < crvRoundId || block.timestamp - crvUpdatedAt > MAX_ORACLE_STALENESS) {
+                return pendingCrv / 2e12; // fallback: ~$0.50/CRV rough estimate
+            }
+
+            (uint80 usdtRoundId, int256 usdtPrice,, uint256 usdtUpdatedAt, uint80 usdtAnswered) =
+                usdtOracle.latestRoundData();
+            if (usdtPrice <= 0 || usdtAnswered < usdtRoundId || block.timestamp - usdtUpdatedAt > MAX_ORACLE_STALENESS) {
+                return pendingCrv / 2e12; // fallback: ~$0.50/CRV rough estimate
+            }
+
+            return (pendingCrv * uint256(crvPrice)) / (uint256(usdtPrice) * 1e12);
         } catch {
             return 0;
         }

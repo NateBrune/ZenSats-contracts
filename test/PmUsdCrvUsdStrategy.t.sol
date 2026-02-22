@@ -350,6 +350,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
     MockOracle debtOracle;
     MockOracle crvUsdOracle;
     MockOracle usdtOracle;
+    MockOracle crvOracle;
     MockCurveStableSwap usdtCrvUsdPool;
     MockCurveStableSwapNG lpPool;
     MockAccountant accountant;
@@ -380,6 +381,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
         debtOracle = new MockOracle(8, 1e8);
         crvUsdOracle = new MockOracle(8, 1e8); // crvUSD $1.00
         usdtOracle = new MockOracle(8, 1e8); // USDT $1.00
+        crvOracle = new MockOracle(8, 0.5e8); // CRV $0.50
 
         usdtCrvUsdPool = new MockCurveStableSwap(address(usdt), address(crvUSD), 0, 1);
         lpPool = new MockCurveStableSwapNG(address(crvUSD), 1);
@@ -425,7 +427,8 @@ contract PmUsdCrvUsdStrategyTest is Test {
             1, // crvUsdIndex
             1, // lpCrvUsdIndex (crvUSD at index 1 in pmUSD/crvUSD pool)
             address(crvUsdOracle),
-            address(usdtOracle)
+            address(usdtOracle),
+            address(crvOracle)
         );
 
         vault = new Zenji(
@@ -800,7 +803,8 @@ contract PmUsdCrvUsdStrategyTest is Test {
             1,
             1,
             address(crvUsdOracle),
-            address(usdtOracle)
+            address(usdtOracle),
+            address(crvOracle)
         );
     }
 
@@ -820,7 +824,8 @@ contract PmUsdCrvUsdStrategyTest is Test {
             1,
             1,
             address(crvUsdOracle),
-            address(usdtOracle)
+            address(usdtOracle),
+            address(crvOracle)
         );
     }
 
@@ -840,7 +845,8 @@ contract PmUsdCrvUsdStrategyTest is Test {
             1,
             1,
             address(crvUsdOracle),
-            address(usdtOracle)
+            address(usdtOracle),
+            address(crvOracle)
         );
     }
 
@@ -860,7 +866,8 @@ contract PmUsdCrvUsdStrategyTest is Test {
             1,
             1,
             address(crvUsdOracle),
-            address(usdtOracle)
+            address(usdtOracle),
+            address(crvOracle)
         );
     }
 
@@ -880,7 +887,8 @@ contract PmUsdCrvUsdStrategyTest is Test {
             1,
             1,
             address(crvUsdOracle),
-            address(usdtOracle)
+            address(usdtOracle),
+            address(crvOracle)
         );
     }
 
@@ -900,7 +908,8 @@ contract PmUsdCrvUsdStrategyTest is Test {
             1,
             1,
             address(crvUsdOracle),
-            address(usdtOracle)
+            address(usdtOracle),
+            address(crvOracle)
         );
     }
 
@@ -920,7 +929,8 @@ contract PmUsdCrvUsdStrategyTest is Test {
             1,
             1,
             address(0), // crvUsdOracle = 0
-            address(usdtOracle)
+            address(usdtOracle),
+            address(crvOracle)
         );
     }
 
@@ -940,7 +950,29 @@ contract PmUsdCrvUsdStrategyTest is Test {
             1,
             1,
             address(crvUsdOracle),
-            address(0) // usdtOracle = 0
+            address(0), // usdtOracle = 0
+            address(crvOracle)
+        );
+    }
+
+    function test_constructor_zeroCrvOracle_reverts() public {
+        vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
+        new PmUsdCrvUsdStrategy(
+            address(usdt),
+            address(crvUSD),
+            address(crv),
+            address(vault),
+            address(usdtCrvUsdPool),
+            address(lpPool),
+            address(rewardVault),
+            address(crvSwapper),
+            makeAddr("gauge"),
+            0,
+            1,
+            1,
+            address(crvUsdOracle),
+            address(usdtOracle),
+            address(0) // crvOracle = 0
         );
     }
 }
