@@ -10,6 +10,7 @@ import {IYieldStrategy} from "../src/interfaces/IYieldStrategy.sol";
 import {IAavePool} from "../src/interfaces/IAavePool.sol";
 import {IFlashLoanSimpleReceiver} from "../src/interfaces/IFlashLoanSimpleReceiver.sol";
 import {IERC20} from "../src/interfaces/IERC20.sol";
+import {CurveUsdtSwapLib} from "../src/libraries/CurveUsdtSwapLib.sol";
 import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20 as OZ_IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -567,21 +568,28 @@ contract PmUsdCrvUsdStrategyTest is Test {
         assertGt(balance, 0, "Balance should be > 0");
     }
 
-    function test_balanceOf_oracle_fallback_when_stale() public {
+    function test_balanceOf_reverts_when_oracle_stale() public {
         vm.prank(user);
         vault.deposit(1e8, user);
 
-        uint256 normalBalance = strategy.balanceOf();
-
-        // Make oracle stale (warp to a reasonable timestamp first)
+        // Make oracle stale
         vm.warp(block.timestamp + 100001);
         crvUsdOracle.setStale();
 
-        uint256 staleBalance = strategy.balanceOf();
-        // With 1:1 fallback, should still return something reasonable
-        assertGt(staleBalance, 0, "Stale fallback should still return value");
-        // Should be close to normal (since oracles were at $1 anyway)
-        assertApproxEqRel(staleBalance, normalBalance, 1e16, "Stale balance should be close to normal");
+        vm.expectRevert(CurveUsdtSwapLib.StaleOrInvalidOracle.selector);
+        strategy.balanceOf();
+    }
+
+    function test_setStrategySlippage_forwardedByOwner() public {
+        vm.prank(owner);
+        vault.setStrategySlippage(3e16);
+        assertEq(strategy.slippageTolerance(), 3e16);
+    }
+
+    function test_setStrategySlippage_reverts_nonOwner() public {
+        vm.prank(user);
+        vm.expectRevert(Zenji.Unauthorized.selector);
+        vault.setStrategySlippage(3e16);
     }
 
     function test_balanceOf_zero_when_empty() public view {

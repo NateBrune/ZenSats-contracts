@@ -11,6 +11,7 @@ library CurveUsdtSwapLib {
     uint256 internal constant PRECISION = 1e18;
 
     error ExchangeFailed();
+    error StaleOrInvalidOracle();
 
     /// @notice Swap USDT to crvUSD via Curve StableSwap
     function swapUsdtToCrvUsd(
@@ -70,7 +71,7 @@ library CurveUsdtSwapLib {
             crvUsdPrice <= 0 || crvAnswered < crvRoundId
                 || block.timestamp - crvUsdUpdatedAt > maxStaleness
         ) {
-            return crvUsdValue / 1e12; // fallback to 1:1
+            revert StaleOrInvalidOracle();
         }
 
         (uint80 usdtRoundId, int256 usdtPrice,, uint256 usdtUpdatedAt, uint80 usdtAnswered) =
@@ -79,7 +80,7 @@ library CurveUsdtSwapLib {
             usdtPrice <= 0 || usdtAnswered < usdtRoundId
                 || block.timestamp - usdtUpdatedAt > maxStaleness
         ) {
-            return crvUsdValue / 1e12; // fallback to 1:1
+            revert StaleOrInvalidOracle();
         }
 
         return (crvUsdValue * uint256(crvUsdPrice)) / (uint256(usdtPrice) * 1e12);

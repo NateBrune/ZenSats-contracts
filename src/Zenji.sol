@@ -13,6 +13,10 @@ import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
 import {ZenjiCoreLib} from "./libraries/ZenjiCoreLib.sol";
 import {ZenjiViewHelper} from "./ZenjiViewHelper.sol";
 
+interface IStrategySlippageConfig {
+    function setSlippage(uint256 newSlippage) external;
+}
+
 /// @title Zenji
 /// @notice ERC4626-compliant conservative collateral yield vault using loan managers and yield strategies
 /// @dev Deposits collateral to a loan manager, borrows debt asset, deposits to yield strategy
@@ -111,6 +115,7 @@ contract Zenji is ERC20, IERC4626 {
         uint256 effectiveTime
     );
     event SwapperChangeCancelled(address indexed cancelledSwapper);
+    event StrategySlippageUpdated(address indexed strategy, uint256 newSlippage);
 
     // Fee/LTV change events use ParamUpdated above
 
@@ -722,6 +727,12 @@ contract Zenji is ERC20, IERC4626 {
             emit ParamUpdated(p, rebalanceBountyRate, v);
             rebalanceBountyRate = v;
         }
+    }
+
+    /// @notice Forward slippage config updates to strategies that expose setSlippage(uint256)
+    function setStrategySlippage(uint256 newSlippage) external onlyOwner {
+        IStrategySlippageConfig(address(yieldStrategy)).setSlippage(newSlippage);
+        emit StrategySlippageUpdated(address(yieldStrategy), newSlippage);
     }
 
     // ============ View Functions ============

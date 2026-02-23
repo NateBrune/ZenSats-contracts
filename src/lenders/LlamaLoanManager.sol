@@ -35,7 +35,7 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     /// @notice Minimum collateral units for LlamaLend loans
     uint256 public constant MIN_COLLATERAL_UNITS = (((LLAMALEND_BANDS * 1000) * 105) / 100); // 4 bands * 1000 units + 5% buffer
 
-    /// @notice Minimum health factor required (1.0 = 1e18)
+    /// @notice Minimum LLAMMA health required (0.1 = 1e17; liquidation threshold is 0)
     int256 public constant MIN_HEALTH = 1e17;
 
     /// @notice Maximum acceptable collateral/USD oracle staleness (1 hour)
