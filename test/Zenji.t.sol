@@ -418,6 +418,7 @@ contract ZenjiTest is Test {
 
     function warpAndMock(uint256 t) internal {
         vm.warp(t);
+        vm.roll(block.number + 1);
         mockOracle(lastBtcPrice);
     }
 
@@ -560,6 +561,60 @@ contract ZenjiTest is Test {
         assertEq(vault.balanceOf(user1), 0, "Shares should be zero after full withdrawal");
         assertEq(vault.totalSupply(), 0, "Total shares should be zero");
         assertGt(wbtc.balanceOf(user1), balanceBefore, "User should have more WBTC");
+    }
+
+    function test_delay_depositThenWithdraw_sameSecondReverts() public {
+        vm.prank(user1);
+        uint256 shares = vault.deposit(1e8, user1);
+
+        vm.prank(user1);
+        vm.expectRevert(Zenji.ActionDelayActive.selector);
+        vault.withdraw(1e7, user1, user1);
+
+        warpAndMock(block.timestamp + 1);
+
+        vm.prank(user1);
+        uint256 out = vault.redeem(shares, user1, user1);
+        assertGt(out, 0, "redeem should succeed after 1-block delay");
+    }
+
+    function test_delay_withdrawThenDeposit_sameBlockAllowed() public {
+        vm.prank(user1);
+        uint256 shares = vault.deposit(1e8, user1);
+
+        warpAndMock(block.timestamp + 2);
+
+        vm.prank(user1);
+        uint256 out = vault.redeem(shares, user1, user1);
+        assertGt(out, 0, "redeem should succeed");
+
+        vm.prank(user1);
+        uint256 minted = vault.deposit(1e8, user1);
+        assertGt(minted, 0, "deposit should succeed in same block after withdraw");
+    }
+
+    function test_delay_shareTransferBypass_blocked() public {
+        vm.prank(user1);
+        uint256 shares = vault.deposit(1e8, user1);
+
+        vm.prank(user1);
+        vm.expectRevert(Zenji.ActionDelayActive.selector);
+        vault.transfer(user2, shares);
+
+        warpAndMock(block.timestamp + 1);
+
+        vm.prank(user1);
+        vault.transfer(user2, shares);
+
+        vm.prank(user2);
+        vm.expectRevert(Zenji.ActionDelayActive.selector);
+        vault.redeem(shares, user2, user2);
+
+        warpAndMock(block.timestamp + 1);
+
+        vm.prank(user2);
+        uint256 out = vault.redeem(shares, user2, user2);
+        assertGt(out, 0, "redeem should succeed after 1-block delay");
     }
 
     function test_withdraw_fullRedeem_clearsSubUnitDebtDust() public {
@@ -1008,6 +1063,8 @@ contract ZenjiTest is Test {
         brickedVault.emergencyStep(1);
         brickedVault.emergencyStep(2);
         vm.stopPrank();
+
+        vm.roll(block.number + 1);
 
         uint256 balanceBefore = wbtc.balanceOf(user1);
         vm.prank(user1);
@@ -3338,6 +3395,8 @@ contract ZenjiTest is Test {
         vm.prank(user1);
         vault.deposit(1e8, user1);
 
+        warpAndMock(block.timestamp + 1);
+
         uint256 shares = vault.balanceOf(user1);
 
         // Enter emergency and complete liquidation
@@ -3363,6 +3422,8 @@ contract ZenjiTest is Test {
         vm.prank(user1);
         vault.deposit(2e4, user1); // 2x MIN_DEPOSIT (1e4)
 
+        vm.roll(block.number + 1);
+
         uint256 shares = vault.balanceOf(user1);
         // Redeem almost all shares so leftover < MIN_DEPOSIT
         // This should trigger isFinalWithdraw
@@ -3385,6 +3446,8 @@ contract ZenjiTest is Test {
         // Attacker deposits enough that after withdrawing, victim's leftover < MIN_DEPOSIT
         vm.prank(user2);
         vault.deposit(1e5, user2); // attacker
+
+        vm.roll(block.number + 1);
 
         uint256 attackerShares = vault.balanceOf(user2);
         uint256 victimShares = vault.balanceOf(user1);
@@ -3450,6 +3513,8 @@ contract ZenjiTest is Test {
     function test_withdraw_emergencyMode_viaAllowance() public {
         vm.prank(user1);
         vault.deposit(1e8, user1);
+
+        warpAndMock(block.timestamp + 1);
 
         vm.startPrank(owner);
         vault.enterEmergencyMode();
@@ -3616,6 +3681,8 @@ contract ZenjiTest is Test {
         vm.prank(user1);
         vault.deposit(1e8, user1);
 
+        warpAndMock(block.timestamp + 1);
+
         uint256 shares = vault.balanceOf(user1);
 
         // user1 approves user2
@@ -3648,6 +3715,8 @@ contract ZenjiTest is Test {
         // When vault has enough collateral, no unwind needed
         vm.prank(user1);
         vault.deposit(1e8, user1);
+
+        warpAndMock(block.timestamp + 1);
 
         // Set idle to bring all collateral back to vault
         vm.prank(owner);

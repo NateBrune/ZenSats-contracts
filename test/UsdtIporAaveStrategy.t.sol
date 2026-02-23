@@ -301,6 +301,8 @@ contract UsdtIporAaveStrategyTest is Test {
         vm.prank(user);
         vault.deposit(1e8, user);
 
+        vm.roll(block.number + 1);
+
         uint256 shares = vault.balanceOf(user);
         vm.prank(user);
         vault.redeem(shares / 2, user, user);

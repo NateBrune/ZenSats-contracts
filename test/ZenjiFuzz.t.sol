@@ -390,6 +390,11 @@ contract ZenjiFuzzTest is Test {
     // 500% tolerance is generous but still catches isFinalWithdraw theft (>10,000%).
     uint256 constant TOLERANCE_BPS = 50000; // 500%
 
+    function _advance() internal {
+        skip(1);
+        vm.roll(block.number + 1);
+    }
+
     function setUp() public {
         wbtc = new FzWBTC();
         crvUSD = new FzCrvUSD();
@@ -460,7 +465,7 @@ contract ZenjiFuzzTest is Test {
 
         uint256 totalWithdrawn;
         for (uint256 i = 0; i < 4; i++) {
-            skip(1);
+            _advance();
             uint256 w = _fullRedeem(shuffled[i]);
             totalWithdrawn += w;
             // No actor should extract more than what the whole vault held —
@@ -509,26 +514,26 @@ contract ZenjiFuzzTest is Test {
         _deposit(actors[1], amounts[1]);
         totalDeposited += amounts[1];
 
-        skip(1);
+        _advance();
         totalWithdrawn[0] += _partialRedeem(actors[0], fracs[0]);
 
         _deposit(actors[2], amounts[2]);
         totalDeposited += amounts[2];
 
-        skip(1);
+        _advance();
         totalWithdrawn[1] += _partialRedeem(actors[1], fracs[1]);
 
         _deposit(actors[3], amounts[3]);
         totalDeposited += amounts[3];
 
-        skip(1);
+        _advance();
         totalWithdrawn[2] += _partialRedeem(actors[2], fracs[2]);
 
-        skip(1);
+        _advance();
         totalWithdrawn[3] += _partialRedeem(actors[3], fracs[3]);
 
         // Final full withdrawal for all
-        skip(1);
+        _advance();
         for (uint256 i = 0; i < 4; i++) {
             totalWithdrawn[i] += _fullRedeem(actors[i]);
         }
@@ -574,7 +579,7 @@ contract ZenjiFuzzTest is Test {
 
         // 4 rounds of partial redemption
         for (uint256 round = 0; round < 4; round++) {
-            skip(1);
+            _advance();
             uint256 shares = vault.balanceOf(actor);
             if (shares == 0) break;
 
@@ -588,7 +593,7 @@ contract ZenjiFuzzTest is Test {
         }
 
         // Final: redeem all remaining shares
-        skip(1);
+        _advance();
         totalOut += _fullRedeem(actor);
 
         assertLe(
@@ -624,15 +629,15 @@ contract ZenjiFuzzTest is Test {
         }
 
         // actors[0..2] all withdraw, leaving actors[3] as the sole shareholder
-        skip(1);
+        _advance();
         _fullRedeem(actors[0]);
-        skip(1);
+        _advance();
         _fullRedeem(actors[1]);
-        skip(1);
+        _advance();
         _fullRedeem(actors[2]);
 
         // actors[3] is the last to withdraw — must trigger isFinalWithdraw
-        skip(1);
+        _advance();
         uint256 lastOut = _fullRedeem(actors[3]);
 
         // Vault must be fully empty after the last withdrawal
@@ -678,10 +683,10 @@ contract ZenjiFuzzTest is Test {
         }
 
         // Both withdraw — A first, then B
-        skip(1);
+        _advance();
         uint256 outA = _fullRedeem(A);
 
-        skip(1);
+        _advance();
         uint256 outB = _fullRedeem(B);
 
         // Neither actor should extract more than the whole vault held

@@ -132,6 +132,7 @@ contract WbtcAaveExtensive is Test {
         wbtc.approve(address(vault), amount);
         shares = vault.deposit(amount, user);
         vm.stopPrank();
+        vm.roll(block.number + 1);
     }
 
     function _redeemAllAs(address user) internal returns (uint256 collateral) {
@@ -148,6 +149,7 @@ contract WbtcAaveExtensive is Test {
 
     function _refreshOracles() internal {
         vm.warp(block.timestamp + 2);
+        vm.roll(block.number + 1);
         _mockOracle(BTC_USD_ORACLE);
         _mockOracle(USDT_USD_ORACLE);
         _mockOracle(CRVUSD_USD_ORACLE);

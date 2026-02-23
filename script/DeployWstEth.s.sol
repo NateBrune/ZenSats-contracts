@@ -6,6 +6,7 @@ import "forge-std/console2.sol";
 
 import {ZenjiViewHelper} from "../src/ZenjiViewHelper.sol";
 import {VaultTracker} from "../src/VaultTracker.sol";
+// import {ZenjiRebalanceKeeper} from "../src/keepers/ZenjiRebalanceKeeper.sol";
 import {WstEthOracle} from "../src/WstEthOracle.sol";
 import {UniswapV3TwoHopSwapper} from "../src/swappers/base/UniswapV3TwoHopSwapper.sol";
 import {AaveLoanManager} from "../src/lenders/AaveLoanManager.sol";
@@ -103,6 +104,9 @@ contract DeployWstEth is Script {
 
         VaultTracker vaultTracker = new VaultTracker(address(vault));
 
+        // Optional: deploy Chainlink Automation receiver for rebalancing.
+        // ZenjiRebalanceKeeper rebalanceKeeper = new ZenjiRebalanceKeeper(address(vault), owner);
+
         vm.stopBroadcast();
 
         console2.log("ViewHelper", address(viewHelper));
@@ -112,6 +116,7 @@ contract DeployWstEth is Script {
         console2.log("Strategy", address(strategy));
         console2.log("Vault", address(vault));
         console2.log("VaultTracker", address(vaultTracker));
+        // console2.log("RebalanceKeeper", address(rebalanceKeeper));
     }
 
     function _envOrAddress(string memory key, address defaultValue) internal view returns (address) {

@@ -31,6 +31,7 @@ contract Zenji is ERC20, IERC4626 {
     uint256 internal constant MIN_DEPOSIT = 1e4;
     uint256 internal constant MAX_FEE_RATE = 2e17; // 20%
     uint256 public constant VIRTUAL_SHARE_OFFSET = 1e5;
+    uint256 public constant COOLDOWN_BLOCKS = 1;
     uint256 internal constant MAX_REBALANCE_BOUNTY = 2e17; // 20%
     uint256 internal constant TIMELOCK_DELAY = 2 days;
     uint256 internal constant MIN_SWAP_OUT_BPS = 9500; // 95%
@@ -64,6 +65,10 @@ contract Zenji is ERC20, IERC4626 {
     address public pendingGov;
     uint256 public rebalanceBountyRate;
     uint256 public depositCap;
+    // Tracks the last block where an address received shares (mint or transfer).
+    // Caveat: because any incoming share transfer updates this value, a third party can
+    // send dust shares and force a 1-block cooldown on the recipient (dust-grief vector).
+    mapping(address => uint256) public lastInBlock;
 
     // Yield strategy
     IYieldStrategy public immutable yieldStrategy;
@@ -165,6 +170,7 @@ contract Zenji is ERC20, IERC4626 {
     error InsufficientDeposit();
     error EmergencyStepsIncomplete();
     error InvalidEmergencyStep();
+    error ActionDelayActive();
 
     // ============ Modifiers ============
 
@@ -828,11 +834,21 @@ contract Zenji is ERC20, IERC4626 {
     ) internal returns (uint256 collateralAmount, uint256 actualShareAmount) {
         if (shareAmount < 1) revert ZeroAmount();
         if (balanceOf(owner_) < shareAmount) revert InsufficientShares();
+        if (_cooling(owner_)) {
+            revert ActionDelayActive();
+        }
         if (emergencyMode) {
-            return _redeemEmergency(shareAmount, receiver, owner_);
+            (collateralAmount, actualShareAmount) = _redeemEmergency(shareAmount, receiver, owner_);
+            return (collateralAmount, actualShareAmount);
         }
 
-        return _redeemStandard(shareAmount, receiver, owner_);
+        (collateralAmount, actualShareAmount) = _redeemStandard(shareAmount, receiver, owner_);
+        return (collateralAmount, actualShareAmount);
+    }
+
+    function _cooling(address a) internal view returns (bool) {
+        uint256 b = lastInBlock[a];
+        return b != 0 && block.number <= b + COOLDOWN_BLOCKS - 1;
     }
 
     function _redeemEmergency(
@@ -1079,6 +1095,20 @@ contract Zenji is ERC20, IERC4626 {
                 debtAsset.safeTransfer(address(loanManager), repayAmount);
                 loanManager.repayDebt(repayAmount);
             }
+        }
+    }
+
+    // Cooldown is enforced at transfer time to block same-block transfer->redeem bypasses.
+    // Caveat: any third party can send dust shares to an address and set its cooldown for
+    // the current block (dust-grief). Keep COOLDOWN_BLOCKS minimal (1 block) and prefer
+    // private orderflow for sensitive exits.
+    function _update(address from, address to, uint256 value) internal override {
+        if (from != address(0) && value > 0 && _cooling(from)) revert ActionDelayActive();
+
+        super._update(from, to, value);
+
+        if (to != address(0) && value > 0) {
+            lastInBlock[to] = block.number;
         }
     }
 

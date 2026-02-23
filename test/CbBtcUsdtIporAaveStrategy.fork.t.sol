@@ -175,6 +175,7 @@ contract CbBtcUsdtIporAaveStrategyForkTest is Test {
 
         uint256 shares = vault.balanceOf(user);
         vm.warp(block.timestamp + 2);
+        vm.roll(block.number + 1);
         _mockOracles(50000e8, 1e8);
 
         vm.prank(user);
@@ -190,6 +191,7 @@ contract CbBtcUsdtIporAaveStrategyForkTest is Test {
         uint256 remainingShares = vault.balanceOf(user);
         uint256 balanceBefore = cbbtc.balanceOf(user);
         vm.warp(block.timestamp + 2);
+        vm.roll(block.number + 1);
         _mockOracles(50000e8, 1e8);
 
         vm.prank(user);
