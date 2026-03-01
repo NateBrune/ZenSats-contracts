@@ -5,6 +5,7 @@ import { IERC20 } from "../../interfaces/IERC20.sol";
 import { ISwapper } from "../../interfaces/ISwapper.sol";
 import { ISwapRouter } from "../../interfaces/ISwapRouter.sol";
 import { IChainlinkOracle } from "../../interfaces/IChainlinkOracle.sol";
+import { OracleLib } from "../../libraries/OracleLib.sol";
 import { SafeTransferLib } from "../../libraries/SafeTransferLib.sol";
 import { BaseSwapper } from "./BaseSwapper.sol";
 
@@ -21,6 +22,9 @@ contract UniswapV3TwoHopSwapper is BaseSwapper, ISwapper {
     uint24 public immutable fee2; // WETH <-> debt fee
     IChainlinkOracle public immutable collateralOracle;
     IChainlinkOracle public immutable debtOracle;
+
+    uint256 public constant MAX_COLLATERAL_ORACLE_STALENESS = 3600;
+    uint256 public constant MAX_DEBT_ORACLE_STALENESS = 90000;
 
     constructor(
         address _gov,
@@ -53,22 +57,15 @@ contract UniswapV3TwoHopSwapper is BaseSwapper, ISwapper {
     /// @inheritdoc ISwapper
     function quoteCollateralForDebt(uint256 debtAmount) external view returns (uint256) {
         if (debtAmount == 0) return 0;
-        // Use Chainlink oracles for view-compatible quoting
-        (, int256 collateralPrice,,,) = collateralOracle.latestRoundData();
-        (, int256 debtPrice,,,) = debtOracle.latestRoundData();
-        if (collateralPrice <= 0 || debtPrice <= 0) return 0;
-
-        uint8 collateralOracleDecimals = collateralOracle.decimals();
-        uint8 debtOracleDecimals = debtOracle.decimals();
-        uint8 collateralDecimals = collateralToken.decimals();
-        uint8 debtDecimals = debtToken.decimals();
-
-        // Convert debtAmount to collateral units using oracle prices
-        uint256 collateralOut = (
-            debtAmount * uint256(debtPrice) * (10 ** collateralOracleDecimals)
-                * (10 ** collateralDecimals)
-        ) / (uint256(collateralPrice) * (10 ** debtOracleDecimals) * (10 ** debtDecimals));
-
+        uint256 collateralOut = OracleLib.getDebtValue(
+            debtAmount,
+            collateralOracle,
+            MAX_COLLATERAL_ORACLE_STALENESS,
+            debtOracle,
+            MAX_DEBT_ORACLE_STALENESS,
+            collateralToken,
+            debtToken
+        );
         if (collateralOut == 0) return 0;
         // Add slippage buffer
         return (collateralOut * PRECISION) / (PRECISION - slippage) + 1;
@@ -79,7 +76,15 @@ contract UniswapV3TwoHopSwapper is BaseSwapper, ISwapper {
         if (collateralAmount == 0) return 0;
 
         // Get oracle-based expected output for slippage calculation
-        uint256 expectedOut = _getExpectedDebtOut(collateralAmount);
+        uint256 expectedOut = OracleLib.getCollateralValue(
+            collateralAmount,
+            collateralOracle,
+            MAX_COLLATERAL_ORACLE_STALENESS,
+            debtOracle,
+            MAX_DEBT_ORACLE_STALENESS,
+            collateralToken,
+            debtToken
+        );
         uint256 minOut = (expectedOut * (PRECISION - slippage)) / PRECISION;
 
         // Encode path: collateral -> WETH -> debt
@@ -110,7 +115,15 @@ contract UniswapV3TwoHopSwapper is BaseSwapper, ISwapper {
         if (debtAmount == 0) return 0;
 
         // Get oracle-based expected output for slippage calculation
-        uint256 expectedOut = _getExpectedCollateralOut(debtAmount);
+        uint256 expectedOut = OracleLib.getDebtValue(
+            debtAmount,
+            collateralOracle,
+            MAX_COLLATERAL_ORACLE_STALENESS,
+            debtOracle,
+            MAX_DEBT_ORACLE_STALENESS,
+            collateralToken,
+            debtToken
+        );
         uint256 minOut = (expectedOut * (PRECISION - slippage)) / PRECISION;
 
         // Encode path: debt -> WETH -> collateral
@@ -137,38 +150,6 @@ contract UniswapV3TwoHopSwapper is BaseSwapper, ISwapper {
     }
 
     // ============ Internal Helpers ============
-
-    function _getExpectedDebtOut(uint256 collateralAmount) internal view returns (uint256) {
-        (, int256 collateralPrice,,,) = collateralOracle.latestRoundData();
-        (, int256 debtPrice,,,) = debtOracle.latestRoundData();
-        if (collateralPrice <= 0 || debtPrice <= 0) return 0;
-
-        uint8 collateralOracleDecimals = collateralOracle.decimals();
-        uint8 debtOracleDecimals = debtOracle.decimals();
-        uint8 collateralDecimals = collateralToken.decimals();
-        uint8 debtDecimals = debtToken.decimals();
-
-        return (
-            collateralAmount * uint256(collateralPrice) * (10 ** debtDecimals)
-                * (10 ** debtOracleDecimals)
-        ) / (uint256(debtPrice) * (10 ** collateralOracleDecimals) * (10 ** collateralDecimals));
-    }
-
-    function _getExpectedCollateralOut(uint256 debtAmount) internal view returns (uint256) {
-        (, int256 collateralPrice,,,) = collateralOracle.latestRoundData();
-        (, int256 debtPrice,,,) = debtOracle.latestRoundData();
-        if (collateralPrice <= 0 || debtPrice <= 0) return 0;
-
-        uint8 collateralOracleDecimals = collateralOracle.decimals();
-        uint8 debtOracleDecimals = debtOracle.decimals();
-        uint8 collateralDecimals = collateralToken.decimals();
-        uint8 debtDecimals = debtToken.decimals();
-
-        return (
-            debtAmount * uint256(debtPrice) * (10 ** collateralOracleDecimals)
-                * (10 ** collateralDecimals)
-        ) / (uint256(collateralPrice) * (10 ** debtOracleDecimals) * (10 ** debtDecimals));
-    }
 
     function _safeTransferDebt(address to, uint256 amount) private {
         (bool ok, bytes memory data) =

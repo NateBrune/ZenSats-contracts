@@ -112,7 +112,7 @@ contract WbtcAaveExtensive is Test {
         uint256 startNonce = vm.getNonce(address(this));
         address expectedVaultAddress = computeCreateAddress(address(this), startNonce + 3);
 
-        swapper = new CurveThreeCryptoSwapper(owner, WBTC, USDT, TRICRYPTO_POOL, 1, 0);
+        swapper = new CurveThreeCryptoSwapper(owner, WBTC, USDT, TRICRYPTO_POOL, 1, 0, BTC_USD_ORACLE, USDT_USD_ORACLE);
 
         strategy = new UsdtIporYieldStrategy(
             USDT, CRVUSD, expectedVaultAddress, USDT_CRVUSD_POOL, IPOR_PLASMA_VAULT, 0, 1, CRVUSD_USD_ORACLE, USDT_USD_ORACLE
@@ -556,7 +556,7 @@ contract WbtcAaveExtensive is Test {
         _depositAs(user1, 1e8);
 
         // Deploy a second swapper as the "new" one
-        CurveThreeCryptoSwapper newSwapper = new CurveThreeCryptoSwapper(owner, WBTC, USDT, TRICRYPTO_POOL, 1, 0);
+        CurveThreeCryptoSwapper newSwapper = new CurveThreeCryptoSwapper(owner, WBTC, USDT, TRICRYPTO_POOL, 1, 0, BTC_USD_ORACLE, USDT_USD_ORACLE);
 
         // Propose
         vm.prank(vault.gov());
@@ -568,7 +568,7 @@ contract WbtcAaveExtensive is Test {
         vault.executeSwapper();
 
         // Wait for timelock
-        vm.warp(block.timestamp + 2 days + 1);
+        vm.warp(block.timestamp + 1 weeks + 1);
         _syncAndMockOracles();
 
         // Execute
@@ -577,7 +577,7 @@ contract WbtcAaveExtensive is Test {
         assertEq(address(vault.swapper()), address(newSwapper), "Swapper should be updated");
 
         // Test cancel flow: propose another, then cancel
-        CurveThreeCryptoSwapper anotherSwapper = new CurveThreeCryptoSwapper(owner, WBTC, USDT, TRICRYPTO_POOL, 1, 0);
+        CurveThreeCryptoSwapper anotherSwapper = new CurveThreeCryptoSwapper(owner, WBTC, USDT, TRICRYPTO_POOL, 1, 0, BTC_USD_ORACLE, USDT_USD_ORACLE);
         vm.prank(vault.gov());
         vault.proposeSwapper(address(anotherSwapper));
 
@@ -593,7 +593,7 @@ contract WbtcAaveExtensive is Test {
     function test_slippageTimelock() public {
         _deployVault();
 
-        assertEq(swapper.slippage(), 5e16, "Initial slippage should be 5%");
+        assertEq(swapper.slippage(), 1e16, "Initial slippage should be 1%");
 
         vm.prank(owner);
         swapper.proposeSlippage(10e16); // 10%
@@ -604,7 +604,7 @@ contract WbtcAaveExtensive is Test {
         swapper.executeSlippage();
 
         // After delay
-        vm.warp(block.timestamp + 2 days + 1);
+        vm.warp(block.timestamp + 1 weeks + 1);
         _syncAndMockOracles();
 
         vm.prank(owner);
@@ -669,14 +669,14 @@ contract WbtcAaveExtensive is Test {
         vault.setParam(1, 15e16); // MIN_TARGET_LTV = 15%
         assertEq(vault.targetLtv(), 15e16, "Should accept min LTV");
 
-        vault.setParam(1, 73e16); // MAX_TARGET_LTV = 73%
-        assertEq(vault.targetLtv(), 73e16, "Should accept max LTV");
+        vault.setParam(1, 65e16); // MAX_TARGET_LTV = 65%
+        assertEq(vault.targetLtv(), 65e16, "Should accept max LTV");
 
         vm.expectRevert(Zenji.InvalidTargetLtv.selector);
         vault.setParam(1, 15e16 - 1); // Below min
 
         vm.expectRevert(Zenji.InvalidTargetLtv.selector);
-        vault.setParam(1, 73e16 + 1); // Above max
+        vault.setParam(1, 65e16 + 1); // Above max
 
         // feeRate boundary
         vault.setParam(0, 2e17); // MAX_FEE_RATE = 20%
@@ -686,11 +686,11 @@ contract WbtcAaveExtensive is Test {
         vault.setParam(0, 2e17 + 1);
 
         // bountyRate boundary
-        vault.setParam(3, 2e17); // MAX_REBALANCE_BOUNTY = 20%
-        assertEq(vault.rebalanceBountyRate(), 2e17, "Should accept max bounty");
+        vault.setParam(3, 5e17); // MAX_REBALANCE_BOUNTY = 50%
+        assertEq(vault.rebalanceBountyRate(), 5e17, "Should accept max bounty");
 
         vm.expectRevert(Zenji.InvalidBountyRate.selector);
-        vault.setParam(3, 2e17 + 1);
+        vault.setParam(3, 5e17 + 1);
 
         // depositCap (no limits)
         vault.setParam(2, 0); // Unlimited

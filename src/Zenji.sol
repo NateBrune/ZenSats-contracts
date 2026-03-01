@@ -30,15 +30,15 @@ contract Zenji is ERC20, IERC4626 {
     uint256 public constant PRECISION = 1e18;
     uint256 public constant DEADBAND_SPREAD = 3e16; // 3%
     uint256 internal constant MIN_TARGET_LTV = 15e16; // 15%
-    uint256 internal constant MAX_TARGET_LTV = 73e16; // 73%
+    uint256 internal constant MAX_TARGET_LTV = 65e16; // 65%
     uint256 internal constant DEFAULT_LOAN_BANDS = 4;
     uint256 internal constant MIN_DEPOSIT = 1e4;
     uint256 internal constant MAX_FEE_RATE = 2e17; // 20%
     uint256 public constant VIRTUAL_SHARE_OFFSET = 1e5;
     uint256 public constant COOLDOWN_BLOCKS = 1;
-    uint256 internal constant MAX_REBALANCE_BOUNTY = 2e17; // 20%
-    uint256 internal constant TIMELOCK_DELAY = 2 days;
-    uint256 internal constant MIN_SWAP_OUT_BPS = 9500; // 95%
+    uint256 internal constant MAX_REBALANCE_BOUNTY = 5e17; // 50%
+    uint256 internal constant TIMELOCK_DELAY = 1 weeks;
+    uint256 public constant MAX_VAULT_SLIPPAGE = 1e17; // 10% cap
 
     // ============ Immutables ============
 
@@ -69,6 +69,8 @@ contract Zenji is ERC20, IERC4626 {
     address public pendingGov;
     uint256 public rebalanceBountyRate;
     uint256 public depositCap;
+    uint256 public maxSlippage;
+    uint256 public feesAtLastRebalance;
     // Tracks the last block where an address received shares (mint or transfer).
     // Caveat: because any incoming share transfer updates this value, a third party can
     // send dust shares and force a 1-block cooldown on the recipient (dust-grief vector).
@@ -173,8 +175,10 @@ contract Zenji is ERC20, IERC4626 {
     error LiquidationAlreadyComplete();
     error InsufficientCollateral();
     error InsufficientDeposit();
+    error InsufficientWithdrawal();
     error EmergencyStepsIncomplete();
     error InvalidEmergencyStep();
+    error InvalidSlippage();
     error ActionDelayActive();
 
     // ============ Modifiers ============
@@ -252,6 +256,7 @@ contract Zenji is ERC20, IERC4626 {
         // Vault can handle about 25% price move in testing without rebalancing.
         rebalanceBountyRate = 2e17; // 20% default rebalance bounty
         feeRate = 0; // Default fee rate disabled
+        maxSlippage = 1e16; // 1% default vault slippage
         _status = _NOT_ENTERED;
 
         // Loan manager is provided externally and immutable for this vault
@@ -377,6 +382,7 @@ contract Zenji is ERC20, IERC4626 {
         uint256 assets,
         address receiver
     ) external override nonReentrant returns (uint256 sharesMinted) {
+        _accrueYieldFees();
         sharesMinted = _calculateSharesForDeposit(assets);
         _deposit(assets, sharesMinted, receiver);
     }
@@ -387,6 +393,7 @@ contract Zenji is ERC20, IERC4626 {
         address receiver
     ) external override nonReentrant returns (uint256 assets) {
         if (shareAmount == 0) revert ZeroAmount();
+        _accrueYieldFees();
         assets = _convertToAssetsRoundUp(shareAmount);
         _deposit(assets, shareAmount, receiver);
     }
@@ -410,6 +417,8 @@ contract Zenji is ERC20, IERC4626 {
                 (assets * totalSupply() + availableCollateral - 1) /
                 availableCollateral;
         } else {
+            // Accrue fees before pricing to prevent fee bypass
+            _accrueYieldFees();
             // Calculate shares to burn (round up)
             uint256 totalCollateral = getTotalCollateral();
             uint256 supply = totalSupply();
@@ -500,15 +509,19 @@ contract Zenji is ERC20, IERC4626 {
         // (must happen before deposit to avoid IPOR lock conflict)
         _accrueYieldFees();
 
-        (accumulatedFees, lastStrategyBalance) = ZenjiCoreLib.processRebalanceBounty(
+        uint256 bountyPaid;
+        (feesAtLastRebalance, lastStrategyBalance, bountyPaid) = ZenjiCoreLib.processRebalanceBounty(
             yieldStrategy,
             debtAsset,
             accumulatedFees,
+            feesAtLastRebalance,
             rebalanceBountyRate,
             PRECISION,
-            msg.sender,
-            owner
+            msg.sender
         );
+        if (bountyPaid > 0) {
+            accumulatedFees -= bountyPaid;
+        }
 
         uint256 newLtv = 0;
         bool increased = false;
@@ -645,6 +658,7 @@ contract Zenji is ERC20, IERC4626 {
 
         (accumulatedFees, lastStrategyBalance) =
             ZenjiCoreLib.processWithdrawFees(recipient, yieldStrategy, debtAsset, accumulatedFees);
+        feesAtLastRebalance = accumulatedFees;
     }
 
     // ============ Emergency Functions ============
@@ -658,7 +672,7 @@ contract Zenji is ERC20, IERC4626 {
     }
 
     /// @notice Emergency step: 0=withdrawYield, 1=unwindLoan, 2=completeLiquidation
-    function emergencyStep(uint8 step) external onlyOwner {
+    function emergencyStep(uint8 step) external nonReentrant onlyOwner {
         if (!emergencyMode) revert EmergencyModeNotActive();
         if (liquidationComplete) revert LiquidationAlreadyComplete();
         // Step 2: requires both prior steps to be resolved (run or explicitly skipped)
@@ -672,7 +686,10 @@ contract Zenji is ERC20, IERC4626 {
         accumulatedFees = newFees;
         if (setLiq) liquidationComplete = true;
 
-        if (step == 0) emergencyStepsCompleted |= 0x1;
+        if (step == 0) {
+            feesAtLastRebalance = 0;
+            emergencyStepsCompleted |= 0x1;
+        }
         else if (step == 1) emergencyStepsCompleted |= 0x2;
     }
 
@@ -681,7 +698,7 @@ contract Zenji is ERC20, IERC4626 {
     /// Owner accepts that funds in the bricked component may be unrecoverable.
     /// After skipping step 1 (loan unwind), users can only redeem collateral already in the vault.
     /// @param step 0 (skip yield withdraw) or 1 (skip loan unwind)
-    function emergencySkipStep(uint8 step) external onlyOwner {
+    function emergencySkipStep(uint8 step) external nonReentrant onlyOwner {
         if (!emergencyMode) revert EmergencyModeNotActive();
         if (liquidationComplete) revert LiquidationAlreadyComplete();
         if (step > 1) revert InvalidEmergencyStep();
@@ -699,7 +716,7 @@ contract Zenji is ERC20, IERC4626 {
     // ============ Emergency Rescue (Fallback) ============
 
     /// @notice Emergency rescue: 0=transferCollateral, 1=transferDebt, 2=redeemYield
-    function emergencyRescue(uint8 action) external onlyOwner {
+    function emergencyRescue(uint8 action) external nonReentrant onlyOwner {
         if (!emergencyMode) revert EmergencyModeNotActive();
         lastStrategyBalance = ZenjiCoreLib.executeEmergencyRescue(
             action, collateralAsset, debtAsset, loanManager, yieldStrategy, swapper, lastStrategyBalance
@@ -708,7 +725,7 @@ contract Zenji is ERC20, IERC4626 {
 
     // ============ Instant Parameter Setters ============
 
-    /// @notice Set vault parameter: 0=feeRate, 1=targetLtv, 2=depositCap, 3=bountyRate
+    /// @notice Set vault parameter: 0=feeRate, 1=targetLtv, 2=depositCap, 3=bountyRate, 4=maxSlippage
     function setParam(uint8 p, uint256 v) external onlyOwner {
         if (p == 0) {
             if (v > MAX_FEE_RATE) revert InvalidFeeRate();
@@ -726,6 +743,10 @@ contract Zenji is ERC20, IERC4626 {
             if (v > MAX_REBALANCE_BOUNTY) revert InvalidBountyRate();
             emit ParamUpdated(p, rebalanceBountyRate, v);
             rebalanceBountyRate = v;
+        } else if (p == 4) {
+            if (v == 0 || v > MAX_VAULT_SLIPPAGE) revert InvalidSlippage();
+            emit ParamUpdated(p, maxSlippage, v);
+            maxSlippage = v;
         }
     }
 
@@ -751,16 +772,6 @@ contract Zenji is ERC20, IERC4626 {
 
     // ============ Internal Functions ============
 
-    /// @notice Recover all collateral and debt assets from the loan manager
-    function _recoverLoanManagerFunds() internal {
-        uint256 lmCollateral = loanManager.getCollateralBalance();
-        if (lmCollateral > 0) {
-            loanManager.transferCollateral(address(this), lmCollateral);
-        }
-        uint256 lmDebt = loanManager.getDebtBalance();
-        if (lmDebt > 0) loanManager.transferDebt(address(this), lmDebt);
-    }
-
     /// @notice Swap debt asset in the vault to collateral using swapper (if set)
     /// @param force If true, swap any positive debt balance (used on full unwind/final exits)
     function _swapRemainingDebtToCollateral(bool force) internal {
@@ -775,13 +786,12 @@ contract Zenji is ERC20, IERC4626 {
         uint256 collateralBefore = collateralAsset.balanceOf(address(this));
         debtAsset.safeTransfer(address(swapper), debtBal);
         swapper.swapDebtForCollateral(debtBal);
-        // Best-effort surplus conversion: accept any positive return.
-        // The strict 95% check is intentionally omitted here — this path converts
-        // the carry-profit/buffer remainder, not primary user liquidity, so execution
-        // price may diverge from oracle for small amounts without it being a failure.
         uint256 collateralAfter = collateralAsset.balanceOf(address(this));
-        if (!allowZeroOut && collateralAfter <= collateralBefore) {
-            revert SwapperUnderperformed(0, 0);
+        uint256 collateralReceived = collateralAfter - collateralBefore;
+        if (!allowZeroOut) {
+            uint256 oracleExpected = loanManager.getDebtValue(debtBal);
+            uint256 minOut = (oracleExpected * (PRECISION - maxSlippage)) / PRECISION;
+            if (collateralReceived < minOut) revert SwapperUnderperformed(minOut, collateralReceived);
         }
     }
 
@@ -901,6 +911,9 @@ contract Zenji is ERC20, IERC4626 {
         address receiver,
         address owner_
     ) internal returns (uint256 collateralAmount, uint256 actualShareAmount) {
+        // Accrue fees before pricing to prevent fee bypass on redemption
+        _accrueYieldFees();
+
         // Detect final withdrawal: only when this redemption burns every real share
         // (totalSupply == shareAmount means the redeemer holds all shares, none remain for
         // other users). Using a threshold like <= VIRTUAL_SHARE_OFFSET is exploitable —
@@ -982,6 +995,9 @@ contract Zenji is ERC20, IERC4626 {
         if (accumulatedFees > currentBalance) {
             accumulatedFees = currentBalance;
         }
+        if (feesAtLastRebalance > accumulatedFees) {
+            feesAtLastRebalance = accumulatedFees;
+        }
     }
 
     /// @notice Deploy debt asset to yield strategy
@@ -999,7 +1015,7 @@ contract Zenji is ERC20, IERC4626 {
         yieldStrategy.deposit(debtAmount);
         uint256 balAfter = yieldStrategy.balanceOf();
         uint256 deposited = balAfter > balBefore ? balAfter - balBefore : 0;
-        if (deposited < (debtAmount * 98) / 100) revert InsufficientDeposit();
+        if (deposited < (debtAmount * (PRECISION - maxSlippage)) / PRECISION) revert InsufficientDeposit();
         emit StrategyDeposit(address(yieldStrategy), debtAmount, deposited);
         lastStrategyBalance = balAfter;
     }
@@ -1020,6 +1036,8 @@ contract Zenji is ERC20, IERC4626 {
         uint256 received = 0;
         if (toWithdraw > 0) {
             received = yieldStrategy.withdraw(toWithdraw);
+            uint256 minReceived = (toWithdraw * (PRECISION - maxSlippage)) / PRECISION;
+            if (received < minReceived) revert InsufficientWithdrawal();
         }
         lastStrategyBalance = yieldStrategy.balanceOf();
         return received;

@@ -199,75 +199,45 @@ library ZenjiCoreLib {
     }
 
     /// @notice Process rebalance keeper bounty payment
-    /// @return newAccumulatedFees Updated accumulatedFees value
+    /// @dev Keeper gets bountyRate% of fees accrued since last rebalance. Admin fees stay in strategy.
+    /// @return newFeesAtLastRebalance Updated feesAtLastRebalance value
     /// @return newLastStrategyBalance Updated lastStrategyBalance value
+    /// @return bountyPaid Actual bounty amount withdrawn and paid to keeper (must be deducted from accumulatedFees)
     function processRebalanceBounty(
         IYieldStrategy yieldStrategy,
         IERC20 debtAsset,
         uint256 accumulatedFees,
+        uint256 feesAtLastRebalance,
         uint256 rebalanceBountyRate,
         uint256 precision,
-        address keeper,
-        address owner
+        address keeper
     )
         external
-        returns (uint256 newAccumulatedFees, uint256 newLastStrategyBalance)
+        returns (uint256 newFeesAtLastRebalance, uint256 newLastStrategyBalance, uint256 bountyPaid)
     {
-        newAccumulatedFees = accumulatedFees;
+        newFeesAtLastRebalance = feesAtLastRebalance;
 
-        if (rebalanceBountyRate > 0 && accumulatedFees > 0) {
-            uint256 bounty = (accumulatedFees * rebalanceBountyRate) / precision;
-            uint256 withdrawn = _withdrawForBounty(yieldStrategy, accumulatedFees);
-            if (withdrawn > 0) {
-                _distributeBountyAndFees(
-                    debtAsset,
-                    keeper,
-                    owner,
-                    bounty,
-                    withdrawn
-                );
-                newAccumulatedFees = accumulatedFees > withdrawn
-                    ? accumulatedFees - withdrawn
-                    : 0;
+        if (rebalanceBountyRate > 0 && accumulatedFees > feesAtLastRebalance) {
+            uint256 feesSinceLastRebalance = accumulatedFees - feesAtLastRebalance;
+            uint256 bounty = (feesSinceLastRebalance * rebalanceBountyRate) / precision;
+
+            if (bounty > 0) {
+                uint256 strategyBalance = yieldStrategy.balanceOf();
+                uint256 toWithdraw = bounty > strategyBalance ? strategyBalance : bounty;
+                if (toWithdraw > 0) {
+                    uint256 withdrawn = yieldStrategy.withdraw(toWithdraw);
+                    bountyPaid = withdrawn > bounty ? bounty : withdrawn;
+                    if (bountyPaid > 0) {
+                        debtAsset.safeTransfer(keeper, bountyPaid);
+                        emit RebalanceBountyPaid(keeper, bountyPaid);
+                    }
+                }
             }
+
+            newFeesAtLastRebalance = accumulatedFees;
         }
 
         newLastStrategyBalance = yieldStrategy.balanceOf();
-    }
-
-    function _withdrawForBounty(
-        IYieldStrategy yieldStrategy,
-        uint256 accumulatedFees
-    ) private returns (uint256 withdrawn) {
-        uint256 strategyBalance = yieldStrategy.balanceOf();
-        uint256 toWithdraw = accumulatedFees > strategyBalance
-            ? strategyBalance
-            : accumulatedFees;
-        if (toWithdraw > 0) {
-            withdrawn = yieldStrategy.withdraw(toWithdraw);
-        }
-    }
-
-    function _distributeBountyAndFees(
-        IERC20 debtAsset,
-        address keeper,
-        address owner,
-        uint256 bounty,
-        uint256 withdrawn
-    ) private {
-        uint256 actualBounty = bounty > withdrawn ? withdrawn : bounty;
-        if (actualBounty > 0) {
-            debtAsset.safeTransfer(keeper, actualBounty);
-            emit RebalanceBountyPaid(keeper, actualBounty);
-        }
-
-        uint256 ownerShare = withdrawn > actualBounty
-            ? withdrawn - actualBounty
-            : 0;
-        if (ownerShare > 0) {
-            debtAsset.safeTransfer(owner, ownerShare);
-            emit FeesWithdrawn(owner, ownerShare);
-        }
     }
 
     // ============ Internal Helpers ============

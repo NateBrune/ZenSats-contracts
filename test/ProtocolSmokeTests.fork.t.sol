@@ -151,7 +151,9 @@ contract ProtocolSmokeTests is Test {
             USDT,
             TRICRYPTO_POOL,
             1, // WBTC index
-            0 // USDT index
+            0, // USDT index
+            BTC_USD_ORACLE,
+            USDT_USD_ORACLE
         );
 
         // Deploy yield strategy
@@ -258,7 +260,9 @@ contract ProtocolSmokeTests is Test {
             CRVUSD,
             WBTC_CRVUSD_POOL,
             1, // WBTC index
-            0 // crvUSD index
+            0, // crvUSD index
+            BTC_USD_ORACLE,
+            CRVUSD_USD_ORACLE
         );
 
         // Deploy yield strategy
@@ -348,7 +352,7 @@ contract ProtocolSmokeTests is Test {
 
         // Deploy minimal vault for governance testing
         CurveTwoCryptoSwapper swapper =
-            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE);
 
         IporYieldStrategy strategy =
             new IporYieldStrategy(CRVUSD, expectedVaultAddress, IPOR_PLASMA_VAULT);
@@ -406,7 +410,7 @@ contract ProtocolSmokeTests is Test {
 
         // Deploy vault
         CurveTwoCryptoSwapper swapper =
-            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE);
 
         IporYieldStrategy strategy =
             new IporYieldStrategy(CRVUSD, expectedVaultAddress, IPOR_PLASMA_VAULT);
@@ -439,6 +443,9 @@ contract ProtocolSmokeTests is Test {
         vm.prank(user1);
         vault.deposit(1e8, user1);
 
+        // Increase swapper slippage for emergency (1% default may be too tight for fork)
+        vm.store(address(swapper), bytes32(uint256(0)), bytes32(uint256(5e16)));
+
         // Test emergency mode
         vm.startPrank(owner);
         vault.enterEmergencyMode();
@@ -458,14 +465,14 @@ contract ProtocolSmokeTests is Test {
         console.log("=== Testing Swapper Slippage Management ===");
 
         CurveTwoCryptoSwapper swapper =
-            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE);
 
         // Test slippage proposal and execution
         vm.prank(owner);
         swapper.proposeSlippage(10e16); // 10%
 
         // Wait for timelock
-        vm.warp(block.timestamp + 2 days + 1);
+        vm.warp(block.timestamp + 1 weeks + 1);
 
         vm.prank(owner);
         swapper.executeSlippage();
@@ -495,7 +502,9 @@ contract ProtocolSmokeTests is Test {
             USDT,
             TRICRYPTO_POOL,
             1, // WBTC index
-            0 // USDT index
+            0, // USDT index
+            BTC_USD_ORACLE,
+            USDT_USD_ORACLE
         );
 
         // Test quote

@@ -10,6 +10,7 @@ import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
 import { IAavePool } from "../src/interfaces/IAavePool.sol";
 import { IFlashLoanSimpleReceiver } from "../src/interfaces/IFlashLoanSimpleReceiver.sol";
 import { ICurveStableSwap } from "../src/interfaces/ICurveStableSwap.sol";
+import { CurveUsdtSwapLib } from "../src/libraries/CurveUsdtSwapLib.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { ERC4626 } from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -398,21 +399,19 @@ contract UsdtIporAaveStrategyTest is Test {
         assertEq(strategy.balanceOf(), 0);
     }
 
-    function test_balanceOf_oracle_stale_fallback() public {
+    function test_balanceOf_oracle_stale_reverts() public {
         vm.prank(user);
         vault.deposit(1e8, user);
 
         uint256 normalBalance = strategy.balanceOf();
         assertGt(normalBalance, 0, "Should have balance after deposit");
 
-        // Make crvUSD oracle stale → triggers 1:1 fallback in CurveUsdtSwapLib
+        // Make crvUSD oracle stale → now reverts with StaleOrInvalidOracle
         vm.warp(block.timestamp + 100001);
         crvUsdOracle.setStale();
 
-        uint256 staleBalance = strategy.balanceOf();
-        assertGt(staleBalance, 0, "Stale fallback should still return value");
-        // With 1:1 mock oracles, stale fallback should give same result
-        assertApproxEqRel(staleBalance, normalBalance, 1e16, "Stale balance close to normal");
+        vm.expectRevert(CurveUsdtSwapLib.StaleOrInvalidOracle.selector);
+        strategy.balanceOf();
     }
 
     // ============ More Branch Coverage ============

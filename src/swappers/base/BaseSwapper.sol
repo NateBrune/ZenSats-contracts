@@ -10,7 +10,7 @@ abstract contract BaseSwapper {
     using TimelockLib for TimelockLib.TimelockData;
 
     uint256 public constant PRECISION = 1e18;
-    uint256 public constant TIMELOCK_DELAY = 2 days;
+    uint256 public constant TIMELOCK_DELAY = 1 weeks;
     uint256 public slippage;
 
     address public gov;
@@ -34,7 +34,7 @@ abstract contract BaseSwapper {
     constructor(address _gov) {
         if (_gov == address(0)) revert ISwapper.InvalidAddress();
         gov = _gov;
-        slippage = 5e16; // 5% initial slippage
+        slippage = 1e16; // 1% initial slippage
     }
 
     /// @notice Propose new slippage tolerance

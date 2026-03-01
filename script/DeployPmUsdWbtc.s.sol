@@ -6,7 +6,7 @@ import "forge-std/console2.sol";
 
 import {ZenjiViewHelper} from "../src/ZenjiViewHelper.sol";
 import {VaultTracker} from "../src/VaultTracker.sol";
-// import {ZenjiRebalanceKeeper} from "../src/keepers/ZenjiRebalanceKeeper.sol";
+import {ZenjiRebalanceKeeper} from "../src/keepers/ZenjiRebalanceKeeper.sol";
 import {CurveThreeCryptoSwapper} from "../src/swappers/base/CurveThreeCryptoSwapper.sol";
 import {CrvToCrvUsdSwapper} from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import {AaveLoanManager} from "../src/lenders/AaveLoanManager.sol";
@@ -59,7 +59,9 @@ contract DeployPmUsdWbtc is Script {
             gov,
             CRV,
             CRVUSD,
-            CRV_CRVUSD_TRICRYPTO
+            CRV_CRVUSD_TRICRYPTO,
+            CRV_USD_ORACLE,
+            CRVUSD_USD_ORACLE
         );
 
         CurveThreeCryptoSwapper swapper = new CurveThreeCryptoSwapper(
@@ -68,7 +70,9 @@ contract DeployPmUsdWbtc is Script {
             USDT,
             TRICRYPTO_POOL,
             TRICRYPTO_WBTC_INDEX,
-            TRICRYPTO_USDT_INDEX
+            TRICRYPTO_USDT_INDEX,
+            BTC_USD_ORACLE,
+            USDT_USD_ORACLE
         );
 
         int128 lpCrvUsdIndex = _lpCrvUsdIndex();
@@ -119,7 +123,7 @@ contract DeployPmUsdWbtc is Script {
         VaultTracker vaultTracker = new VaultTracker(address(vault));
 
         // Optional: deploy Chainlink Automation receiver for rebalancing.
-        // ZenjiRebalanceKeeper rebalanceKeeper = new ZenjiRebalanceKeeper(address(vault), owner);
+        ZenjiRebalanceKeeper rebalanceKeeper = new ZenjiRebalanceKeeper(address(vault), owner);
 
         vm.stopBroadcast();
 
@@ -130,7 +134,7 @@ contract DeployPmUsdWbtc is Script {
         console2.log("Strategy", address(strategy));
         console2.log("Vault", address(vault));
         console2.log("VaultTracker", address(vaultTracker));
-        // console2.log("RebalanceKeeper", address(rebalanceKeeper));
+        console2.log("RebalanceKeeper", address(rebalanceKeeper));
     }
 
     function _lpCrvUsdIndex() internal view returns (int128) {

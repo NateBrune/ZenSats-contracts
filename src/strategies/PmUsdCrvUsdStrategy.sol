@@ -10,6 +10,7 @@ import {ICurveStableSwap} from "../interfaces/ICurveStableSwap.sol";
 import {ICurveStableSwapNG} from "../interfaces/ICurveStableSwapNG.sol";
 import {IERC20} from "../interfaces/IERC20.sol";
 import {IStakeDaoRewardVault} from "../interfaces/IStakeDaoRewardVault.sol";
+import {SafeTransferLib} from "../libraries/SafeTransferLib.sol";
 import {CurveUsdtSwapLib} from "../libraries/CurveUsdtSwapLib.sol";
 
 /// @title PmUsdCrvUsdStrategy
@@ -17,6 +18,8 @@ import {CurveUsdtSwapLib} from "../libraries/CurveUsdtSwapLib.sol";
 /// @dev Accepts USDT debt, swaps to crvUSD, provides single-sided liquidity to pmUSD/crvUSD pool,
 ///      stakes LP in Stake DAO reward vault, and harvests CRV rewards back into the strategy
 contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
+    using SafeTransferLib for IERC20;
+
     error SwapFailed();
     // ============ Constants ============
 
@@ -26,6 +29,7 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
     uint256 public constant LP_SLIPPAGE = 5e15; // 0.5% for LP ops (stable pairs)
     uint256 public constant MIN_HARVEST_THRESHOLD = 1e17; // 0.1 CRV minimum
     uint256 public constant MAX_ORACLE_STALENESS = 90000; // 25 hours
+    uint256 public constant MAX_VP_DEVIATION = 5e15; // 0.5% max virtual_price deviation from cached
 
     // ============ Immutables ============
 
@@ -46,6 +50,7 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
     // ============ State ============
 
     uint256 public slippageTolerance = DEFAULT_SLIPPAGE;
+    uint256 public cachedVirtualPrice;
 
     // ============ Events ============
 
@@ -136,8 +141,8 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         uint256 lpTokens = _rewardVaultBalance();
         if (lpTokens < 1) return 0;
 
-        // LP -> crvUSD value via virtual_price (manipulation-resistant)
-        uint256 virtualPrice = lpPool.get_virtual_price();
+        // LP -> crvUSD value via cached virtual_price (manipulation-resistant)
+        uint256 virtualPrice = _getSafeVirtualPrice();
         uint256 crvUsdValue = (lpTokens * virtualPrice) / 1e18;
 
         return CurveUsdtSwapLib.convertCrvUsdToUsdt(
@@ -186,6 +191,8 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         // 3. Stake LP tokens in reward vault
         _depositToRewardVault(lpReceived);
 
+        _updateCachedVirtualPrice();
+
         // Return value in USDT terms
         underlyingDeposited = lpReceived;
     }
@@ -215,6 +222,8 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         if (crvUsdReceived > 0) {
             usdtReceived = _swapCrvUsdToUsdt(crvUsdReceived, slippageTolerance);
         }
+
+        _updateCachedVirtualPrice();
     }
 
     function _withdrawAll() internal override returns (uint256 usdtReceived) {
@@ -229,6 +238,8 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         if (crvUsdReceived > 0) {
             usdtReceived = _swapCrvUsdToUsdt(crvUsdReceived, slippageTolerance);
         }
+
+        _updateCachedVirtualPrice();
     }
 
     function _harvest() internal override returns (uint256 rewardsValue) {
@@ -236,6 +247,7 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         rewardsValue = CurveUsdtSwapLib.convertCrvUsdToUsdt(
             crvUsdCompounded, crvUsdOracle, usdtOracle, MAX_ORACLE_STALENESS
         );
+        _updateCachedVirtualPrice();
     }
 
     /// @notice Claim CRV from accountant, swap to crvUSD, and compound back into LP
@@ -246,7 +258,7 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         uint256 crvBalance = crv.balanceOf(address(this));
         if (crvBalance < MIN_HARVEST_THRESHOLD) return 0;
 
-        crv.transfer(address(crvSwapper), crvBalance);
+        crv.safeTransfer(address(crvSwapper), crvBalance);
         uint256 crvUsdReceived = _swapCrv(crvBalance);
         if (crvUsdReceived < 1) return 0;
 
@@ -288,6 +300,32 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         if (crvUsdReceived > 0) {
             usdtReceived = _swapCrvUsdToUsdt(crvUsdReceived, EMERGENCY_SLIPPAGE);
         }
+
+        _updateCachedVirtualPrice();
+    }
+
+    // ============ Internal: Virtual Price Cache ============
+
+    /// @notice Get manipulation-resistant virtual price, bounded by ±MAX_VP_DEVIATION from cache
+    /// @dev Prevents same-block manipulation of get_virtual_price() from affecting share accounting or LP floors
+    function _getSafeVirtualPrice() internal view returns (uint256) {
+        uint256 cached = cachedVirtualPrice;
+        uint256 current = lpPool.get_virtual_price();
+        if (cached == 0) return current;
+
+        uint256 maxDeviation = (cached * MAX_VP_DEVIATION) / PRECISION;
+        uint256 upperBound = cached + maxDeviation;
+        uint256 lowerBound = cached > maxDeviation ? cached - maxDeviation : 0;
+
+        if (current > upperBound) return upperBound;
+        if (current < lowerBound) return lowerBound;
+        return current;
+    }
+
+    /// @notice Update cached virtual price using bounded value
+    /// @dev Only moves cache by MAX_VP_DEVIATION per call, preventing manipulation from poisoning the cache
+    function _updateCachedVirtualPrice() internal {
+        cachedVirtualPrice = _getSafeVirtualPrice();
     }
 
     // ============ Internal: LP Operations ============
@@ -303,6 +341,11 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         uint256 expectedLp = lpPool.calc_token_amount(amounts, true);
         uint256 minLp = (expectedLp * (PRECISION - LP_SLIPPAGE)) / PRECISION;
 
+        // Oracle floor using cached VP (immune to same-block manipulation)
+        uint256 safeVP = _getSafeVirtualPrice();
+        uint256 oracleMinLp = (crvUsdAmount * PRECISION * (PRECISION - LP_SLIPPAGE)) / (safeVP * PRECISION);
+        if (oracleMinLp > minLp) minLp = oracleMinLp;
+
         lpReceived = lpPool.add_liquidity(amounts, minLp);
         emit LiquidityAdded(crvUsdAmount, lpReceived);
     }
@@ -311,6 +354,11 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
     function _removeLiquidity(uint256 lpAmount, uint256 slippage) internal returns (uint256 crvUsdReceived) {
         uint256 expectedOut = lpPool.calc_withdraw_one_coin(lpAmount, lpCrvUsdIndex);
         uint256 minOut = (expectedOut * (PRECISION - slippage)) / PRECISION;
+
+        // Oracle floor using cached VP (immune to same-block manipulation)
+        uint256 safeVP = _getSafeVirtualPrice();
+        uint256 oracleMinOut = (lpAmount * safeVP * (PRECISION - slippage)) / (PRECISION * PRECISION);
+        if (oracleMinOut > minOut) minOut = oracleMinOut;
 
         _ensureApprove(address(lpToken), address(lpPool), lpAmount);
         crvUsdReceived = lpPool.remove_liquidity_one_coin(lpAmount, lpCrvUsdIndex, minOut);
@@ -321,15 +369,17 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
 
     function _swapUsdtToCrvUsd(uint256 usdtAmount, uint256 slippage) internal returns (uint256 crvUsdReceived) {
         _ensureApprove(address(debtAsset), address(usdtCrvUsdPool), usdtAmount);
-        crvUsdReceived =
-            CurveUsdtSwapLib.swapUsdtToCrvUsd(usdtCrvUsdPool, usdtIndex, crvUsdIndex, usdtAmount, slippage);
+        crvUsdReceived = CurveUsdtSwapLib.swapUsdtToCrvUsd(
+            usdtCrvUsdPool, usdtIndex, crvUsdIndex, usdtAmount, slippage, usdtOracle, crvUsdOracle, MAX_ORACLE_STALENESS
+        );
         emit SwappedUsdtToCrvUsd(usdtAmount, crvUsdReceived);
     }
 
     function _swapCrvUsdToUsdt(uint256 crvUsdAmount, uint256 slippage) internal returns (uint256 usdtReceived) {
         _ensureApprove(address(crvUSD), address(usdtCrvUsdPool), crvUsdAmount);
-        usdtReceived =
-            CurveUsdtSwapLib.swapCrvUsdToUsdt(usdtCrvUsdPool, crvUsdIndex, usdtIndex, crvUsdAmount, slippage);
+        usdtReceived = CurveUsdtSwapLib.swapCrvUsdToUsdt(
+            usdtCrvUsdPool, crvUsdIndex, usdtIndex, crvUsdAmount, slippage, crvUsdOracle, usdtOracle, MAX_ORACLE_STALENESS
+        );
         emit SwappedCrvUsdToUsdt(crvUsdAmount, usdtReceived);
     }
 }

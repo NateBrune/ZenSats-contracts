@@ -126,8 +126,9 @@ contract UsdtIporYieldStrategy is BaseIporStrategy {
         returns (uint256 crvUsdReceived)
     {
         _ensureApprove(address(debtAsset), address(curvePool), usdtAmount);
-        crvUsdReceived =
-            CurveUsdtSwapLib.swapUsdtToCrvUsd(curvePool, usdtIndex, crvUsdIndex, usdtAmount, slippage);
+        crvUsdReceived = CurveUsdtSwapLib.swapUsdtToCrvUsd(
+            curvePool, usdtIndex, crvUsdIndex, usdtAmount, slippage, usdtOracle, crvUsdOracle, MAX_USDT_ORACLE_STALENESS
+        );
         emit SwappedUsdtToCrvUsd(usdtAmount, crvUsdReceived);
     }
 
@@ -136,8 +137,9 @@ contract UsdtIporYieldStrategy is BaseIporStrategy {
         returns (uint256 usdtReceived)
     {
         _ensureApprove(address(crvUSD), address(curvePool), crvUsdAmount);
-        usdtReceived =
-            CurveUsdtSwapLib.swapCrvUsdToUsdt(curvePool, crvUsdIndex, usdtIndex, crvUsdAmount, slippage);
+        usdtReceived = CurveUsdtSwapLib.swapCrvUsdToUsdt(
+            curvePool, crvUsdIndex, usdtIndex, crvUsdAmount, slippage, crvUsdOracle, usdtOracle, MAX_CRVUSD_ORACLE_STALENESS
+        );
         emit SwappedCrvUsdToUsdt(crvUsdAmount, usdtReceived);
     }
 }

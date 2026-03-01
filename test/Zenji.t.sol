@@ -1021,7 +1021,7 @@ contract ZenjiTest is Test {
     function test_emergencyWithdraw_withBrickedStrategy_recoversSomeFunds() public {
         // Deploy swapper first
         CurveTwoCryptoSwapper swapper =
-            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE);
 
         MockBrickedStrategy bricked = new MockBrickedStrategy(CRVUSD, address(0));
 
@@ -1056,6 +1056,9 @@ contract ZenjiTest is Test {
         uint256 shares = brickedVault.deposit(1e8, user1);
 
         bricked.setBricked(true);
+
+        // Increase swapper slippage for emergency (1% default may be too tight for fork)
+        vm.store(address(swapper), bytes32(uint256(0)), bytes32(uint256(5e16)));
 
         vm.startPrank(owner);
         brickedVault.enterEmergencyMode();
@@ -1125,7 +1128,7 @@ contract ZenjiTest is Test {
         uint64 nonce = vm.getNonce(address(this));
         address predictedVault = vm.computeCreateAddress(address(this), nonce + 2);
         CurveTwoCryptoSwapper swapper =
-            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE);
         LlamaLoanManager loanManager = new LlamaLoanManager(
             WBTC,
             CRVUSD,
@@ -2600,12 +2603,12 @@ contract ZenjiTest is Test {
 
     function test_proposeAndExecuteSwapper_functionality() public {
         CurveTwoCryptoSwapper newSwapper =
-            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE);
 
         vm.prank(owner);
         vault.proposeSwapper(address(newSwapper));
 
-        warpAndMock(block.timestamp + 2 days + 1);
+        warpAndMock(block.timestamp + 1 weeks + 1);
 
         vm.prank(owner);
         vault.executeSwapper();
@@ -2615,7 +2618,7 @@ contract ZenjiTest is Test {
 
     function test_proposeSwapper_onlyGov() public {
         CurveTwoCryptoSwapper newSwapper =
-            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE);
 
         vm.prank(user1);
         vm.expectRevert(Zenji.Unauthorized.selector);
@@ -2785,8 +2788,8 @@ contract ZenjiTest is Test {
         assertEq(vault.targetLtv(), 15e16, "Target LTV should be set to min");
 
         // Test maximum target LTV
-        vault.setParam(1, 73e16);
-        assertEq(vault.targetLtv(), 73e16, "Target LTV should be set to max");
+        vault.setParam(1, 65e16);
+        assertEq(vault.targetLtv(), 65e16, "Target LTV should be set to max");
         vm.stopPrank();
     }
 
@@ -2797,8 +2800,8 @@ contract ZenjiTest is Test {
         assertEq(vault.rebalanceBountyRate(), 0, "Bounty rate should be set to 0");
 
         // Test maximum bounty rate
-        vault.setParam(3, 2e17);
-        assertEq(vault.rebalanceBountyRate(), 2e17, "Bounty rate should be set to max");
+        vault.setParam(3, 5e17);
+        assertEq(vault.rebalanceBountyRate(), 5e17, "Bounty rate should be set to max");
         vm.stopPrank();
     }
 
@@ -2845,7 +2848,7 @@ contract ZenjiTest is Test {
     function test_withdrawWithNoStrategy() public {
         // Strategies are required; constructor should reject address(0)
         CurveTwoCryptoSwapper swapper =
-            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE);
         LlamaLoanManager lm = new LlamaLoanManager(
             WBTC,
             CRVUSD,
@@ -2863,7 +2866,7 @@ contract ZenjiTest is Test {
     function test_partialWithdrawWithNoStrategy() public {
         // Strategies are required; constructor should reject address(0)
         CurveTwoCryptoSwapper swapper =
-            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE);
         LlamaLoanManager lm = new LlamaLoanManager(
             WBTC,
             CRVUSD,
@@ -3743,13 +3746,13 @@ contract ZenjiTest is Test {
 
         vm.prank(owner);
         vm.expectRevert(Zenji.InvalidTargetLtv.selector);
-        vault.setParam(1, 8e17); // > MAX_TARGET_LTV (73%)
+        vault.setParam(1, 65e16 + 1); // > MAX_TARGET_LTV (65%)
     }
 
     function test_setParam_bountyRate_invalidReverts() public {
         vm.prank(owner);
         vm.expectRevert(Zenji.InvalidBountyRate.selector);
-        vault.setParam(3, 3e17); // > MAX_REBALANCE_BOUNTY (20%)
+        vault.setParam(3, 5e17 + 1); // > MAX_REBALANCE_BOUNTY (50%)
     }
 
     function test_executeSwapper_and_cancelSwapper() public {
@@ -3761,7 +3764,7 @@ contract ZenjiTest is Test {
         vm.prank(owner);
         vault.proposeSwapper(address(newSwapper));
 
-        vm.warp(block.timestamp + 2 days + 1);
+        vm.warp(block.timestamp + 1 weeks + 1);
         mockOracle(lastBtcPrice);
 
         vm.prank(owner);
@@ -3779,7 +3782,7 @@ contract ZenjiTest is Test {
         vault.cancelSwapper();
 
         // Execute should revert since cancelled
-        vm.warp(block.timestamp + 2 days + 1);
+        vm.warp(block.timestamp + 1 weeks + 1);
         mockOracle(lastBtcPrice);
 
         vm.prank(owner);

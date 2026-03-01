@@ -29,7 +29,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
     uint256 public constant SWAP_AMOUNT_BUFFER = 105;
     uint256 public constant DUST_BUFFER = 1;
     uint256 public constant DUST_THRESHOLD = 1e6;
-    uint256 public constant TIMELOCK_DELAY = 2 days;
+    uint256 public constant TIMELOCK_DELAY = 1 weeks;
     int256 public constant MIN_HEALTH = 1.1e18;
     uint256 public constant MIN_SWAP_OUT_BPS = 9500; // 95% of oracle quote
 

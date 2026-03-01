@@ -54,7 +54,9 @@ contract DeployWbtc is Script {
             USDT,
             TRICRYPTO_POOL,
             TRICRYPTO_WBTC_INDEX,
-            TRICRYPTO_USDT_INDEX
+            TRICRYPTO_USDT_INDEX,
+            BTC_USD_ORACLE,
+            USDT_USD_ORACLE
         );
 
         AaveLoanManager loanManager = new AaveLoanManager(

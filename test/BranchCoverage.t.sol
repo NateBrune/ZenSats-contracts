@@ -478,86 +478,98 @@ contract BaseSwapperTest is Test {
     }
 }
 
+/// @notice Wrapper to expose CurveUsdtSwapLib internal functions for testing with vm.expectRevert
+contract CurveUsdtSwapLibWrapper {
+    function convertCrvUsdToUsdt(
+        uint256 crvUsdValue,
+        IChainlinkOracle crvUsdOracle,
+        IChainlinkOracle usdtOracle,
+        uint256 maxStaleness
+    ) external view returns (uint256) {
+        return CurveUsdtSwapLib.convertCrvUsdToUsdt(crvUsdValue, crvUsdOracle, usdtOracle, maxStaleness);
+    }
+}
+
 contract CurveUsdtSwapLibTest is Test {
     MockOracleFull crvUsdOracle;
     MockOracleFull usdtOracle;
+    CurveUsdtSwapLibWrapper wrapper;
 
     function setUp() public {
         crvUsdOracle = new MockOracleFull(8, 1e8);
         usdtOracle = new MockOracleFull(8, 1e8);
+        wrapper = new CurveUsdtSwapLibWrapper();
     }
 
-    function test_convertCrvUsdToUsdt_stale_crvUsd_fallback() public {
+    function test_convertCrvUsdToUsdt_stale_crvUsd_reverts() public {
         vm.warp(200000);
         crvUsdOracle = new MockOracleFull(8, 1e8);
         crvUsdOracle.setStale(100000);
         usdtOracle = new MockOracleFull(8, 1e8);
-        uint256 result = CurveUsdtSwapLib.convertCrvUsdToUsdt(
+        vm.expectRevert(CurveUsdtSwapLib.StaleOrInvalidOracle.selector);
+        wrapper.convertCrvUsdToUsdt(
             1e18, IChainlinkOracle(address(crvUsdOracle)), IChainlinkOracle(address(usdtOracle)), 90000
         );
-        // Fallback: value / 1e12
-        assertEq(result, 1e6);
     }
 
-    function test_convertCrvUsdToUsdt_stale_usdt_fallback() public {
+    function test_convertCrvUsdToUsdt_stale_usdt_reverts() public {
         vm.warp(200000);
         crvUsdOracle = new MockOracleFull(8, 1e8);
         usdtOracle = new MockOracleFull(8, 1e8);
         usdtOracle.setStale(100000);
-        uint256 result = CurveUsdtSwapLib.convertCrvUsdToUsdt(
+        vm.expectRevert(CurveUsdtSwapLib.StaleOrInvalidOracle.selector);
+        wrapper.convertCrvUsdToUsdt(
             1e18, IChainlinkOracle(address(crvUsdOracle)), IChainlinkOracle(address(usdtOracle)), 90000
         );
-        // Fallback: value / 1e12
-        assertEq(result, 1e6);
     }
 
-    function test_convertCrvUsdToUsdt_negative_crvUsd_price_fallback() public {
+    function test_convertCrvUsdToUsdt_negative_crvUsd_price_reverts() public {
         crvUsdOracle.setPrice(-1);
-        uint256 result = CurveUsdtSwapLib.convertCrvUsdToUsdt(
+        vm.expectRevert(CurveUsdtSwapLib.StaleOrInvalidOracle.selector);
+        wrapper.convertCrvUsdToUsdt(
             1e18, IChainlinkOracle(address(crvUsdOracle)), IChainlinkOracle(address(usdtOracle)), 90000
         );
-        assertEq(result, 1e6);
     }
 
-    function test_convertCrvUsdToUsdt_negative_usdt_price_fallback() public {
+    function test_convertCrvUsdToUsdt_negative_usdt_price_reverts() public {
         usdtOracle.setPrice(-1);
-        uint256 result = CurveUsdtSwapLib.convertCrvUsdToUsdt(
+        vm.expectRevert(CurveUsdtSwapLib.StaleOrInvalidOracle.selector);
+        wrapper.convertCrvUsdToUsdt(
             1e18, IChainlinkOracle(address(crvUsdOracle)), IChainlinkOracle(address(usdtOracle)), 90000
         );
-        assertEq(result, 1e6);
     }
 
-    function test_convertCrvUsdToUsdt_answeredBehind_crvUsd_fallback() public {
+    function test_convertCrvUsdToUsdt_answeredBehind_crvUsd_reverts() public {
         vm.warp(200000);
         crvUsdOracle = new MockOracleFull(8, 1e8);
         crvUsdOracle.setAnsweredBehind();
         usdtOracle = new MockOracleFull(8, 1e8);
-        uint256 result = CurveUsdtSwapLib.convertCrvUsdToUsdt(
+        vm.expectRevert(CurveUsdtSwapLib.StaleOrInvalidOracle.selector);
+        wrapper.convertCrvUsdToUsdt(
             1e18, IChainlinkOracle(address(crvUsdOracle)), IChainlinkOracle(address(usdtOracle)), 90000
         );
-        assertEq(result, 1e6);
     }
 
-    function test_convertCrvUsdToUsdt_answeredBehind_usdt_fallback() public {
+    function test_convertCrvUsdToUsdt_answeredBehind_usdt_reverts() public {
         vm.warp(200000);
         crvUsdOracle = new MockOracleFull(8, 1e8);
         usdtOracle = new MockOracleFull(8, 1e8);
         usdtOracle.setAnsweredBehind();
-        uint256 result = CurveUsdtSwapLib.convertCrvUsdToUsdt(
+        vm.expectRevert(CurveUsdtSwapLib.StaleOrInvalidOracle.selector);
+        wrapper.convertCrvUsdToUsdt(
             1e18, IChainlinkOracle(address(crvUsdOracle)), IChainlinkOracle(address(usdtOracle)), 90000
         );
-        assertEq(result, 1e6);
     }
 
     function test_convertCrvUsdToUsdt_zero_returns_zero() public view {
-        uint256 result = CurveUsdtSwapLib.convertCrvUsdToUsdt(
+        uint256 result = wrapper.convertCrvUsdToUsdt(
             0, IChainlinkOracle(address(crvUsdOracle)), IChainlinkOracle(address(usdtOracle)), 90000
         );
         assertEq(result, 0);
     }
 
     function test_convertCrvUsdToUsdt_normal() public view {
-        uint256 result = CurveUsdtSwapLib.convertCrvUsdToUsdt(
+        uint256 result = wrapper.convertCrvUsdToUsdt(
             1e18, IChainlinkOracle(address(crvUsdOracle)), IChainlinkOracle(address(usdtOracle)), 90000
         );
         // Both at $1, so 1e18 crvUSD = 1e6 USDT

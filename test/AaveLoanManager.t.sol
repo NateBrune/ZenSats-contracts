@@ -401,7 +401,7 @@ contract AaveLoanManagerTest is Test {
 
         manager.proposeSwapper(address(newSwapper));
 
-        vm.warp(block.timestamp + 2 days + 1);
+        vm.warp(block.timestamp + 1 weeks + 1);
 
         manager.executeSwapper();
     }

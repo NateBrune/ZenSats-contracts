@@ -738,7 +738,7 @@ contract LlamaLoanManagerTest is Test {
         MockSwapper newSwapper = new MockSwapper(address(wbtc), address(crvUSD), address(pool));
         manager.proposeSwapper(address(newSwapper));
 
-        vm.warp(block.timestamp + 2 days + 1);
+        vm.warp(block.timestamp + 1 weeks + 1);
 
         manager.executeSwapper();
     }

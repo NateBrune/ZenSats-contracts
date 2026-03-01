@@ -100,7 +100,9 @@ contract CbBtcUsdtIporAaveStrategyForkTest is Test {
             WBTC_INDEX,
             TRICRYPTO_POOL,
             TRICRYPTO_WBTC_INDEX,
-            TRICRYPTO_USDT_INDEX
+            TRICRYPTO_USDT_INDEX,
+            CBBTC_USD_ORACLE,
+            USDT_USD_ORACLE
         );
 
         loanManager = new AaveLoanManager(
@@ -144,6 +146,9 @@ contract CbBtcUsdtIporAaveStrategyForkTest is Test {
 
         vm.prank(address(vault));
         strategy.setSlippage(5e16);
+
+        // Increase swapper slippage for fork (1% default may be too tight for cbBTC two-hop swaps)
+        vm.store(address(swapper), bytes32(uint256(0)), bytes32(uint256(5e16)));
 
         vm.prank(CBBTC_WHALE);
         cbbtc.transfer(user, 1e8); // 1 cbBTC

@@ -2,8 +2,10 @@
 pragma solidity ^0.8.33;
 
 import { IERC20 } from "../../interfaces/IERC20.sol";
+import { IChainlinkOracle } from "../../interfaces/IChainlinkOracle.sol";
 import { ICurveThreeCrypto } from "../../interfaces/ICurveThreeCrypto.sol";
 import { ISwapper } from "../../interfaces/ISwapper.sol";
+import { OracleLib } from "../../libraries/OracleLib.sol";
 import { SafeTransferLib } from "../../libraries/SafeTransferLib.sol";
 import { BaseSwapper } from "./BaseSwapper.sol";
 
@@ -17,6 +19,11 @@ contract CurveThreeCryptoSwapper is BaseSwapper, ISwapper {
     ICurveThreeCrypto public immutable pool;
     uint256 public immutable collateralIndex;
     uint256 public immutable debtIndex;
+    IChainlinkOracle public immutable collateralOracle;
+    IChainlinkOracle public immutable debtOracle;
+
+    uint256 public constant MAX_COLLATERAL_ORACLE_STALENESS = 3600;
+    uint256 public constant MAX_DEBT_ORACLE_STALENESS = 90000;
 
     constructor(
         address _gov,
@@ -24,9 +31,14 @@ contract CurveThreeCryptoSwapper is BaseSwapper, ISwapper {
         address _debtToken,
         address _pool,
         uint256 _collateralIndex,
-        uint256 _debtIndex
+        uint256 _debtIndex,
+        address _collateralOracle,
+        address _debtOracle
     ) BaseSwapper(_gov) {
-        if (_collateralToken == address(0) || _debtToken == address(0) || _pool == address(0)) {
+        if (
+            _collateralToken == address(0) || _debtToken == address(0) || _pool == address(0)
+                || _collateralOracle == address(0) || _debtOracle == address(0)
+        ) {
             revert InvalidAddress();
         }
         collateralToken = IERC20(_collateralToken);
@@ -34,6 +46,8 @@ contract CurveThreeCryptoSwapper is BaseSwapper, ISwapper {
         pool = ICurveThreeCrypto(_pool);
         collateralIndex = _collateralIndex;
         debtIndex = _debtIndex;
+        collateralOracle = IChainlinkOracle(_collateralOracle);
+        debtOracle = IChainlinkOracle(_debtOracle);
     }
 
     /// @inheritdoc ISwapper
@@ -53,6 +67,19 @@ contract CurveThreeCryptoSwapper is BaseSwapper, ISwapper {
         uint256 expectedOut = pool.get_dy(collateralIndex, debtIndex, collateralAmount);
         uint256 minOut = (expectedOut * (PRECISION - slippage)) / PRECISION;
 
+        // Oracle floor
+        uint256 oracleExpected = OracleLib.getCollateralValue(
+            collateralAmount,
+            collateralOracle,
+            MAX_COLLATERAL_ORACLE_STALENESS,
+            debtOracle,
+            MAX_DEBT_ORACLE_STALENESS,
+            collateralToken,
+            debtToken
+        );
+        uint256 oracleMinOut = (oracleExpected * (PRECISION - slippage)) / PRECISION;
+        if (oracleMinOut > minOut) minOut = oracleMinOut;
+
         collateralToken.ensureApproval(address(pool), collateralAmount);
         uint256 balanceBefore = debtToken.balanceOf(address(this));
         debtReceived = _exchange(
@@ -71,6 +98,19 @@ contract CurveThreeCryptoSwapper is BaseSwapper, ISwapper {
         if (debtAmount == 0) return 0;
         uint256 expectedOut = pool.get_dy(debtIndex, collateralIndex, debtAmount);
         uint256 minOut = (expectedOut * (PRECISION - slippage)) / PRECISION;
+
+        // Oracle floor
+        uint256 oracleExpected = OracleLib.getDebtValue(
+            debtAmount,
+            collateralOracle,
+            MAX_COLLATERAL_ORACLE_STALENESS,
+            debtOracle,
+            MAX_DEBT_ORACLE_STALENESS,
+            collateralToken,
+            debtToken
+        );
+        uint256 oracleMinOut = (oracleExpected * (PRECISION - slippage)) / PRECISION;
+        if (oracleMinOut > minOut) minOut = oracleMinOut;
 
         debtToken.ensureApproval(address(pool), debtAmount);
         uint256 balanceBefore = collateralToken.balanceOf(address(this));

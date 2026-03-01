@@ -26,8 +26,8 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     /// @notice Precision for percentage calculations (100% = 1e18)
     uint256 public constant PRECISION = 1e18;
 
-    /// @notice Timelock delay for swapper changes (2 days)
-    uint256 public constant TIMELOCK_DELAY = 2 days;
+    /// @notice Timelock delay for swapper changes (1 week)
+    uint256 public constant TIMELOCK_DELAY = 1 weeks;
 
     /// @notice Number of bands for LlamaLend loans
     uint256 public constant LLAMALEND_BANDS = 4;

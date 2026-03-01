@@ -85,7 +85,8 @@ contract UsdtIporAaveStrategyForkTest is Test {
 
         viewHelper = new ZenjiViewHelper();
         swapper = new CurveThreeCryptoSwapper(
-            owner, WBTC, USDT, TRICRYPTO_POOL, TRICRYPTO_WBTC_INDEX, TRICRYPTO_USDT_INDEX
+            owner, WBTC, USDT, TRICRYPTO_POOL, TRICRYPTO_WBTC_INDEX, TRICRYPTO_USDT_INDEX,
+            BTC_USD_ORACLE, USDT_USD_ORACLE
         );
 
         loanManager = new AaveLoanManager(

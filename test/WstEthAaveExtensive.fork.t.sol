@@ -549,7 +549,7 @@ contract WstEthAaveExtensive is Test {
         vm.expectRevert(TimelockLib.TimelockNotReady.selector);
         vault.executeSwapper();
 
-        vm.warp(block.timestamp + 2 days + 1);
+        vm.warp(block.timestamp + 1 weeks + 1);
         _syncAndMockOracles();
 
         vm.prank(vault.gov());
@@ -575,7 +575,7 @@ contract WstEthAaveExtensive is Test {
     function test_slippageTimelock() public {
         _deployVault();
 
-        assertEq(swapper.slippage(), 5e16, "Initial slippage should be 5%");
+        assertEq(swapper.slippage(), 1e16, "Initial slippage should be 1%");
 
         vm.prank(owner);
         swapper.proposeSlippage(10e16);
@@ -584,7 +584,7 @@ contract WstEthAaveExtensive is Test {
         vm.expectRevert(TimelockLib.TimelockNotReady.selector);
         swapper.executeSlippage();
 
-        vm.warp(block.timestamp + 2 days + 1);
+        vm.warp(block.timestamp + 1 weeks + 1);
         _syncAndMockOracles();
 
         vm.prank(owner);
@@ -645,14 +645,14 @@ contract WstEthAaveExtensive is Test {
         vault.setParam(1, 15e16);
         assertEq(vault.targetLtv(), 15e16, "Should accept min LTV");
 
-        vault.setParam(1, 73e16);
-        assertEq(vault.targetLtv(), 73e16, "Should accept max LTV");
+        vault.setParam(1, 65e16);
+        assertEq(vault.targetLtv(), 65e16, "Should accept max LTV");
 
         vm.expectRevert(Zenji.InvalidTargetLtv.selector);
         vault.setParam(1, 15e16 - 1);
 
         vm.expectRevert(Zenji.InvalidTargetLtv.selector);
-        vault.setParam(1, 73e16 + 1);
+        vault.setParam(1, 65e16 + 1);
 
         vault.setParam(0, 2e17);
         assertEq(vault.feeRate(), 2e17, "Should accept max fee rate");
@@ -660,11 +660,11 @@ contract WstEthAaveExtensive is Test {
         vm.expectRevert(Zenji.InvalidFeeRate.selector);
         vault.setParam(0, 2e17 + 1);
 
-        vault.setParam(3, 2e17);
-        assertEq(vault.rebalanceBountyRate(), 2e17, "Should accept max bounty");
+        vault.setParam(3, 5e17);
+        assertEq(vault.rebalanceBountyRate(), 5e17, "Should accept max bounty");
 
         vm.expectRevert(Zenji.InvalidBountyRate.selector);
-        vault.setParam(3, 2e17 + 1);
+        vault.setParam(3, 5e17 + 1);
 
         vault.setParam(2, 0);
         assertEq(vault.depositCap(), 0, "Should accept 0 cap");

@@ -23,6 +23,13 @@ contract SwapperUnitTests is Test {
     address constant WBTC_WHALE = 0x5Ee5bf7ae06D1Be5997A1A72006FE6C607eC6DE8;
     address constant USDT_WHALE = 0xF977814e90dA44bFA03b6295A0616a897441aceC;
 
+    // Oracle addresses
+    address constant BTC_USD_ORACLE = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
+    address constant USDT_USD_ORACLE = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
+    address constant CRVUSD_USD_ORACLE = 0xEEf0C605546958c1f899b6fB336C20671f9cD49F;
+    address constant CBBTC_USD_ORACLE = 0x2665701293fCbEB223D11A08D826563EDcCE423A;
+    address constant CRV_USD_ORACLE = 0xCd627aA160A6fA45Eb793D19Ef54f5062F20f33f;
+
     address owner = makeAddr("owner");
     address nonGov = makeAddr("nonGov");
 
@@ -40,11 +47,11 @@ contract SwapperUnitTests is Test {
     /// @notice Test CurveTwoCryptoSwapper governance functions
     function test_curveTwoCryptoSwapper_governance() public {
         CurveTwoCryptoSwapper swapper =
-            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE);
 
         // Test initial state
         assertEq(swapper.gov(), owner, "Initial gov should be owner");
-        assertEq(swapper.slippage(), 5e16, "Initial slippage should be 5%");
+        assertEq(swapper.slippage(), 1e16, "Initial slippage should be 1%");
 
         // Test unauthorized access
         vm.prank(nonGov);
@@ -61,7 +68,7 @@ contract SwapperUnitTests is Test {
         swapper.executeSlippage();
 
         // Wait for timelock and execute
-        vm.warp(block.timestamp + 2 days + 1);
+        vm.warp(block.timestamp + 1 weeks + 1);
         vm.prank(owner);
         swapper.executeSlippage();
 
@@ -81,7 +88,7 @@ contract SwapperUnitTests is Test {
     /// @notice Test CurveTwoCryptoSwapper slippage validation
     function test_curveTwoCryptoSwapper_slippage_validation() public {
         CurveTwoCryptoSwapper swapper =
-            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE);
 
         // Test zero slippage
         vm.prank(owner);
@@ -97,7 +104,7 @@ contract SwapperUnitTests is Test {
     /// @notice Test CurveTwoCryptoSwapper slippage cancellation
     function test_curveTwoCryptoSwapper_slippage_cancellation() public {
         CurveTwoCryptoSwapper swapper =
-            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE);
 
         // Propose slippage
         vm.prank(owner);
@@ -108,7 +115,7 @@ contract SwapperUnitTests is Test {
         swapper.cancelSlippage();
 
         // Wait for original timelock and try to execute - should fail
-        vm.warp(block.timestamp + 2 days + 1);
+        vm.warp(block.timestamp + 1 weeks + 1);
         vm.prank(owner);
         vm.expectRevert(); // No pending slippage to execute
         swapper.executeSlippage();
@@ -117,11 +124,11 @@ contract SwapperUnitTests is Test {
     /// @notice Test CurveThreeCryptoSwapper governance functions
     function test_curveThreeCryptoSwapper_governance() public {
         CurveThreeCryptoSwapper swapper =
-            new CurveThreeCryptoSwapper(owner, WBTC, USDT, TRICRYPTO_POOL, 1, 0);
+            new CurveThreeCryptoSwapper(owner, WBTC, USDT, TRICRYPTO_POOL, 1, 0, BTC_USD_ORACLE, USDT_USD_ORACLE);
 
         // Test initial state
         assertEq(swapper.gov(), owner, "Initial gov should be owner");
-        assertEq(swapper.slippage(), 5e16, "Initial slippage should be 5%");
+        assertEq(swapper.slippage(), 1e16, "Initial slippage should be 1%");
 
         // Test unauthorized access
         vm.prank(nonGov);
@@ -132,7 +139,7 @@ contract SwapperUnitTests is Test {
         vm.prank(owner);
         swapper.proposeSlippage(8e16); // 8%
 
-        vm.warp(block.timestamp + 2 days + 1);
+        vm.warp(block.timestamp + 1 weeks + 1);
         vm.prank(owner);
         swapper.executeSlippage();
 
@@ -152,7 +159,7 @@ contract SwapperUnitTests is Test {
     /// @notice Test CurveThreeCryptoSwapper slippage validation
     function test_curveThreeCryptoSwapper_slippage_validation() public {
         CurveThreeCryptoSwapper swapper =
-            new CurveThreeCryptoSwapper(owner, WBTC, USDT, TRICRYPTO_POOL, 1, 0);
+            new CurveThreeCryptoSwapper(owner, WBTC, USDT, TRICRYPTO_POOL, 1, 0, BTC_USD_ORACLE, USDT_USD_ORACLE);
 
         // Test zero slippage
         vm.prank(owner);
@@ -168,7 +175,7 @@ contract SwapperUnitTests is Test {
     /// @notice Test CurveThreeCryptoSwapper slippage cancellation
     function test_curveThreeCryptoSwapper_slippage_cancellation() public {
         CurveThreeCryptoSwapper swapper =
-            new CurveThreeCryptoSwapper(owner, WBTC, USDT, TRICRYPTO_POOL, 1, 0);
+            new CurveThreeCryptoSwapper(owner, WBTC, USDT, TRICRYPTO_POOL, 1, 0, BTC_USD_ORACLE, USDT_USD_ORACLE);
 
         // Propose slippage
         vm.prank(owner);
@@ -179,7 +186,7 @@ contract SwapperUnitTests is Test {
         swapper.cancelSlippage();
 
         // Wait and try to execute - should fail
-        vm.warp(block.timestamp + 2 days + 1);
+        vm.warp(block.timestamp + 1 weeks + 1);
         vm.prank(owner);
         vm.expectRevert(); // No pending slippage to execute
         swapper.executeSlippage();
@@ -188,7 +195,7 @@ contract SwapperUnitTests is Test {
     /// @notice Test CurveTwoCryptoSwapper quote edge cases
     function test_curveTwoCryptoSwapper_quote_edge_cases() public {
         CurveTwoCryptoSwapper swapper =
-            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE);
 
         // Test zero amount
         uint256 quote = swapper.quoteCollateralForDebt(0);
@@ -198,7 +205,7 @@ contract SwapperUnitTests is Test {
     /// @notice Test CurveThreeCryptoSwapper quote edge cases
     function test_curveThreeCryptoSwapper_quote_edge_cases() public {
         CurveThreeCryptoSwapper swapper =
-            new CurveThreeCryptoSwapper(owner, WBTC, USDT, TRICRYPTO_POOL, 1, 0);
+            new CurveThreeCryptoSwapper(owner, WBTC, USDT, TRICRYPTO_POOL, 1, 0, BTC_USD_ORACLE, USDT_USD_ORACLE);
 
         // Test zero amount
         uint256 quote = swapper.quoteCollateralForDebt(0);
@@ -208,7 +215,7 @@ contract SwapperUnitTests is Test {
     /// @notice Test CurveTwoCryptoSwapper swap edge cases
     function test_curveTwoCryptoSwapper_swap_edge_cases() public {
         CurveTwoCryptoSwapper swapper =
-            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0);
+            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE);
 
         // Test zero swap
         uint256 received = swapper.swapCollateralForDebt(0);
@@ -221,7 +228,7 @@ contract SwapperUnitTests is Test {
     /// @notice Test CurveThreeCryptoSwapper swap edge cases
     function test_curveThreeCryptoSwapper_swap_edge_cases() public {
         CurveThreeCryptoSwapper swapper =
-            new CurveThreeCryptoSwapper(owner, WBTC, USDT, TRICRYPTO_POOL, 1, 0);
+            new CurveThreeCryptoSwapper(owner, WBTC, USDT, TRICRYPTO_POOL, 1, 0, BTC_USD_ORACLE, USDT_USD_ORACLE);
 
         // Test zero swap
         uint256 received = swapper.swapCollateralForDebt(0);
@@ -243,7 +250,8 @@ contract SwapperUnitTests is Test {
     function test_cbBtcWbtcUsdtSwapper_zero_quote() public {
         CbBtcWbtcUsdtSwapper swapper = new CbBtcWbtcUsdtSwapper(
             owner, CBBTC, USDT, WBTC, CBBTC_WBTC_POOL, CBBTC_INDEX, WBTC_INDEX_CB,
-            TRICRYPTO_POOL, TRICRYPTO_WBTC_INDEX, TRICRYPTO_USDT_INDEX
+            TRICRYPTO_POOL, TRICRYPTO_WBTC_INDEX, TRICRYPTO_USDT_INDEX,
+            CBBTC_USD_ORACLE, USDT_USD_ORACLE
         );
         assertEq(swapper.quoteCollateralForDebt(0), 0, "Zero quote should return zero");
     }
@@ -251,7 +259,8 @@ contract SwapperUnitTests is Test {
     function test_cbBtcWbtcUsdtSwapper_zero_swapCollateralForDebt() public {
         CbBtcWbtcUsdtSwapper swapper = new CbBtcWbtcUsdtSwapper(
             owner, CBBTC, USDT, WBTC, CBBTC_WBTC_POOL, CBBTC_INDEX, WBTC_INDEX_CB,
-            TRICRYPTO_POOL, TRICRYPTO_WBTC_INDEX, TRICRYPTO_USDT_INDEX
+            TRICRYPTO_POOL, TRICRYPTO_WBTC_INDEX, TRICRYPTO_USDT_INDEX,
+            CBBTC_USD_ORACLE, USDT_USD_ORACLE
         );
         assertEq(swapper.swapCollateralForDebt(0), 0, "Zero swap should return zero");
     }
@@ -259,7 +268,8 @@ contract SwapperUnitTests is Test {
     function test_cbBtcWbtcUsdtSwapper_zero_swapDebtForCollateral() public {
         CbBtcWbtcUsdtSwapper swapper = new CbBtcWbtcUsdtSwapper(
             owner, CBBTC, USDT, WBTC, CBBTC_WBTC_POOL, CBBTC_INDEX, WBTC_INDEX_CB,
-            TRICRYPTO_POOL, TRICRYPTO_WBTC_INDEX, TRICRYPTO_USDT_INDEX
+            TRICRYPTO_POOL, TRICRYPTO_WBTC_INDEX, TRICRYPTO_USDT_INDEX,
+            CBBTC_USD_ORACLE, USDT_USD_ORACLE
         );
         assertEq(swapper.swapDebtForCollateral(0), 0, "Zero swap should return zero");
     }
@@ -270,7 +280,6 @@ contract SwapperUnitTests is Test {
     address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     address constant UNISWAP_ROUTER = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
     address constant WSTETH_USD_ORACLE = 0xCfE54B5cD566aB89272946F602D76Ea879CAb4a8;
-    address constant USDT_USD_ORACLE = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
     uint24 constant FEE_WSTETH_WETH = 100;
     uint24 constant FEE_WETH_USDT = 500;
 
@@ -304,7 +313,7 @@ contract SwapperUnitTests is Test {
     address constant CRV_CRVUSD_TRICRYPTO = 0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14;
 
     function test_crvToCrvUsdSwapper_zero_swap() public {
-        CrvToCrvUsdSwapper swapper = new CrvToCrvUsdSwapper(owner, CRV, CRVUSD, CRV_CRVUSD_TRICRYPTO);
+        CrvToCrvUsdSwapper swapper = new CrvToCrvUsdSwapper(owner, CRV, CRVUSD, CRV_CRVUSD_TRICRYPTO, CRV_USD_ORACLE, CRVUSD_USD_ORACLE);
         assertEq(swapper.swap(0), 0, "Zero swap should return zero");
     }
 }

@@ -2,10 +2,12 @@
 pragma solidity ^0.8.33;
 
 import { IERC20 } from "../../interfaces/IERC20.sol";
+import { IChainlinkOracle } from "../../interfaces/IChainlinkOracle.sol";
 import { ICurveTwoCrypto } from "../../interfaces/ICurveTwoCrypto.sol";
 import { ICurveTwoCryptoInt128 } from "../../interfaces/ICurveTwoCryptoInt128.sol";
 import { ICurveThreeCrypto } from "../../interfaces/ICurveThreeCrypto.sol";
 import { ISwapper } from "../../interfaces/ISwapper.sol";
+import { OracleLib } from "../../libraries/OracleLib.sol";
 import { SafeTransferLib } from "../../libraries/SafeTransferLib.sol";
 import { BaseSwapper } from "./BaseSwapper.sol";
 
@@ -23,6 +25,11 @@ contract CbBtcWbtcUsdtSwapper is BaseSwapper, ISwapper {
     uint256 public immutable wbtcIndex;
     uint256 public immutable triWbtcIndex;
     uint256 public immutable triUsdtIndex;
+    IChainlinkOracle public immutable collateralOracle;
+    IChainlinkOracle public immutable debtOracle;
+
+    uint256 public constant MAX_COLLATERAL_ORACLE_STALENESS = 3600;
+    uint256 public constant MAX_DEBT_ORACLE_STALENESS = 90000;
 
     constructor(
         address _gov,
@@ -34,11 +41,14 @@ contract CbBtcWbtcUsdtSwapper is BaseSwapper, ISwapper {
         uint256 _wbtcIndex,
         address _triCryptoPool,
         uint256 _triWbtcIndex,
-        uint256 _triUsdtIndex
+        uint256 _triUsdtIndex,
+        address _collateralOracle,
+        address _debtOracle
     ) BaseSwapper(_gov) {
         if (
             _collateralToken == address(0) || _debtToken == address(0)
                 || _wbtcToken == address(0) || _cbBtcPool == address(0) || _triCryptoPool == address(0)
+                || _collateralOracle == address(0) || _debtOracle == address(0)
         ) {
             revert InvalidAddress();
         }
@@ -51,6 +61,8 @@ contract CbBtcWbtcUsdtSwapper is BaseSwapper, ISwapper {
         wbtcIndex = _wbtcIndex;
         triWbtcIndex = _triWbtcIndex;
         triUsdtIndex = _triUsdtIndex;
+        collateralOracle = IChainlinkOracle(_collateralOracle);
+        debtOracle = IChainlinkOracle(_debtOracle);
     }
 
     /// @inheritdoc ISwapper
@@ -82,6 +94,20 @@ contract CbBtcWbtcUsdtSwapper is BaseSwapper, ISwapper {
 
         uint256 expectedUsdt = _safeGetDyThree(triWbtcIndex, triUsdtIndex, wbtcReceived);
         uint256 minUsdt = expectedUsdt > 0 ? _applySlippageDown(expectedUsdt) : 0;
+
+        // Oracle floor (end-to-end check across both hops)
+        uint256 oracleExpected = OracleLib.getCollateralValue(
+            collateralAmount,
+            collateralOracle,
+            MAX_COLLATERAL_ORACLE_STALENESS,
+            debtOracle,
+            MAX_DEBT_ORACLE_STALENESS,
+            collateralToken,
+            debtToken
+        );
+        uint256 oracleMinOut = (oracleExpected * (PRECISION - slippage)) / PRECISION;
+        if (oracleMinOut > minUsdt) minUsdt = oracleMinOut;
+
         wbtcToken.ensureApproval(address(triCryptoPool), wbtcReceived);
         uint256 debtBefore = debtToken.balanceOf(address(this));
         debtReceived = _exchangeThree(
@@ -110,6 +136,20 @@ contract CbBtcWbtcUsdtSwapper is BaseSwapper, ISwapper {
 
         uint256 expectedCbBtc = _safeGetDyTwo(wbtcIndex, cbBtcIndex, wbtcReceived);
         uint256 minCbBtc = expectedCbBtc > 0 ? _applySlippageDown(expectedCbBtc) : 0;
+
+        // Oracle floor (end-to-end check across both hops)
+        uint256 oracleExpected = OracleLib.getDebtValue(
+            debtAmount,
+            collateralOracle,
+            MAX_COLLATERAL_ORACLE_STALENESS,
+            debtOracle,
+            MAX_DEBT_ORACLE_STALENESS,
+            collateralToken,
+            debtToken
+        );
+        uint256 oracleMinOut = (oracleExpected * (PRECISION - slippage)) / PRECISION;
+        if (oracleMinOut > minCbBtc) minCbBtc = oracleMinOut;
+
         wbtcToken.ensureApproval(address(cbBtcPool), wbtcReceived);
         _exchangeTwo(wbtcIndex, cbBtcIndex, wbtcReceived, minCbBtc, address(this));
         collateralReceived = collateralToken.balanceOf(address(this));
