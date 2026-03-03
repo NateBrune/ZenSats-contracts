@@ -244,7 +244,7 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
         if (!llamaLend.loan_exists(address(this))) {
             uint256 bal = collateralToken.balanceOf(address(this));
             if (bal > 0) {
-                if (!collateralToken.transfer(vault, bal)) revert TransferFailed();
+                collateralToken.safeTransfer(vault, bal);
             }
             return;
         }
@@ -321,7 +321,7 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
         emit PositionUnwound(collateralNeeded, debtRepaid, totalCollateral);
 
         if (totalCollateral > 0) {
-            if (!collateralToken.transfer(vault, totalCollateral)) revert TransferFailed();
+            collateralToken.safeTransfer(vault, totalCollateral);
         }
     }
 
@@ -397,7 +397,7 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
         if (debtToken.balanceOf(address(this)) < repaymentNeeded) {
             revert InsufficientFlashloanRepayment();
         }
-        if (!debtToken.transfer(msg.sender, repaymentNeeded)) revert TransferFailed();
+        debtToken.safeTransfer(msg.sender, repaymentNeeded);
 
         return FLASH_LOAN_CALLBACK;
     }
@@ -516,13 +516,13 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     /// @inheritdoc ILoanManager
     function transferCollateral(address to, uint256 amount) external onlyVault {
         if (to == address(0)) revert InvalidAddress();
-        if (!collateralToken.transfer(to, amount)) revert TransferFailed();
+        collateralToken.safeTransfer(to, amount);
     }
 
     /// @inheritdoc ILoanManager
     function transferDebt(address to, uint256 amount) external onlyVault {
         if (to == address(0)) revert InvalidAddress();
-        if (!debtToken.transfer(to, amount)) revert TransferFailed();
+        debtToken.safeTransfer(to, amount);
     }
 
     /// @inheritdoc ILoanManager

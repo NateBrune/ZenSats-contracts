@@ -83,7 +83,7 @@ contract CbBtcUsdtIporAaveStrategyForkTest is Test {
         if (cbBtcUpdate + 1 > block.timestamp) {
             vm.warp(cbBtcUpdate + 1);
         }
-        _mockOracles(50000e8, 1e8);
+        _refreshOracles();
 
         cbbtc = IERC20(CBBTC);
         usdt = IERC20(USDT);
@@ -171,7 +171,7 @@ contract CbBtcUsdtIporAaveStrategyForkTest is Test {
     function test_unwindAndWithdraws() public {
         if (iporVault.maxDeposit(address(vault)) < 1e18) return;
 
-        uint256 depositAmount = 2e6; // 0.02 cbBTC
+        uint256 depositAmount = 1e7; // 0.1 cbBTC
         vm.prank(user);
         vault.deposit(depositAmount, user);
 
@@ -181,12 +181,16 @@ contract CbBtcUsdtIporAaveStrategyForkTest is Test {
         uint256 shares = vault.balanceOf(user);
         vm.warp(block.timestamp + 2);
         vm.roll(block.number + 1);
-        _mockOracles(50000e8, 1e8);
+        _refreshOracles();
 
         vm.prank(user);
         uint256 partialReceived = vault.redeem(shares / 2, user, user);
         assertGt(partialReceived, 0, "Partial redeem should return cbBTC");
         assertLt(vault.balanceOf(user), shares, "Shares should decrease");
+
+        vm.warp(block.timestamp + 2);
+        vm.roll(block.number + 1);
+        _refreshOracles();
 
         vm.prank(owner);
         vault.setIdle(true);
@@ -197,7 +201,7 @@ contract CbBtcUsdtIporAaveStrategyForkTest is Test {
         uint256 balanceBefore = cbbtc.balanceOf(user);
         vm.warp(block.timestamp + 2);
         vm.roll(block.number + 1);
-        _mockOracles(50000e8, 1e8);
+        _refreshOracles();
 
         vm.prank(user);
         uint256 finalReceived = vault.redeem(remainingShares, user, user);
@@ -207,16 +211,20 @@ contract CbBtcUsdtIporAaveStrategyForkTest is Test {
         assertGt(cbbtc.balanceOf(user), balanceBefore, "User cbBTC should increase");
     }
 
-    function _mockOracles(uint256 cbBtcPrice, uint256 usdtPrice) internal {
+    function _mockOracle(address oracle) internal {
+        (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) =
+            IChainlinkOracle(oracle).latestRoundData();
+        uint256 timestamp = block.timestamp > updatedAt ? block.timestamp : updatedAt;
         vm.mockCall(
-            CBBTC_USD_ORACLE,
+            oracle,
             abi.encodeWithSelector(IChainlinkOracle.latestRoundData.selector),
-            abi.encode(uint80(1), int256(cbBtcPrice), block.timestamp, block.timestamp, uint80(1))
+            abi.encode(roundId, answer, timestamp, timestamp, answeredInRound)
         );
-        vm.mockCall(
-            USDT_USD_ORACLE,
-            abi.encodeWithSelector(IChainlinkOracle.latestRoundData.selector),
-            abi.encode(uint80(1), int256(usdtPrice), block.timestamp, block.timestamp, uint80(1))
-        );
+    }
+
+    function _refreshOracles() internal {
+        _mockOracle(CBBTC_USD_ORACLE);
+        _mockOracle(USDT_USD_ORACLE);
+        _mockOracle(CRVUSD_USD_ORACLE);
     }
 }

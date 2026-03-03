@@ -99,13 +99,13 @@ contract DeployWstEth is Script {
             address(viewHelper)
         );
 
-        loanManager.initializeVault(address(vault));
-        strategy.initializeVault(address(vault));
-
         VaultTracker vaultTracker = new VaultTracker(address(vault));
 
         // Optional: deploy Chainlink Automation receiver for rebalancing.
         // ZenjiRebalanceKeeper rebalanceKeeper = new ZenjiRebalanceKeeper(address(vault), owner);
+
+        loanManager.initializeVault(address(vault));
+        strategy.initializeVault(address(vault));
 
         vm.stopBroadcast();
 

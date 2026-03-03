@@ -24,4 +24,10 @@ contract ZenjiWbtc is Zenji {
     function symbol() public pure override(ERC20, IERC20Metadata) returns (string memory) {
         return "zenWBTC-usdtIpor";
     }
+
+    /// @notice 1e5 sat = 0.001 BTC ≈ $100 dead capital (at $100K/BTC).
+    /// Attack cost: ~$100. Dilution: ~10 bps at $100K TVL, ~1 bp at $1M TVL.
+    function VIRTUAL_SHARE_OFFSET() public pure override returns (uint256) {
+        return 1e5;
+    }
 }

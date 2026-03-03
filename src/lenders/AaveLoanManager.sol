@@ -239,7 +239,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
             if (fullyClose && variableDebtToken.balanceOf(address(this)) > 0) revert DebtNotFullyRepaid();
             uint256 idleCollateral = collateralToken.balanceOf(address(this));
             if (idleCollateral > 0) {
-                if (!collateralToken.transfer(vault, idleCollateral)) revert TransferFailed();
+                collateralToken.safeTransfer(vault, idleCollateral);
             }
             return;
         }
@@ -253,7 +253,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
 
         uint256 idleAfter = collateralToken.balanceOf(address(this));
         if (idleAfter > 0) {
-            if (!collateralToken.transfer(vault, idleAfter)) revert TransferFailed();
+            collateralToken.safeTransfer(vault, idleAfter);
         }
     }
 
@@ -487,11 +487,11 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         if (to == address(0)) revert InvalidAddress();
         uint256 idle = collateralToken.balanceOf(address(this));
         if (idle >= amount) {
-            if (!collateralToken.transfer(to, amount)) revert TransferFailed();
+            collateralToken.safeTransfer(to, amount);
             return;
         }
         if (idle > 0) {
-            if (!collateralToken.transfer(to, idle)) revert TransferFailed();
+            collateralToken.safeTransfer(to, idle);
             amount -= idle;
         }
         if (amount > 0) {

@@ -41,13 +41,13 @@ TimelockLib.sol  - Timelock library for parameter changes
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| Target LTV | 70% (default) | Configurable 15-75% via timelock |
+| Target LTV | 65% (default max) | Configurable 15-65% via timelock |
 | Deadband | +/-3% | Rebalance triggers outside this range |
 | Fee Rate | 10% (default) | On yield profit only, max 20%, timelocked |
-| Rebalance Bounty | 20% (default) | Of accumulated fees, paid to keeper |
+| Rebalance Bounty | 20% (default) | Of accumulated fees, paid to keeper, max 50% |
 | Min Deposit | 10,000 sats | Prevents dust deposits |
 | Virtual Offset | 1e5 | Inflation attack prevention |
-| Timelock Delay | 2 days | For swapper, strategy, and loan manager changes |
+| Timelock Delay | 1 week | For governance-timelocked swapper/slippage changes |
 
 ## Access Control
 

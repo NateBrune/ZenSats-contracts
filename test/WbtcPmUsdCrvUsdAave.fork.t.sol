@@ -94,15 +94,18 @@ contract WbtcPmUsdCrvUsdAave is Test {
         (,,, uint256 btcUpdatedAt,) = IChainlinkOracle(BTC_USD_ORACLE).latestRoundData();
         (,,, uint256 usdtUpdatedAt,) = IChainlinkOracle(USDT_USD_ORACLE).latestRoundData();
         (,,, uint256 crvUsdUpdatedAt,) = IChainlinkOracle(CRVUSD_USD_ORACLE).latestRoundData();
+        (,,, uint256 crvUpdatedAt,) = IChainlinkOracle(CRV_USD_ORACLE).latestRoundData();
 
         uint256 maxUpdatedAt = btcUpdatedAt;
         if (usdtUpdatedAt > maxUpdatedAt) maxUpdatedAt = usdtUpdatedAt;
         if (crvUsdUpdatedAt > maxUpdatedAt) maxUpdatedAt = crvUsdUpdatedAt;
+        if (crvUpdatedAt > maxUpdatedAt) maxUpdatedAt = crvUpdatedAt;
         if (block.timestamp < maxUpdatedAt + 1) vm.warp(maxUpdatedAt + 1);
 
         _mockOracle(BTC_USD_ORACLE);
         _mockOracle(USDT_USD_ORACLE);
         _mockOracle(CRVUSD_USD_ORACLE);
+        _mockOracle(CRV_USD_ORACLE);
     }
 
     function _mockOracle(address oracle) internal {
@@ -195,6 +198,7 @@ contract WbtcPmUsdCrvUsdAave is Test {
         _mockOracle(BTC_USD_ORACLE);
         _mockOracle(USDT_USD_ORACLE);
         _mockOracle(CRVUSD_USD_ORACLE);
+        _mockOracle(CRV_USD_ORACLE);
     }
 
     // ============ A. Value Accounting Tests ============

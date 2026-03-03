@@ -17,7 +17,7 @@ contract CrvToCrvUsdSwapper is BaseSwapper {
 
     uint256 public constant CRV_INDEX = 2;
     uint256 public constant CRVUSD_INDEX = 0;
-    uint256 public constant MAX_CRV_ORACLE_STALENESS = 3600;
+    uint256 public constant MAX_CRV_ORACLE_STALENESS = 90000; // 25h — CRV/USD has 24h heartbeat
     uint256 public constant MAX_CRVUSD_ORACLE_STALENESS = 90000;
 
     IERC20 public immutable crv;

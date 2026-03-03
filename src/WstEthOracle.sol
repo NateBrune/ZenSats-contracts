@@ -15,6 +15,9 @@ contract WstEthOracle is IChainlinkOracle {
     IChainlinkOracle public immutable stEthEthFeed;
     IChainlinkOracle public immutable ethUsdFeed;
 
+    /// @notice stETH/ETH Chainlink heartbeat is 24 hours
+    uint256 public constant STETH_ETH_MAX_STALENESS = 90000; // 25 hours
+
     constructor(address _wstETH, address _stEthEthFeed, address _ethUsdFeed) {
         wstETH = IWstETH(_wstETH);
         stEthEthFeed = IChainlinkOracle(_stEthEthFeed);
@@ -28,13 +31,14 @@ contract WstEthOracle is IChainlinkOracle {
         override
         returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
     {
-        // Get stETH/ETH price (18 decimals)
+        // Get stETH/ETH price (18 decimals) — 24h heartbeat, validated here
         (uint80 stEthRoundId, int256 stEthEthPrice,, uint256 stEthEthUpdatedAt, uint80 stEthAnsweredInRound) =
             stEthEthFeed.latestRoundData();
         require(stEthEthPrice > 0, "stETH/ETH: invalid price");
         require(stEthAnsweredInRound >= stEthRoundId, "stETH/ETH: stale round");
+        require(block.timestamp - stEthEthUpdatedAt <= STETH_ETH_MAX_STALENESS, "stETH/ETH: stale");
 
-        // Get ETH/USD price (8 decimals)
+        // Get ETH/USD price (8 decimals) — 1h heartbeat, staleness checked by consumer
         (uint80 ethUsdRoundId, int256 ethUsdPrice, uint256 ethUsdStartedAt, uint256 ethUsdUpdatedAt, uint80 ethUsdAnsweredInRound) =
             ethUsdFeed.latestRoundData();
         require(ethUsdPrice > 0, "ETH/USD: invalid price");
@@ -49,8 +53,9 @@ contract WstEthOracle is IChainlinkOracle {
         // (ratio * stEthEthPrice * ethUsdPrice) / (1e18 * 1e18) = 8 dec
         answer = int256((ratio * uint256(stEthEthPrice) * uint256(ethUsdPrice)) / (1e18 * 1e18));
 
-        // Use the most stale updatedAt (minimum) for conservative freshness
-        updatedAt = stEthEthUpdatedAt < ethUsdUpdatedAt ? stEthEthUpdatedAt : ethUsdUpdatedAt;
+        // Pass through ETH/USD updatedAt — stETH/ETH staleness is validated above
+        // This lets the consumer's 1h staleness check apply to the ETH/USD feed only
+        updatedAt = ethUsdUpdatedAt;
         startedAt = ethUsdStartedAt;
         roundId = ethUsdRoundId;
         answeredInRound = ethUsdAnsweredInRound;

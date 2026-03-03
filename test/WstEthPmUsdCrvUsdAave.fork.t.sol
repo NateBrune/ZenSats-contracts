@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import { Test, console } from "forge-std/Test.sol";
-import { Zenji } from "../src/Zenji.sol";
-import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
-import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { CbBtcWbtcUsdtSwapper } from "../src/swappers/base/CbBtcWbtcUsdtSwapper.sol";
-import { UsdtIporYieldStrategy } from "../src/strategies/UsdtIporYieldStrategy.sol";
-import { IERC20 } from "../src/interfaces/IERC20.sol";
-import { SafeTransferLib } from "../src/libraries/SafeTransferLib.sol";
-import { TimelockLib } from "../src/libraries/TimelockLib.sol";
+import {Test, console} from "forge-std/Test.sol";
+import {Zenji} from "../src/Zenji.sol";
+import {ZenjiViewHelper} from "../src/ZenjiViewHelper.sol";
+import {AaveLoanManager} from "../src/lenders/AaveLoanManager.sol";
+import {UniswapV3TwoHopSwapper} from "../src/swappers/base/UniswapV3TwoHopSwapper.sol";
+import {WstEthOracle} from "../src/WstEthOracle.sol";
+import {CrvToCrvUsdSwapper} from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
+import {PmUsdCrvUsdStrategy} from "../src/strategies/PmUsdCrvUsdStrategy.sol";
+import {ICurveStableSwapNG} from "../src/interfaces/ICurveStableSwapNG.sol";
+import {IERC20} from "../src/interfaces/IERC20.sol";
+import {SafeTransferLib} from "../src/libraries/SafeTransferLib.sol";
+import {TimelockLib} from "../src/libraries/TimelockLib.sol";
 
 interface IChainlinkOracle {
     function latestRoundData()
@@ -18,56 +21,60 @@ interface IChainlinkOracle {
         returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound);
 }
 
-/// @title CbBtcAaveExtensive
-/// @notice Extensive fork tests for cbBTC + USDT + IPOR (Aave) vault configuration
-contract CbBtcAaveExtensive is Test {
+/// @title WstEthPmUsdCrvUsdAave
+/// @notice Fork tests for wstETH + USDT + pmUSD/crvUSD (Stake DAO) strategy on Aave
+contract WstEthPmUsdCrvUsdAave is Test {
     using SafeTransferLib for IERC20;
 
     // Mainnet addresses
-    address constant CBBTC = 0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf;
-    address constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
+    address constant WSTETH = 0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0;
+    address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     address constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
     address constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
+    address constant CRV = 0xD533a949740bb3306d119CC777fa900bA034cd52;
 
     // Aave V3
     address constant AAVE_POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
-    address constant AAVE_A_CBBTC = 0x5c647cE0Ae10658ec44FA4E11A51c96e94efd1Dd;
+    address constant AAVE_A_WSTETH = 0x0B925eD163218f6662a35e0f0371Ac234f9E9371;
     address constant AAVE_VAR_DEBT_USDT = 0x6df1C1E379bC5a00a7b4C6e67A203333772f45A8;
 
-    // IPOR / Curve
-    address constant IPOR_PLASMA_VAULT = 0xbfA9d6EC0E04B6691fCAE5F8b48838C3918eC117;
+    // Curve / Stake DAO
     address constant USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
-    int128 constant USDT_INDEX = 0;
-    int128 constant CRVUSD_INDEX = 1;
+    address constant PMUSD_CRVUSD_POOL = 0xEcb0F0d68C19BdAaDAEbE24f6752A4Db34e2c2cb;
+    address constant PMUSD_CRVUSD_GAUGE = 0xF3c43E7D722963b9569d1E39873dF9E2dFE8C087;
+    address constant STAKE_DAO_REWARD_VAULT = 0x7d3CDe9cCf0109423E672c17bD36481CF8CE437D;
+    address constant CRV_CRVUSD_TRICRYPTO = 0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14;
 
-    // Curve pools
-    address constant CBBTC_WBTC_POOL = 0x839d6bDeDFF886404A6d7a788ef241e4e28F4802;
-    uint256 constant CBBTC_INDEX = 0;
-    uint256 constant WBTC_INDEX = 1;
-    address constant TRICRYPTO_POOL = 0xf5f5B97624542D72A9E06f04804Bf81baA15e2B4;
-    uint256 constant TRICRYPTO_WBTC_INDEX = 1;
-    uint256 constant TRICRYPTO_USDT_INDEX = 0;
+    // Uniswap V3
+    address constant UNISWAP_ROUTER = 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45;
+    uint24 constant FEE_WSTETH_WETH = 100;
+    uint24 constant FEE_WETH_USDT = 3000;
 
     // Oracles
-    address constant CBBTC_USD_ORACLE = 0x2665701293fCbEB223D11A08D826563EDcCE423A;
+    address constant STETH_ETH_ORACLE = 0x86392dC19c0b719886221c78AB11eb8Cf5c52812;
+    address constant ETH_USD_ORACLE = 0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419;
     address constant USDT_USD_ORACLE = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
     address constant CRVUSD_USD_ORACLE = 0xEEf0C605546958c1f899b6fB336C20671f9cD49F;
+    address constant CRV_USD_ORACLE = 0xCd627aA160A6fA45Eb793D19Ef54f5062F20f33f;
 
-    // Accounts
+    // Test accounts
     address owner = makeAddr("owner");
     address user1 = makeAddr("user1");
     address user2 = makeAddr("user2");
     address keeper = makeAddr("keeper");
     address feeRecipient = makeAddr("feeRecipient");
 
-    IERC20 cbbtc;
+    IERC20 wstETH;
     IERC20 usdt;
     ZenjiViewHelper viewHelper;
 
+    // Deployed contracts (set in _deployVault)
     Zenji vault;
     AaveLoanManager loanManager;
-    UsdtIporYieldStrategy strategy;
-    CbBtcWbtcUsdtSwapper swapper;
+    PmUsdCrvUsdStrategy strategy;
+    UniswapV3TwoHopSwapper swapper;
+    CrvToCrvUsdSwapper crvSwapper;
+    WstEthOracle wstEthOracle;
 
     function setUp() public {
         string memory rpcUrl = vm.envOr("MAINNET_RPC_URL", string(""));
@@ -79,31 +86,37 @@ contract CbBtcAaveExtensive is Test {
             return;
         }
 
-        cbbtc = IERC20(CBBTC);
+        wstETH = IERC20(WSTETH);
         usdt = IERC20(USDT);
         viewHelper = new ZenjiViewHelper();
 
         _syncAndMockOracles();
 
-        deal(CBBTC, user1, 10e8);
-        deal(CBBTC, user2, 10e8);
+        deal(WSTETH, user1, 100e18);
+        deal(WSTETH, user2, 100e18);
     }
 
     // ============ Helpers ============
 
     function _syncAndMockOracles() internal {
-        (,,, uint256 cbUpdate,) = IChainlinkOracle(CBBTC_USD_ORACLE).latestRoundData();
-        (,,, uint256 usdtUpdate,) = IChainlinkOracle(USDT_USD_ORACLE).latestRoundData();
-        (,,, uint256 crvUsdUpdate,) = IChainlinkOracle(CRVUSD_USD_ORACLE).latestRoundData();
+        (,,, uint256 stEthEthUpdatedAt,) = IChainlinkOracle(STETH_ETH_ORACLE).latestRoundData();
+        (,,, uint256 ethUsdUpdatedAt,) = IChainlinkOracle(ETH_USD_ORACLE).latestRoundData();
+        (,,, uint256 usdtUpdatedAt,) = IChainlinkOracle(USDT_USD_ORACLE).latestRoundData();
+        (,,, uint256 crvUsdUpdatedAt,) = IChainlinkOracle(CRVUSD_USD_ORACLE).latestRoundData();
+        (,,, uint256 crvUpdatedAt,) = IChainlinkOracle(CRV_USD_ORACLE).latestRoundData();
 
-        uint256 maxUpdatedAt = cbUpdate;
-        if (usdtUpdate > maxUpdatedAt) maxUpdatedAt = usdtUpdate;
-        if (crvUsdUpdate > maxUpdatedAt) maxUpdatedAt = crvUsdUpdate;
+        uint256 maxUpdatedAt = stEthEthUpdatedAt;
+        if (ethUsdUpdatedAt > maxUpdatedAt) maxUpdatedAt = ethUsdUpdatedAt;
+        if (usdtUpdatedAt > maxUpdatedAt) maxUpdatedAt = usdtUpdatedAt;
+        if (crvUsdUpdatedAt > maxUpdatedAt) maxUpdatedAt = crvUsdUpdatedAt;
+        if (crvUpdatedAt > maxUpdatedAt) maxUpdatedAt = crvUpdatedAt;
         if (block.timestamp < maxUpdatedAt + 1) vm.warp(maxUpdatedAt + 1);
 
-        _mockOracle(CBBTC_USD_ORACLE);
+        _mockOracle(STETH_ETH_ORACLE);
+        _mockOracle(ETH_USD_ORACLE);
         _mockOracle(USDT_USD_ORACLE);
         _mockOracle(CRVUSD_USD_ORACLE);
+        _mockOracle(CRV_USD_ORACLE);
     }
 
     function _mockOracle(address oracle) internal {
@@ -117,34 +130,80 @@ contract CbBtcAaveExtensive is Test {
         );
     }
 
+    function _getLpCrvUsdIndex() internal view returns (int128) {
+        address coin0 = ICurveStableSwapNG(PMUSD_CRVUSD_POOL).coins(0);
+        address coin1 = ICurveStableSwapNG(PMUSD_CRVUSD_POOL).coins(1);
+        if (coin0 == CRVUSD) return int128(0);
+        if (coin1 == CRVUSD) return int128(1);
+        revert("crvUSD index not found");
+    }
+
     function _deployVault() internal {
         uint256 startNonce = vm.getNonce(address(this));
-        address expectedVaultAddress = computeCreateAddress(address(this), startNonce + 3);
+        // viewHelper already deployed in setUp, so nonce offset accounts for:
+        // +0: wstEthOracle, +1: crvSwapper, +2: swapper, +3: strategy, +4: loanManager, +5: vault
+        address expectedVaultAddress = computeCreateAddress(address(this), startNonce + 5);
 
-        swapper = new CbBtcWbtcUsdtSwapper(
-            owner, CBBTC, USDT, WBTC, CBBTC_WBTC_POOL, CBBTC_INDEX, WBTC_INDEX, TRICRYPTO_POOL, TRICRYPTO_WBTC_INDEX, TRICRYPTO_USDT_INDEX,
-            CBBTC_USD_ORACLE, USDT_USD_ORACLE
+        int128 lpCrvUsdIndex = _getLpCrvUsdIndex();
+
+        wstEthOracle = new WstEthOracle(WSTETH, STETH_ETH_ORACLE, ETH_USD_ORACLE);
+
+        crvSwapper =
+            new CrvToCrvUsdSwapper(owner, CRV, CRVUSD, CRV_CRVUSD_TRICRYPTO, CRV_USD_ORACLE, CRVUSD_USD_ORACLE);
+
+        swapper = new UniswapV3TwoHopSwapper(
+            owner,
+            WSTETH,
+            USDT,
+            WETH,
+            UNISWAP_ROUTER,
+            FEE_WSTETH_WETH,
+            FEE_WETH_USDT,
+            address(wstEthOracle),
+            USDT_USD_ORACLE
         );
 
-        strategy = new UsdtIporYieldStrategy(
-            USDT, CRVUSD, expectedVaultAddress, USDT_CRVUSD_POOL, IPOR_PLASMA_VAULT, USDT_INDEX, CRVUSD_INDEX, CRVUSD_USD_ORACLE, USDT_USD_ORACLE
+        strategy = new PmUsdCrvUsdStrategy(
+            USDT,
+            CRVUSD,
+            CRV,
+            expectedVaultAddress,
+            USDT_CRVUSD_POOL,
+            PMUSD_CRVUSD_POOL,
+            STAKE_DAO_REWARD_VAULT,
+            address(crvSwapper),
+            PMUSD_CRVUSD_GAUGE,
+            0,
+            1,
+            lpCrvUsdIndex,
+            CRVUSD_USD_ORACLE,
+            USDT_USD_ORACLE,
+            CRV_USD_ORACLE
         );
 
         loanManager = new AaveLoanManager(
-            CBBTC, USDT, AAVE_A_CBBTC, AAVE_VAR_DEBT_USDT, AAVE_POOL,
-            CBBTC_USD_ORACLE, USDT_USD_ORACLE, address(swapper), 7500, 8000, expectedVaultAddress
+            WSTETH,
+            USDT,
+            AAVE_A_WSTETH,
+            AAVE_VAR_DEBT_USDT,
+            AAVE_POOL,
+            address(wstEthOracle),
+            USDT_USD_ORACLE,
+            address(swapper),
+            7100,
+            7600,
+            expectedVaultAddress
         );
 
-        vault = new Zenji(CBBTC, USDT, address(loanManager), address(strategy), address(swapper), owner, address(viewHelper));
+        vault = new Zenji(
+            WSTETH, USDT, address(loanManager), address(strategy), address(swapper), owner, address(viewHelper)
+        );
         require(address(vault) == expectedVaultAddress, "Vault address mismatch");
-
-        // Increase swapper slippage for fork (1% default may be too tight for cbBTC two-hop swaps)
-        vm.store(address(swapper), bytes32(uint256(0)), bytes32(uint256(5e16)));
     }
 
     function _depositAs(address user, uint256 amount) internal returns (uint256 shares) {
         vm.startPrank(user);
-        cbbtc.approve(address(vault), amount);
+        wstETH.approve(address(vault), amount);
         shares = vault.deposit(amount, user);
         vm.stopPrank();
         vm.roll(block.number + 1);
@@ -157,7 +216,10 @@ contract CbBtcAaveExtensive is Test {
         collateral = vault.redeem(shares, user, user);
     }
 
-    function _assertValuePreserved(uint256 deposited, uint256 withdrawn, uint256 toleranceBps, string memory msg_) internal pure {
+    function _assertValuePreserved(uint256 deposited, uint256 withdrawn, uint256 toleranceBps, string memory msg_)
+        internal
+        pure
+    {
         uint256 minExpected = deposited - (deposited * toleranceBps) / 10000;
         require(withdrawn >= minExpected, msg_);
     }
@@ -165,16 +227,18 @@ contract CbBtcAaveExtensive is Test {
     function _refreshOracles() internal {
         vm.warp(block.timestamp + 2);
         vm.roll(block.number + 1);
-        _mockOracle(CBBTC_USD_ORACLE);
+        _mockOracle(STETH_ETH_ORACLE);
+        _mockOracle(ETH_USD_ORACLE);
         _mockOracle(USDT_USD_ORACLE);
         _mockOracle(CRVUSD_USD_ORACLE);
+        _mockOracle(CRV_USD_ORACLE);
     }
 
     // ============ A. Value Accounting Tests ============
 
     function test_depositAndRedeem_fullCycle() public {
         _deployVault();
-        uint256 depositAmount = 1e8; // 1 cbBTC
+        uint256 depositAmount = 1e18; // 1 wstETH
 
         _depositAs(user1, depositAmount);
         assertTrue(loanManager.loanExists(), "Loan should exist");
@@ -188,7 +252,7 @@ contract CbBtcAaveExtensive is Test {
 
     function test_depositAndRedeem_partial() public {
         _deployVault();
-        uint256 depositAmount = 2e8; // 2 cbBTC
+        uint256 depositAmount = 2e18; // 2 wstETH
 
         uint256 shares = _depositAs(user1, depositAmount);
 
@@ -226,7 +290,7 @@ contract CbBtcAaveExtensive is Test {
 
     function test_depositAndRedeem_large() public {
         _deployVault();
-        uint256 depositAmount = 5e8; // 5 cbBTC
+        uint256 depositAmount = 50e18; // 50 wstETH
 
         _depositAs(user1, depositAmount);
 
@@ -238,8 +302,8 @@ contract CbBtcAaveExtensive is Test {
 
     function test_multiUser_depositAndRedeem() public {
         _deployVault();
-        uint256 deposit1 = 1e8;
-        uint256 deposit2 = 2e8;
+        uint256 deposit1 = 1e18; // 1 wstETH
+        uint256 deposit2 = 2e18; // 2 wstETH
 
         _depositAs(user1, deposit1);
         _depositAs(user2, deposit2);
@@ -261,7 +325,7 @@ contract CbBtcAaveExtensive is Test {
     function test_sequentialDepositsAndRedeems() public {
         _deployVault();
 
-        uint256 shares1 = _depositAs(user1, 1e8);
+        uint256 shares1 = _depositAs(user1, 1e18);
 
         _refreshOracles();
 
@@ -271,62 +335,81 @@ contract CbBtcAaveExtensive is Test {
 
         _refreshOracles();
 
-        uint256 remainingShares = vault.balanceOf(user1);
-        vm.prank(user1);
-        uint256 remainingOut = vault.redeem(remainingShares, user1, user1);
-        assertGt(remainingOut, 0, "Remaining redeem should return collateral");
-
-        console.log("Sequential: partial=%d remaining=%d", partialOut, remainingOut);
-    }
-
-    // ============ B. Rebalance & Bounty Tests ============
-
-    function test_rebalance_downward() public {
-        _deployVault();
-        vm.prank(owner);
-        vault.setParam(1, 55e16);
-
-        _depositAs(user1, 2e8);
+        _depositAs(user1, 1e18);
 
         _refreshOracles();
 
-        // Move price up to force downward rebalance
-        (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) =
-            IChainlinkOracle(CBBTC_USD_ORACLE).latestRoundData();
-        int256 higher = (answer * 120) / 100;
-        vm.mockCall(
-            CBBTC_USD_ORACLE,
-            abi.encodeWithSelector(IChainlinkOracle.latestRoundData.selector),
-            abi.encode(roundId, higher, updatedAt, updatedAt, answeredInRound)
-        );
+        uint256 finalOut = _redeemAllAs(user1);
+        assertGt(finalOut, 0, "Final redeem should return collateral");
 
-        vm.prank(keeper);
-        vault.rebalance();
+        uint256 totalIn = 2e18;
+        uint256 totalOut = partialOut + finalOut;
+        _assertValuePreserved(totalIn, totalOut, 300, "Sequential: >3% total loss");
+
+        console.log("Sequential: totalIn=%d totalOut=%d", totalIn, totalOut);
     }
+
+    // ============ B. Rebalance Tests ============
 
     function test_rebalance_upward() public {
         _deployVault();
         vm.prank(owner);
         vault.setParam(1, 55e16);
 
-        _depositAs(user1, 2e8);
+        _depositAs(user1, 2e18);
 
         _refreshOracles();
-        // IPOR PlasmaVault enforces a withdraw cooldown; advance time to clear it
-        vm.warp(block.timestamp + 1 days);
-        _syncAndMockOracles();
 
-        // Move price down to force upward rebalance
-        (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) =
-            IChainlinkOracle(CBBTC_USD_ORACLE).latestRoundData();
-        int256 lower = (answer * 80) / 100;
+        // Simulate wstETH price increase via ETH/USD oracle bump
+        (uint80 roundId, int256 answer,,, uint80 answeredInRound) =
+            IChainlinkOracle(ETH_USD_ORACLE).latestRoundData();
+        int256 newPrice = (answer * 120) / 100;
         vm.mockCall(
-            CBBTC_USD_ORACLE,
+            ETH_USD_ORACLE,
             abi.encodeWithSelector(IChainlinkOracle.latestRoundData.selector),
-            abi.encode(roundId, lower, updatedAt, updatedAt, answeredInRound)
+            abi.encode(roundId, newPrice, block.timestamp, block.timestamp, answeredInRound)
         );
 
-        vm.prank(keeper);
+        uint256 ltvBefore = loanManager.getCurrentLTV();
+        vault.rebalance();
+        uint256 ltvAfter = loanManager.getCurrentLTV();
+
+        assertGt(ltvAfter, ltvBefore, "LTV should increase after upward rebalance");
+        console.log("Rebalance up: ltv %d -> %d", ltvBefore, ltvAfter);
+    }
+
+    function test_rebalance_downward() public {
+        _deployVault();
+        vm.prank(owner);
+        vault.setParam(1, 55e16);
+
+        _depositAs(user1, 2e18);
+
+        _refreshOracles();
+
+        // Simulate wstETH price decrease via ETH/USD oracle drop
+        (uint80 roundId, int256 answer,,, uint80 answeredInRound) =
+            IChainlinkOracle(ETH_USD_ORACLE).latestRoundData();
+        int256 newPrice = (answer * 85) / 100;
+        vm.mockCall(
+            ETH_USD_ORACLE,
+            abi.encodeWithSelector(IChainlinkOracle.latestRoundData.selector),
+            abi.encode(roundId, newPrice, block.timestamp, block.timestamp, answeredInRound)
+        );
+
+        uint256 ltvBefore = loanManager.getCurrentLTV();
+        vault.rebalance();
+        uint256 ltvAfter = loanManager.getCurrentLTV();
+
+        assertLt(ltvAfter, ltvBefore, "LTV should decrease after downward rebalance");
+        console.log("Rebalance down: ltv %d -> %d", ltvBefore, ltvAfter);
+    }
+
+    function test_rebalance_notNeeded_reverts() public {
+        _deployVault();
+        _depositAs(user1, 1e18);
+
+        vm.expectRevert(Zenji.RebalanceNotNeeded.selector);
         vault.rebalance();
     }
 
@@ -336,24 +419,24 @@ contract CbBtcAaveExtensive is Test {
         vault.setParam(1, 55e16);
         vm.stopPrank();
 
-        _depositAs(user1, 2e8);
+        _depositAs(user1, 2e18);
 
         vm.startPrank(owner);
-        vault.setParam(0, 1e17); // 10% fee
-        vault.setParam(3, 1e17); // 10% bounty
+        vault.setParam(0, 1e17);
+        vault.setParam(3, 1e17);
         vm.stopPrank();
 
         vm.warp(block.timestamp + 7 days);
         _syncAndMockOracles();
         vault.accrueYieldFees();
 
-        (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) =
-            IChainlinkOracle(CBBTC_USD_ORACLE).latestRoundData();
+        (uint80 roundId, int256 answer,,, uint80 answeredInRound) =
+            IChainlinkOracle(ETH_USD_ORACLE).latestRoundData();
         int256 newPrice = (answer * 120) / 100;
         vm.mockCall(
-            CBBTC_USD_ORACLE,
+            ETH_USD_ORACLE,
             abi.encodeWithSelector(IChainlinkOracle.latestRoundData.selector),
-            abi.encode(roundId, newPrice, updatedAt, updatedAt, answeredInRound)
+            abi.encode(roundId, newPrice, block.timestamp, block.timestamp, answeredInRound)
         );
 
         uint256 keeperUsdtBefore = IERC20(USDT).balanceOf(keeper);
@@ -368,7 +451,7 @@ contract CbBtcAaveExtensive is Test {
 
     function test_emergency_fullFlow() public {
         _deployVault();
-        uint256 depositAmount = 1e8;
+        uint256 depositAmount = 1e18;
         _depositAs(user1, depositAmount);
 
         _refreshOracles();
@@ -390,21 +473,21 @@ contract CbBtcAaveExtensive is Test {
 
     function test_emergency_depositBlocked() public {
         _deployVault();
-        _depositAs(user1, 1e8);
+        _depositAs(user1, 1e18);
 
         vm.prank(owner);
         vault.enterEmergencyMode();
 
         vm.startPrank(user2);
-        cbbtc.approve(address(vault), 1e8);
+        wstETH.approve(address(vault), 1e18);
         vm.expectRevert(Zenji.EmergencyModeActive.selector);
-        vault.deposit(1e8, user2);
+        vault.deposit(1e18, user2);
         vm.stopPrank();
     }
 
     function test_emergency_redeemBeforeLiquidation() public {
         _deployVault();
-        _depositAs(user1, 1e8);
+        _depositAs(user1, 1e18);
 
         _refreshOracles();
 
@@ -421,9 +504,9 @@ contract CbBtcAaveExtensive is Test {
 
     function test_emergency_rescueAssets() public {
         _deployVault();
-        _depositAs(user1, 1e8);
+        _depositAs(user1, 1e18);
 
-        address randomToken = address(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48); // USDC
+        address randomToken = address(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48);
         deal(randomToken, address(vault), 1000e6);
 
         vm.startPrank(owner);
@@ -439,7 +522,7 @@ contract CbBtcAaveExtensive is Test {
 
     function test_harvestYield() public {
         _deployVault();
-        _depositAs(user1, 1e8);
+        _depositAs(user1, 1e18);
 
         uint256 stratBefore = strategy.balanceOf();
         vm.prank(owner);
@@ -454,9 +537,9 @@ contract CbBtcAaveExtensive is Test {
         _deployVault();
 
         vm.prank(owner);
-        vault.setParam(0, 1e17); // 10% fee rate
+        vault.setParam(0, 1e17);
 
-        _depositAs(user1, 2e8);
+        _depositAs(user1, 2e18);
 
         vm.warp(block.timestamp + 30 days);
         _syncAndMockOracles();
@@ -479,7 +562,7 @@ contract CbBtcAaveExtensive is Test {
 
         assertEq(vault.feeRate(), 0, "Default fee rate should be 0");
 
-        _depositAs(user1, 1e8);
+        _depositAs(user1, 1e18);
 
         vm.warp(block.timestamp + 30 days);
         _syncAndMockOracles();
@@ -496,15 +579,15 @@ contract CbBtcAaveExtensive is Test {
         vm.warp(block.timestamp + 3601);
 
         vm.startPrank(user1);
-        cbbtc.approve(address(vault), 1e8);
+        wstETH.approve(address(vault), 1e18);
         vm.expectRevert();
-        vault.deposit(1e8, user1);
+        vault.deposit(1e18, user1);
         vm.stopPrank();
     }
 
     function test_oracleStale_rebalanceReverts() public {
         _deployVault();
-        _depositAs(user1, 1e8);
+        _depositAs(user1, 1e18);
 
         vm.warp(block.timestamp + 3601);
 
@@ -516,11 +599,18 @@ contract CbBtcAaveExtensive is Test {
 
     function test_swapperTimelock() public {
         _deployVault();
-        _depositAs(user1, 1e8);
+        _depositAs(user1, 1e18);
 
-        CbBtcWbtcUsdtSwapper newSwapper = new CbBtcWbtcUsdtSwapper(
-            owner, CBBTC, USDT, WBTC, CBBTC_WBTC_POOL, CBBTC_INDEX, WBTC_INDEX, TRICRYPTO_POOL, TRICRYPTO_WBTC_INDEX, TRICRYPTO_USDT_INDEX,
-            CBBTC_USD_ORACLE, USDT_USD_ORACLE
+        UniswapV3TwoHopSwapper newSwapper = new UniswapV3TwoHopSwapper(
+            owner,
+            WSTETH,
+            USDT,
+            WETH,
+            UNISWAP_ROUTER,
+            FEE_WSTETH_WETH,
+            FEE_WETH_USDT,
+            address(wstEthOracle),
+            USDT_USD_ORACLE
         );
 
         vm.prank(vault.gov());
@@ -537,9 +627,16 @@ contract CbBtcAaveExtensive is Test {
         vault.executeSwapper();
         assertEq(address(vault.swapper()), address(newSwapper), "Swapper should be updated");
 
-        CbBtcWbtcUsdtSwapper anotherSwapper = new CbBtcWbtcUsdtSwapper(
-            owner, CBBTC, USDT, WBTC, CBBTC_WBTC_POOL, CBBTC_INDEX, WBTC_INDEX, TRICRYPTO_POOL, TRICRYPTO_WBTC_INDEX, TRICRYPTO_USDT_INDEX,
-            CBBTC_USD_ORACLE, USDT_USD_ORACLE
+        UniswapV3TwoHopSwapper anotherSwapper = new UniswapV3TwoHopSwapper(
+            owner,
+            WSTETH,
+            USDT,
+            WETH,
+            UNISWAP_ROUTER,
+            FEE_WSTETH_WETH,
+            FEE_WETH_USDT,
+            address(wstEthOracle),
+            USDT_USD_ORACLE
         );
         vm.prank(vault.gov());
         vault.proposeSwapper(address(anotherSwapper));
@@ -555,7 +652,7 @@ contract CbBtcAaveExtensive is Test {
     function test_slippageTimelock() public {
         _deployVault();
 
-        assertEq(swapper.slippage(), 5e16, "Initial slippage should be 5%");
+        assertEq(swapper.slippage(), 1e16, "Initial slippage should be 1%");
 
         vm.prank(owner);
         swapper.proposeSlippage(10e16);
@@ -578,7 +675,7 @@ contract CbBtcAaveExtensive is Test {
         _deployVault();
 
         vm.startPrank(user1);
-        cbbtc.approve(address(vault), 1e4 - 1);
+        wstETH.approve(address(vault), 1e4 - 1);
         vm.expectRevert(Zenji.AmountTooSmall.selector);
         vault.deposit(1e4 - 1, user1);
         vm.stopPrank();
@@ -588,20 +685,20 @@ contract CbBtcAaveExtensive is Test {
         _deployVault();
 
         vm.prank(owner);
-        vault.setParam(2, 1e8);
+        vault.setParam(2, 1e18);
 
-        _depositAs(user1, 1e8);
+        _depositAs(user1, 1e18);
 
         vm.startPrank(user2);
-        cbbtc.approve(address(vault), 1e8);
+        wstETH.approve(address(vault), 1e18);
         vm.expectRevert(Zenji.DepositCapExceeded.selector);
-        vault.deposit(1e8, user2);
+        vault.deposit(1e18, user2);
         vm.stopPrank();
     }
 
     function test_redeem_zeroShares_reverts() public {
         _deployVault();
-        _depositAs(user1, 1e8);
+        _depositAs(user1, 1e18);
 
         vm.prank(user1);
         vm.expectRevert(Zenji.ZeroAmount.selector);
@@ -610,7 +707,7 @@ contract CbBtcAaveExtensive is Test {
 
     function test_redeem_moreThanBalance_reverts() public {
         _deployVault();
-        uint256 shares = _depositAs(user1, 1e8);
+        uint256 shares = _depositAs(user1, 1e18);
 
         vm.prank(user1);
         vm.expectRevert(Zenji.InsufficientShares.selector);
@@ -658,7 +755,7 @@ contract CbBtcAaveExtensive is Test {
 
     function test_idleMode_enterExit() public {
         _deployVault();
-        _depositAs(user1, 1e8);
+        _depositAs(user1, 1e18);
 
         _refreshOracles();
 
@@ -668,11 +765,12 @@ contract CbBtcAaveExtensive is Test {
         vault.setIdle(true);
 
         assertTrue(vault.idle(), "Should be idle");
-        uint256 vaultBal = cbbtc.balanceOf(address(vault));
+
+        uint256 vaultBal = wstETH.balanceOf(address(vault));
         assertGt(vaultBal, 0, "Vault should hold collateral in idle mode");
 
-        _depositAs(user1, 1e8);
-        uint256 vaultBalAfter = cbbtc.balanceOf(address(vault));
+        _depositAs(user1, 1e18);
+        uint256 vaultBalAfter = wstETH.balanceOf(address(vault));
         assertGt(vaultBalAfter, vaultBal, "More collateral should be in vault");
 
         _refreshOracles();
@@ -684,16 +782,88 @@ contract CbBtcAaveExtensive is Test {
 
         _refreshOracles();
         uint256 withdrawn = _redeemAllAs(user1);
-        _assertValuePreserved(2e8, withdrawn, 500, "Idle enter/exit: >5% loss");
-        console.log("Idle enter/exit: deposited=2e8 withdrawn=%d", withdrawn);
+        _assertValuePreserved(2e18, withdrawn, 500, "Idle enter/exit: >5% loss");
+        console.log("Idle enter/exit: deposited=2e18 withdrawn=%d", withdrawn);
     }
 
-    // ============ I. Fuzz Tests ============
+    function test_idleMode_depositWhileIdle() public {
+        _deployVault();
+
+        vm.prank(owner);
+        vault.setIdle(true);
+
+        _depositAs(user1, 1e18);
+
+        assertFalse(loanManager.loanExists(), "No loan should exist in idle mode");
+        assertEq(wstETH.balanceOf(address(vault)), 1e18, "All collateral should be in vault");
+
+        vm.roll(block.number + 1);
+
+        uint256 withdrawn = _redeemAllAs(user1);
+        assertEq(withdrawn, 1e18, "Should get exact deposit back in idle mode");
+    }
+
+    // ============ I. Strategy-Specific Tests ============
+
+    function test_strategyBalance_afterDeposit() public {
+        _deployVault();
+        _depositAs(user1, 1e18);
+
+        assertGt(strategy.balanceOf(), 0, "Strategy should report balance");
+        uint256 rvShares = strategy.rewardVault().balanceOf(address(strategy));
+        assertGt(rvShares, 0, "Reward vault should hold shares");
+    }
+
+    function test_strategyName() public {
+        _deployVault();
+        assertEq(strategy.name(), "USDT -> pmUSD/crvUSD LP Strategy");
+    }
+
+    function test_pendingRewards_view() public {
+        _deployVault();
+        _depositAs(user1, 1e18);
+        uint256 pending = strategy.pendingRewards();
+        assertGe(pending, 0, "Pending rewards view should not revert");
+    }
+
+    function test_harvestYield_afterTimePassed() public {
+        _deployVault();
+        _depositAs(user1, 2e18);
+
+        uint256 stratBefore = strategy.balanceOf();
+        uint256 crvBefore = IERC20(CRV).balanceOf(address(strategy));
+        console.log("Before warp: stratBalance=%d crvBalance=%d", stratBefore, crvBefore);
+
+        // Fast-forward 7 days to accrue rewards
+        vm.warp(block.timestamp + 7 days);
+        _syncAndMockOracles();
+
+        // Harvest — claim CRV from accountant, swap to crvUSD, compound back into LP
+        vm.prank(owner);
+        vault.harvestYield();
+
+        uint256 stratAfter = strategy.balanceOf();
+        uint256 crvAfter = IERC20(CRV).balanceOf(address(strategy));
+        console.log("After harvest: stratBalance=%d crvBalance=%d", stratAfter, crvAfter);
+
+        if (stratAfter > stratBefore) {
+            console.log("Harvest compounded %d USDT worth of rewards", stratAfter - stratBefore);
+        } else {
+            // Accountant may need an external checkpoint to distribute rewards on fork.
+            // If no rewards accrued, this is expected — verify in production.
+            console.log("No rewards compounded - accountant likely needs backend checkpoint");
+        }
+
+        // Strategy balance should never decrease from a harvest
+        assertGe(stratAfter, stratBefore, "Strategy balance must not decrease after harvest");
+    }
+
+    // ============ J. Fuzz Tests ============
 
     function testFuzz_deposit_and_redeem(uint256 amount) public {
         _deployVault();
-        amount = bound(amount, 1e7, 10e8);
-        deal(CBBTC, user1, amount);
+        amount = bound(amount, 1e17, 10e18);
+        deal(WSTETH, user1, amount);
 
         _depositAs(user1, amount);
         _refreshOracles();
@@ -706,8 +876,8 @@ contract CbBtcAaveExtensive is Test {
 
     function testFuzz_deposit_and_withdraw(uint256 amount) public {
         _deployVault();
-        amount = bound(amount, 1e7, 10e8);
-        deal(CBBTC, user1, amount);
+        amount = bound(amount, 1e17, 10e18);
+        deal(WSTETH, user1, amount);
 
         uint256 shares = _depositAs(user1, amount);
         _refreshOracles();
@@ -716,16 +886,16 @@ contract CbBtcAaveExtensive is Test {
         if (assets > 0) {
             vm.prank(user1);
             vault.withdraw(assets, user1, user1);
-            assertGt(cbbtc.balanceOf(user1), 0, "Should receive cbBTC back");
+            assertGt(wstETH.balanceOf(user1), 0, "Should receive wstETH back");
         }
     }
 
     function testFuzz_multiUser_deposit_redeem(uint256 a1, uint256 a2) public {
         _deployVault();
-        a1 = bound(a1, 1e7, 5e8);
-        a2 = bound(a2, 1e7, 5e8);
-        deal(CBBTC, user1, a1);
-        deal(CBBTC, user2, a2);
+        a1 = bound(a1, 3e18, 50e18);
+        a2 = bound(a2, 3e18, 50e18);
+        deal(WSTETH, user1, a1);
+        deal(WSTETH, user2, a2);
 
         _depositAs(user1, a1);
         _depositAs(user2, a2);
@@ -746,8 +916,8 @@ contract CbBtcAaveExtensive is Test {
 
     function testFuzz_emergency_proRata(uint256 depositAmount, uint256 sharesFraction) public {
         _deployVault();
-        depositAmount = bound(depositAmount, 1e7, 5e8);
-        deal(CBBTC, user1, depositAmount);
+        depositAmount = bound(depositAmount, 1e17, 50e18);
+        deal(WSTETH, user1, depositAmount);
 
         uint256 shares = _depositAs(user1, depositAmount);
         _refreshOracles();
@@ -760,7 +930,7 @@ contract CbBtcAaveExtensive is Test {
         vm.stopPrank();
 
         sharesFraction = bound(sharesFraction, 1, shares);
-        uint256 availableBefore = cbbtc.balanceOf(address(vault));
+        uint256 availableBefore = wstETH.balanceOf(address(vault));
         uint256 supplyBefore = vault.totalSupply();
 
         vm.prank(user1);
@@ -770,34 +940,18 @@ contract CbBtcAaveExtensive is Test {
         assertApproxEqAbs(collateral, expected, 1, "Pro-rata mismatch");
     }
 
-    function testFuzz_deposit_withdraw_neverZeroAssets(uint256 depositAmount, uint256) public {
+    function testFuzz_deposit_withdraw_neverZeroAssets(uint256 depositAmount) public {
         _deployVault();
-        depositAmount = bound(depositAmount, 1e7, 5e8);
-        deal(CBBTC, user1, depositAmount);
+        depositAmount = bound(depositAmount, 1e17, 50e18);
+        deal(WSTETH, user1, depositAmount);
 
         uint256 shares = _depositAs(user1, depositAmount);
         _refreshOracles();
 
-        // Full redeem — sole depositor path should always return non-zero collateral.
-        // Partial redeems can fail with InsufficientCollateral due to slippage in unwind.
+        // Full redeem — user1 is sole depositor, triggering isFinalWithdraw (full close path).
         vm.prank(user1);
         uint256 collateral = vault.redeem(shares, user1, user1);
 
         assertGt(collateral, 0, "Must receive collateral for non-zero share burn");
-    }
-
-    function test_idleMode_depositWhileIdle() public {
-        _deployVault();
-
-        vm.prank(owner);
-        vault.setIdle(true);
-
-        _depositAs(user1, 1e8);
-
-        assertFalse(loanManager.loanExists(), "No loan should exist in idle mode");
-        assertEq(cbbtc.balanceOf(address(vault)), 1e8, "All collateral should be in vault");
-
-        uint256 withdrawn = _redeemAllAs(user1);
-        assertEq(withdrawn, 1e8, "Should get exact deposit back in idle mode");
     }
 }

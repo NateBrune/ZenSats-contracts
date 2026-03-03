@@ -7,41 +7,46 @@ import "forge-std/console2.sol";
 import {ZenjiViewHelper} from "../src/ZenjiViewHelper.sol";
 import {VaultTracker} from "../src/VaultTracker.sol";
 import {ZenjiRebalanceKeeper} from "../src/keepers/ZenjiRebalanceKeeper.sol";
-import {CurveThreeCryptoSwapper} from "../src/swappers/base/CurveThreeCryptoSwapper.sol";
+import {WstEthOracle} from "../src/WstEthOracle.sol";
+import {UniswapV3TwoHopSwapper} from "../src/swappers/base/UniswapV3TwoHopSwapper.sol";
 import {CrvToCrvUsdSwapper} from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import {AaveLoanManager} from "../src/lenders/AaveLoanManager.sol";
 import {PmUsdCrvUsdStrategy} from "../src/strategies/PmUsdCrvUsdStrategy.sol";
 import {ICurveStableSwapNG} from "../src/interfaces/ICurveStableSwapNG.sol";
-import {ZenjiWbtcPmUsd} from "../src/implementations/ZenjiWbtcPmUsd.sol";
+import {ZenjiWstEthPmUsd} from "../src/implementations/ZenjiWstEthPmUsd.sol";
 
-/// @notice Deploys WBTC/USDT vault with pmUSD/crvUSD Stake DAO strategy on Aave
-contract DeployPmUsdWbtc is Script {
+/// @notice Deploys wstETH/USDT vault with pmUSD/crvUSD Stake DAO strategy on Aave
+contract DeployPmUsdWstEth is Script {
     // Assets
-    address constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
+    address constant WSTETH = 0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0;
+    address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     address constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
     address constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
     address constant CRV = 0xD533a949740bb3306d119CC777fa900bA034cd52;
 
     // Chainlink oracles
-    address constant BTC_USD_ORACLE = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
+    address constant STETH_ETH_ORACLE = 0x86392dC19c0b719886221c78AB11eb8Cf5c52812;
+    address constant ETH_USD_ORACLE = 0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419;
     address constant USDT_USD_ORACLE = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
     address constant CRVUSD_USD_ORACLE = 0xEEf0C605546958c1f899b6fB336C20671f9cD49F;
     address constant CRV_USD_ORACLE = 0xCd627aA160A6fA45Eb793D19Ef54f5062F20f33f;
 
     // Aave V3
     address constant AAVE_POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
-    address constant AAVE_A_WBTC = 0x5Ee5bf7ae06D1Be5997A1A72006FE6C607eC6DE8;
+    address constant AAVE_A_WSTETH = 0x0B925eD163218f6662a35e0f0371Ac234f9E9371;
     address constant AAVE_VAR_DEBT_USDT = 0x6df1C1E379bC5a00a7b4C6e67A203333772f45A8;
 
+    // Uniswap V3
+    address constant UNISWAP_ROUTER = 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45;
+    uint24 constant FEE_WSTETH_WETH = 100;
+    uint24 constant FEE_WETH_USDT = 3000;
+
     // Curve / Stake DAO
-    address constant TRICRYPTO_POOL = 0xf5f5B97624542D72A9E06f04804Bf81baA15e2B4; // WBTC/USDT
-    uint256 constant TRICRYPTO_WBTC_INDEX = 1;
-    uint256 constant TRICRYPTO_USDT_INDEX = 0;
     address constant USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
     address constant PMUSD_CRVUSD_POOL = 0xEcb0F0d68C19BdAaDAEbE24f6752A4Db34e2c2cb;
     address constant PMUSD_CRVUSD_GAUGE = 0xF3c43E7D722963b9569d1E39873dF9E2dFE8C087;
     address constant STAKE_DAO_REWARD_VAULT = 0x7d3CDe9cCf0109423E672c17bD36481CF8CE437D;
-    address constant CRV_CRVUSD_TRICRYPTO = 0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14; // CRV/crvUSD
+    address constant CRV_CRVUSD_TRICRYPTO = 0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14;
 
     int128 constant USDT_INDEX = 0;
     int128 constant CRVUSD_INDEX = 1;
@@ -55,24 +60,13 @@ contract DeployPmUsdWbtc is Script {
 
         ZenjiViewHelper viewHelper = new ZenjiViewHelper();
 
-        CrvToCrvUsdSwapper crvSwapper = new CrvToCrvUsdSwapper(
-            gov,
-            CRV,
-            CRVUSD,
-            CRV_CRVUSD_TRICRYPTO,
-            CRV_USD_ORACLE,
-            CRVUSD_USD_ORACLE
-        );
+        WstEthOracle wstEthOracle = new WstEthOracle(WSTETH, STETH_ETH_ORACLE, ETH_USD_ORACLE);
 
-        CurveThreeCryptoSwapper swapper = new CurveThreeCryptoSwapper(
-            gov,
-            WBTC,
-            USDT,
-            TRICRYPTO_POOL,
-            TRICRYPTO_WBTC_INDEX,
-            TRICRYPTO_USDT_INDEX,
-            BTC_USD_ORACLE,
-            USDT_USD_ORACLE
+        CrvToCrvUsdSwapper crvSwapper =
+            new CrvToCrvUsdSwapper(gov, CRV, CRVUSD, CRV_CRVUSD_TRICRYPTO, CRV_USD_ORACLE, CRVUSD_USD_ORACLE);
+
+        UniswapV3TwoHopSwapper swapper = new UniswapV3TwoHopSwapper(
+            gov, WSTETH, USDT, WETH, UNISWAP_ROUTER, FEE_WSTETH_WETH, FEE_WETH_USDT, address(wstEthOracle), USDT_USD_ORACLE
         );
 
         int128 lpCrvUsdIndex = _lpCrvUsdIndex();
@@ -96,26 +90,21 @@ contract DeployPmUsdWbtc is Script {
         );
 
         AaveLoanManager loanManager = new AaveLoanManager(
-            WBTC,
+            WSTETH,
             USDT,
-            AAVE_A_WBTC,
+            AAVE_A_WSTETH,
             AAVE_VAR_DEBT_USDT,
             AAVE_POOL,
-            BTC_USD_ORACLE,
+            address(wstEthOracle),
             USDT_USD_ORACLE,
             address(swapper),
-            7300,
             7800,
+            8100,
             address(0)
         );
 
-        ZenjiWbtcPmUsd vault = new ZenjiWbtcPmUsd(
-            address(loanManager),
-            address(strategy),
-            address(swapper),
-            owner,
-            address(viewHelper)
-        );
+        ZenjiWstEthPmUsd vault =
+            new ZenjiWstEthPmUsd(address(loanManager), address(strategy), address(swapper), owner, address(viewHelper));
 
         //VaultTracker vaultTracker = new VaultTracker(address(vault));
 
@@ -127,8 +116,9 @@ contract DeployPmUsdWbtc is Script {
         vm.stopBroadcast();
 
         console2.log("ViewHelper", address(viewHelper));
+        console2.log("WstEthOracle", address(wstEthOracle));
         console2.log("CrvToCrvUsdSwapper", address(crvSwapper));
-        console2.log("TriCryptoSwapper", address(swapper));
+        console2.log("UniswapSwapper", address(swapper));
         console2.log("LoanManager", address(loanManager));
         console2.log("Strategy", address(strategy));
         console2.log("Vault", address(vault));

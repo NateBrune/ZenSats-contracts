@@ -34,7 +34,7 @@ contract Zenji is ERC20, IERC4626 {
     uint256 internal constant DEFAULT_LOAN_BANDS = 4;
     uint256 internal constant MIN_DEPOSIT = 1e4;
     uint256 internal constant MAX_FEE_RATE = 2e17; // 20%
-    uint256 public constant VIRTUAL_SHARE_OFFSET = 1e5;
+    // VIRTUAL_SHARE_OFFSET is now a virtual function — see bottom of contract
     uint256 public constant COOLDOWN_BLOCKS = 1;
     uint256 internal constant MAX_REBALANCE_BOUNTY = 5e17; // 50%
     uint256 internal constant TIMELOCK_DELAY = 1 weeks;
@@ -359,8 +359,8 @@ contract Zenji is ERC20, IERC4626 {
         uint256 totalCollateral = getTotalCollateral();
         if (totalCollateral < 1 || supply < 1) return assets;
         return
-            (assets * (supply + VIRTUAL_SHARE_OFFSET) + totalCollateral - 1) /
-            (totalCollateral + VIRTUAL_SHARE_OFFSET);
+            (assets * (supply + VIRTUAL_SHARE_OFFSET()) + totalCollateral - 1) /
+            (totalCollateral + VIRTUAL_SHARE_OFFSET());
     }
 
     /// @notice Preview assets for redeem
@@ -424,10 +424,10 @@ contract Zenji is ERC20, IERC4626 {
             uint256 supply = totalSupply();
             shareAmount =
                 (assets *
-                    (supply + VIRTUAL_SHARE_OFFSET) +
+                    (supply + VIRTUAL_SHARE_OFFSET()) +
                     totalCollateral -
                     1) /
-                (totalCollateral + VIRTUAL_SHARE_OFFSET);
+                (totalCollateral + VIRTUAL_SHARE_OFFSET());
 
             // If requested assets correspond to (or exceed) all owner shares,
             // snap to full share burn so the final-withdraw path can execute.
@@ -800,8 +800,8 @@ contract Zenji is ERC20, IERC4626 {
         uint256 collateralAmount
     ) internal view returns (uint256) {
         return
-            (collateralAmount * (totalSupply() + VIRTUAL_SHARE_OFFSET)) /
-            (getTotalCollateral() + VIRTUAL_SHARE_OFFSET);
+            (collateralAmount * (totalSupply() + VIRTUAL_SHARE_OFFSET())) /
+            (getTotalCollateral() + VIRTUAL_SHARE_OFFSET());
     }
 
     /// @notice Calculate collateral to return for shares (rounds down)
@@ -809,16 +809,16 @@ contract Zenji is ERC20, IERC4626 {
         uint256 shareAmount
     ) internal view returns (uint256) {
         return
-            (shareAmount * (getTotalCollateral() + VIRTUAL_SHARE_OFFSET)) /
-            (totalSupply() + VIRTUAL_SHARE_OFFSET);
+            (shareAmount * (getTotalCollateral() + VIRTUAL_SHARE_OFFSET())) /
+            (totalSupply() + VIRTUAL_SHARE_OFFSET());
     }
 
     /// @notice Convert shares to assets rounding up (for mint/previewMint per ERC4626)
     function _convertToAssetsRoundUp(
         uint256 shareAmount
     ) internal view returns (uint256) {
-        uint256 supply = totalSupply() + VIRTUAL_SHARE_OFFSET;
-        uint256 totalCollateral = getTotalCollateral() + VIRTUAL_SHARE_OFFSET;
+        uint256 supply = totalSupply() + VIRTUAL_SHARE_OFFSET();
+        uint256 totalCollateral = getTotalCollateral() + VIRTUAL_SHARE_OFFSET();
         return (shareAmount * totalCollateral + supply - 1) / supply;
     }
 
@@ -829,6 +829,7 @@ contract Zenji is ERC20, IERC4626 {
         address receiver
     ) internal {
         if (assets < MIN_DEPOSIT) revert AmountTooSmall();
+        if (sharesToMint == 0) revert AmountTooSmall();
         if (emergencyMode) revert EmergencyModeActive();
         if (depositCap > 0 && getTotalCollateral() + assets > depositCap) {
             revert DepositCapExceeded();
@@ -920,7 +921,10 @@ contract Zenji is ERC20, IERC4626 {
         // any user with fewer shares than the offset value would be absorbed into the
         // "virtual" range, allowing an attacker with more shares to trigger a full unwind
         // that drains the remaining holders' collateral while their shares survive worthless.
-        bool isFinalWithdraw = (totalSupply() == shareAmount) && msg.sender == owner_;
+        // Note: allowance-based redemptions (msg.sender != owner_) must also trigger final
+        // withdrawal when burning the entire supply, otherwise residual value is stranded
+        // with totalSupply() == 0 and can be captured by the next depositor.
+        bool isFinalWithdraw = (totalSupply() == shareAmount);
 
         // Handle allowance if caller is not owner
         if (msg.sender != owner_) {
@@ -1151,5 +1155,13 @@ contract Zenji is ERC20, IERC4626 {
         returns (uint8)
     {
         return IERC20Metadata(address(collateralAsset)).decimals();
+    }
+
+    // ============ Virtual share offset ============
+
+    /// @notice Virtual share offset for ERC4626 inflation attack mitigation
+    /// @dev Override in implementation contracts to customize per collateral type
+    function VIRTUAL_SHARE_OFFSET() public pure virtual returns (uint256) {
+        return 1e5;
     }
 }
