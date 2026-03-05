@@ -161,13 +161,13 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
             (uint80 crvRoundId, int256 crvPrice,, uint256 crvUpdatedAt, uint80 crvAnswered) =
                 crvOracle.latestRoundData();
             if (crvPrice <= 0 || crvAnswered < crvRoundId || block.timestamp - crvUpdatedAt > MAX_ORACLE_STALENESS) {
-                return pendingCrv / 2e12; // fallback: ~$0.50/CRV rough estimate
+                return crvSwapper.quote(pendingCrv) / 1e12; // fallback: LP price, crvUSD≈USDT 1:1
             }
 
             (uint80 usdtRoundId, int256 usdtPrice,, uint256 usdtUpdatedAt, uint80 usdtAnswered) =
                 usdtOracle.latestRoundData();
             if (usdtPrice <= 0 || usdtAnswered < usdtRoundId || block.timestamp - usdtUpdatedAt > MAX_ORACLE_STALENESS) {
-                return pendingCrv / 2e12; // fallback: ~$0.50/CRV rough estimate
+                return crvSwapper.quote(pendingCrv) / 1e12; // fallback: LP price, crvUSD≈USDT 1:1
             }
 
             return (pendingCrv * uint256(crvPrice)) / (uint256(usdtPrice) * 1e12);

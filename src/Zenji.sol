@@ -36,7 +36,7 @@ contract Zenji is ERC20, IERC4626 {
     uint256 internal constant MAX_FEE_RATE = 2e17; // 20%
     // VIRTUAL_SHARE_OFFSET is now a virtual function — see bottom of contract
     uint256 public constant COOLDOWN_BLOCKS = 1;
-    uint256 internal constant MAX_REBALANCE_BOUNTY = 5e17; // 50%
+    uint256 internal constant MAX_REBALANCE_BOUNTY = 1e18; // 100%
     uint256 internal constant TIMELOCK_DELAY = 1 weeks;
     uint256 public constant MAX_VAULT_SLIPPAGE = 1e17; // 10% cap
 
@@ -51,8 +51,9 @@ contract Zenji is ERC20, IERC4626 {
     // ============ State ============
 
     uint256 public targetLtv;
-    address public owner;
+    address public strategist;
     address public gov;
+    address public guardian;
     bool public idle;
     bool public emergencyMode;
     bool public liquidationComplete;
@@ -65,8 +66,9 @@ contract Zenji is ERC20, IERC4626 {
     uint256 private _status;
     uint256 private constant _NOT_ENTERED = 1;
     uint256 private constant _ENTERED = 2;
-    address public pendingOwner;
+    address public pendingStrategist;
     address public pendingGov;
+    address public pendingGuardian;
     uint256 public rebalanceBountyRate;
     uint256 public depositCap;
     uint256 public maxSlippage;
@@ -92,17 +94,22 @@ contract Zenji is ERC20, IERC4626 {
     event CapitalDeployed(uint256 collateralAmount, uint256 debtBorrowed);
     event CapitalUnwound(uint256 collateralNeeded, uint256 collateralReceived);
 
-    // Admin config changes
-    event OwnershipTransferStarted(
-        address indexed previousOwner,
-        address indexed newOwner
+    // Role transfers
+    event StrategistTransferStarted(
+        address indexed previousStrategist,
+        address indexed newStrategist
     );
-    event OwnerUpdated(address indexed newOwner);
+    event StrategistUpdated(address indexed newStrategist);
     event GovernanceTransferStarted(
         address indexed previousGov,
         address indexed newGov
     );
     event GovernanceUpdated(address indexed newGov);
+    event GuardianTransferStarted(
+        address indexed previousGuardian,
+        address indexed newGuardian
+    );
+    event GuardianUpdated(address indexed newGuardian);
     event IdleModeEntered();
     event IdleModeExited();
     event ParamUpdated(uint8 indexed param, uint256 oldValue, uint256 newValue);
@@ -183,13 +190,18 @@ contract Zenji is ERC20, IERC4626 {
 
     // ============ Modifiers ============
 
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert Unauthorized();
+    modifier onlyStrategist() {
+        if (msg.sender != strategist) revert Unauthorized();
         _;
     }
 
     modifier onlyGov() {
         if (msg.sender != gov) revert Unauthorized();
+        _;
+    }
+
+    modifier onlyGuardian() {
+        if (msg.sender != guardian) revert Unauthorized();
         _;
     }
 
@@ -204,6 +216,7 @@ contract Zenji is ERC20, IERC4626 {
 
     /// @param _yieldStrategy Yield strategy address (immutable)
     /// @param _swapper Swapper contract address (required)
+    /// @param _owner Initial address for all three roles (strategist, gov, guardian)
     constructor(
         address _collateralAsset,
         address _debtAsset,
@@ -248,8 +261,9 @@ contract Zenji is ERC20, IERC4626 {
             revert InvalidStrategy();
         }
         yieldStrategy = IYieldStrategy(_yieldStrategy);
-        owner = _owner;
-        gov = _owner; // Initially gov is same as owner
+        strategist = _owner;
+        gov = _owner;
+        guardian = _owner;
         idle = false;
         targetLtv = 65e16; // 65% default target LTV
         // Liquidation starts at ~90%
@@ -305,7 +319,7 @@ contract Zenji is ERC20, IERC4626 {
         return convertToShares(maxAssets);
     }
 
-    /// @notice Maximum withdraw allowed for owner
+    /// @notice Maximum withdraw allowed for share holder
     function maxWithdraw(
         address owner_
     ) external view override returns (uint256) {
@@ -320,7 +334,7 @@ contract Zenji is ERC20, IERC4626 {
         return convertToAssets(balanceOf(owner_));
     }
 
-    /// @notice Maximum redeem allowed for owner
+    /// @notice Maximum redeem allowed for share holder
     function maxRedeem(
         address owner_
     ) external view override returns (uint256) {
@@ -429,7 +443,7 @@ contract Zenji is ERC20, IERC4626 {
                     1) /
                 (totalCollateral + VIRTUAL_SHARE_OFFSET());
 
-            // If requested assets correspond to (or exceed) all owner shares,
+            // If requested assets correspond to (or exceed) all holder shares,
             // snap to full share burn so the final-withdraw path can execute.
             // This avoids rounding edge-cases where withdraw(convertToAssets(allShares))
             // computes slightly fewer shares and falls into partial unwind.
@@ -556,11 +570,11 @@ contract Zenji is ERC20, IERC4626 {
         emit YieldHarvested(msg.sender, harvested);
     }
 
-    // ============ Admin Functions ============
+    // ============ Strategist Functions ============
 
     /// @notice Enter/exit idle mode (unwind carry trade, hold collateral)
-    /// @dev Entering idle automatically disables yield. Exiting idle does not re-enable yield.
-    function setIdle(bool idle_) external nonReentrant onlyOwner {
+    /// @dev Strategist-only. Entering idle automatically unwinds position. Exiting idle redeploys.
+    function setIdle(bool idle_) external nonReentrant onlyStrategist {
         if (idle_ == idle) return;
 
         if (idle_) {
@@ -596,8 +610,10 @@ contract Zenji is ERC20, IERC4626 {
         }
     }
 
+    // ============ Gov Functions ============
+
     /// @notice Propose a new swapper contract (requires timelock)
-    /// @dev Governance-only function for critical infrastructure
+    /// @dev Gov-only. 1-week timelock for critical infrastructure changes.
     function proposeSwapper(address newSwapper) external onlyGov {
         if (newSwapper == address(0)) revert InvalidAddress();
         if (newSwapper == address(swapper)) revert InvalidAddress();
@@ -622,37 +638,46 @@ contract Zenji is ERC20, IERC4626 {
         emit SwapperChangeCancelled(cancelled);
     }
 
-    /// @notice Transfer role: 0=owner, 1=gov
-    function transferRole(uint8 role, address to) external {
+    // ============ Role Management (Gov-only) ============
+
+    /// @notice Transfer role: 0=strategist, 1=gov, 2=guardian (only gov can initiate all transfers)
+    function transferRole(uint8 role, address to) external onlyGov {
         if (to == address(0)) revert InvalidAddress();
         if (role == 0) {
-            if (msg.sender != owner) revert Unauthorized();
-            pendingOwner = to;
-            emit OwnershipTransferStarted(owner, to);
-        } else {
-            if (msg.sender != gov) revert Unauthorized();
+            pendingStrategist = to;
+            emit StrategistTransferStarted(strategist, to);
+        } else if (role == 1) {
             pendingGov = to;
             emit GovernanceTransferStarted(gov, to);
+        } else {
+            pendingGuardian = to;
+            emit GuardianTransferStarted(guardian, to);
         }
     }
 
-    /// @notice Accept role: 0=owner, 1=gov
+    /// @notice Accept role: 0=strategist, 1=gov, 2=guardian
     function acceptRole(uint8 role) external {
         if (role == 0) {
-            if (msg.sender != pendingOwner) revert Unauthorized();
-            owner = msg.sender;
-            pendingOwner = address(0);
-            emit OwnerUpdated(msg.sender);
-        } else {
+            if (msg.sender != pendingStrategist) revert Unauthorized();
+            strategist = msg.sender;
+            pendingStrategist = address(0);
+            emit StrategistUpdated(msg.sender);
+        } else if (role == 1) {
             if (msg.sender != pendingGov) revert Unauthorized();
             gov = msg.sender;
             pendingGov = address(0);
             emit GovernanceUpdated(msg.sender);
+        } else {
+            if (msg.sender != pendingGuardian) revert Unauthorized();
+            guardian = msg.sender;
+            pendingGuardian = address(0);
+            emit GuardianUpdated(msg.sender);
         }
     }
 
-    /// @notice Withdraw accumulated fees
-    function withdrawFees(address recipient) external nonReentrant onlyOwner {
+    /// @notice Withdraw accumulated strategy fees
+    /// @dev Strategist-only. Accrues pending fees before withdrawal.
+    function withdrawFees(address recipient) external nonReentrant onlyStrategist {
         if (recipient == address(0)) revert InvalidAddress();
         _accrueYieldFees();
 
@@ -661,18 +686,18 @@ contract Zenji is ERC20, IERC4626 {
         feesAtLastRebalance = accumulatedFees;
     }
 
-    // ============ Emergency Functions ============
+    // ============ Guardian Functions ============
 
     /// @notice Enter emergency mode - one-way latch, no exit
-    /// @dev Pauses all user-facing ERC-4626 operations permanently
-    function enterEmergencyMode() external onlyOwner {
+    /// @dev Guardian-only. Blocks deposits permanently. Withdrawals resume after liquidation completes.
+    function enterEmergencyMode() external onlyGuardian {
         if (emergencyMode) revert EmergencyModeActive();
         emergencyMode = true;
         emit EmergencyModeEntered();
     }
 
     /// @notice Emergency step: 0=withdrawYield, 1=unwindLoan, 2=completeLiquidation
-    function emergencyStep(uint8 step) external nonReentrant onlyOwner {
+    function emergencyStep(uint8 step) external nonReentrant onlyGuardian {
         if (!emergencyMode) revert EmergencyModeNotActive();
         if (liquidationComplete) revert LiquidationAlreadyComplete();
         // Step 2: requires both prior steps to be resolved (run or explicitly skipped)
@@ -695,10 +720,10 @@ contract Zenji is ERC20, IERC4626 {
 
     /// @notice Explicitly mark an emergency step as resolved without executing it.
     /// Use when a component (yield strategy or loan manager) is bricked and cannot be unwound.
-    /// Owner accepts that funds in the bricked component may be unrecoverable.
+    /// Guardian accepts that funds in the bricked component may be unrecoverable.
     /// After skipping step 1 (loan unwind), users can only redeem collateral already in the vault.
     /// @param step 0 (skip yield withdraw) or 1 (skip loan unwind)
-    function emergencySkipStep(uint8 step) external nonReentrant onlyOwner {
+    function emergencySkipStep(uint8 step) external nonReentrant onlyGuardian {
         if (!emergencyMode) revert EmergencyModeNotActive();
         if (liquidationComplete) revert LiquidationAlreadyComplete();
         if (step > 1) revert InvalidEmergencyStep();
@@ -708,25 +733,23 @@ contract Zenji is ERC20, IERC4626 {
 
     /// @notice Rescue stuck tokens from the vault (emergency mode only)
     /// @dev Cannot rescue collateral after liquidation — that belongs to shareholders
-    function rescueAssets(address token, address recipient) external onlyOwner {
+    function rescueAssets(address token, address recipient) external onlyGuardian {
         if (!emergencyMode) revert EmergencyModeNotActive();
         ZenjiCoreLib.executeRescueAssets(token, recipient, collateralAsset, debtAsset);
     }
 
-    // ============ Emergency Rescue (Fallback) ============
-
     /// @notice Emergency rescue: 0=transferCollateral, 1=transferDebt, 2=redeemYield
-    function emergencyRescue(uint8 action) external nonReentrant onlyOwner {
+    /// @dev Guardian-only fallback when standard emergency steps fail.
+    function emergencyRescue(uint8 action) external nonReentrant onlyGuardian {
         if (!emergencyMode) revert EmergencyModeNotActive();
         lastStrategyBalance = ZenjiCoreLib.executeEmergencyRescue(
             action, collateralAsset, debtAsset, loanManager, yieldStrategy, swapper, lastStrategyBalance
         );
     }
 
-    // ============ Instant Parameter Setters ============
-
     /// @notice Set vault parameter: 0=feeRate, 1=targetLtv, 2=depositCap, 3=bountyRate, 4=maxSlippage
-    function setParam(uint8 p, uint256 v) external onlyOwner {
+    /// @dev Gov-only. All parameter changes take effect immediately.
+    function setParam(uint8 p, uint256 v) external onlyGov {
         if (p == 0) {
             if (v > MAX_FEE_RATE) revert InvalidFeeRate();
             emit ParamUpdated(p, feeRate, v);
@@ -751,7 +774,7 @@ contract Zenji is ERC20, IERC4626 {
     }
 
     /// @notice Forward slippage config updates to strategies that expose setSlippage(uint256)
-    function setStrategySlippage(uint256 newSlippage) external onlyOwner {
+    function setStrategySlippage(uint256 newSlippage) external onlyGov {
         IStrategySlippageConfig(address(yieldStrategy)).setSlippage(newSlippage);
         emit StrategySlippageUpdated(address(yieldStrategy), newSlippage);
     }
@@ -880,7 +903,7 @@ contract Zenji is ERC20, IERC4626 {
     ) internal returns (uint256 collateralAmount, uint256 actualShareAmount) {
         if (!liquidationComplete) revert EmergencyModeActive();
 
-        // Handle allowance if caller is not owner
+        // Handle allowance if caller is not share holder
         if (msg.sender != owner_) {
             _spendAllowance(owner_, msg.sender, shareAmount);
         }
@@ -921,12 +944,12 @@ contract Zenji is ERC20, IERC4626 {
         // any user with fewer shares than the offset value would be absorbed into the
         // "virtual" range, allowing an attacker with more shares to trigger a full unwind
         // that drains the remaining holders' collateral while their shares survive worthless.
-        // Note: allowance-based redemptions (msg.sender != owner_) must also trigger final
+        // Note: allowance-based redemptions (msg.sender != share holder) must also trigger final
         // withdrawal when burning the entire supply, otherwise residual value is stranded
         // with totalSupply() == 0 and can be captured by the next depositor.
         bool isFinalWithdraw = (totalSupply() == shareAmount);
 
-        // Handle allowance if caller is not owner
+        // Handle allowance if caller is not share holder
         if (msg.sender != owner_) {
             _spendAllowance(owner_, msg.sender, shareAmount);
         }

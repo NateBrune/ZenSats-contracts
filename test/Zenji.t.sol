@@ -810,7 +810,7 @@ contract ZenjiTest is Test {
         assertTrue(vault.idle(), "Idle should remain true");
     }
 
-    function test_setIdle_onlyOwner() public {
+    function test_setIdle_onlyStrategist() public {
         vm.prank(user1);
         vm.expectRevert(Zenji.Unauthorized.selector);
         vault.setIdle(true);
@@ -901,34 +901,76 @@ contract ZenjiTest is Test {
     //     vault.pauseStrategy();
     // }
 
-    function test_transferRole_owner() public {
-        address newOwner = makeAddr("newOwner");
+    function test_transferRole_strategist() public {
+        address newStrategist = makeAddr("newStrategist");
 
+        // Gov initiates all transfers
         vm.prank(owner);
-        vault.transferRole(0, newOwner);
-        assertEq(vault.pendingOwner(), newOwner, "Pending owner mismatch");
+        vault.transferRole(0, newStrategist);
+        assertEq(vault.pendingStrategist(), newStrategist, "Pending strategist mismatch");
 
-        vm.prank(newOwner);
+        vm.prank(newStrategist);
         vault.acceptRole(0);
-        assertEq(vault.owner(), newOwner, "Owner mismatch");
+        assertEq(vault.strategist(), newStrategist, "Strategist mismatch");
     }
 
-    function test_transferRole_owner_revertsOnZero() public {
+    function test_transferRole_guardian() public {
+        address newGuardian = makeAddr("newGuardian");
+
+        // Gov initiates all transfers
+        vm.prank(owner);
+        vault.transferRole(2, newGuardian);
+        assertEq(vault.pendingGuardian(), newGuardian, "Pending guardian mismatch");
+
+        vm.prank(newGuardian);
+        vault.acceptRole(2);
+        assertEq(vault.guardian(), newGuardian, "Guardian mismatch");
+    }
+
+    function test_transferRole_revertsOnZero() public {
         vm.prank(owner);
         vm.expectRevert(Zenji.InvalidAddress.selector);
         vault.transferRole(0, address(0));
     }
 
-    function test_acceptRole_owner_revertsIfNotPending() public {
+    function test_transferRole_onlyGov() public {
+        vm.prank(user1);
+        vm.expectRevert(Zenji.Unauthorized.selector);
+        vault.transferRole(0, user1);
+    }
+
+    function test_acceptRole_strategist_revertsIfNotPending() public {
         vm.prank(user1);
         vm.expectRevert(Zenji.Unauthorized.selector);
         vault.acceptRole(0);
     }
 
-    function test_onlyOwner() public {
+    function test_acceptRole_guardian_revertsIfNotPending() public {
+        vm.prank(user1);
+        vm.expectRevert(Zenji.Unauthorized.selector);
+        vault.acceptRole(2);
+    }
+
+    function test_onlyStrategist() public {
         vm.prank(user1);
         vm.expectRevert(Zenji.Unauthorized.selector);
         vault.setIdle(true);
+
+        vm.prank(user1);
+        vm.expectRevert(Zenji.Unauthorized.selector);
+        vault.withdrawFees(user1);
+    }
+
+    function test_onlyGov_setParam() public {
+        vm.prank(user1);
+        vm.expectRevert(Zenji.Unauthorized.selector);
+        vault.setParam(0, 1e16);
+    }
+
+    function test_onlyGuardian() public {
+        vm.prank(user1);
+        vm.expectRevert(Zenji.Unauthorized.selector);
+        vault.enterEmergencyMode();
     }
 
     function test_withdrawFees_revertsOnZeroRecipient() public {
@@ -2799,9 +2841,9 @@ contract ZenjiTest is Test {
         vault.setParam(3, 0);
         assertEq(vault.rebalanceBountyRate(), 0, "Bounty rate should be set to 0");
 
-        // Test maximum bounty rate
-        vault.setParam(3, 5e17);
-        assertEq(vault.rebalanceBountyRate(), 5e17, "Bounty rate should be set to max");
+        // Test maximum bounty rate (100%)
+        vault.setParam(3, 1e18);
+        assertEq(vault.rebalanceBountyRate(), 1e18, "Bounty rate should be set to max");
         vm.stopPrank();
     }
 
@@ -3752,7 +3794,7 @@ contract ZenjiTest is Test {
     function test_setParam_bountyRate_invalidReverts() public {
         vm.prank(owner);
         vm.expectRevert(Zenji.InvalidBountyRate.selector);
-        vault.setParam(3, 5e17 + 1); // > MAX_REBALANCE_BOUNTY (50%)
+        vault.setParam(3, 1e18 + 1); // > MAX_REBALANCE_BOUNTY (100%)
     }
 
     function test_executeSwapper_and_cancelSwapper() public {
@@ -3979,7 +4021,7 @@ contract ZenjiTest is Test {
         assertTrue(vault.liquidationComplete(), "Liquidation complete after run+skip");
     }
 
-    function test_emergencySkipStep_onlyOwner_reverts() public {
+    function test_emergencySkipStep_onlyGuardian_reverts() public {
         vm.prank(owner);
         vault.enterEmergencyMode();
 

@@ -51,6 +51,14 @@ contract CrvToCrvUsdSwapper is BaseSwapper {
         crvUsdOracle = IChainlinkOracle(_crvUsdOracle);
     }
 
+    /// @notice Quote CRV -> crvUSD via Curve LP price (no Chainlink dependency)
+    /// @param crvAmount Amount of CRV to quote
+    /// @return crvUsdOut Expected crvUSD output
+    function quote(uint256 crvAmount) external view returns (uint256 crvUsdOut) {
+        if (crvAmount == 0) return 0;
+        return triCryptoPool.get_dy(CRV_INDEX, CRVUSD_INDEX, crvAmount);
+    }
+
     /// @notice Swap CRV held by this contract for crvUSD
     /// @dev Called by strategy after transferring CRV to this contract
     /// @param crvAmount Amount of CRV to swap
