@@ -46,6 +46,18 @@ contract StratMockCRV is ERC20 {
     }
 }
 
+contract StratMockPmUSD is ERC20 {
+    constructor() ERC20("Mock pmUSD", "pmUSD") {}
+
+    function decimals() public pure override returns (uint8) {
+        return 18;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+}
+
 contract StratMockLP is ERC20 {
     constructor() ERC20("Mock pmUSD/crvUSD LP", "pmUSD-crvUSD") {}
 
@@ -145,21 +157,25 @@ contract StratMockUsdtCrvUsdPool {
 
 contract StratMockLpPool {
     StratMockCrvUSD public crvUSD;
+    StratMockPmUSD public pmUSD;
     StratMockLP public lp;
     int128 public crvUsdIndex;
+    uint256 public pmUsdIndex;
 
-    constructor(address _crvUSD, address _lp, int128 _crvUsdIndex) {
+    constructor(address _crvUSD, address _pmUSD, address _lp, int128 _crvUsdIndex) {
         crvUSD = StratMockCrvUSD(_crvUSD);
+        pmUSD = StratMockPmUSD(_pmUSD);
         lp = StratMockLP(_lp);
         crvUsdIndex = _crvUsdIndex;
+        pmUsdIndex = _crvUsdIndex == int128(0) ? 1 : 0;
     }
 
     function add_liquidity(uint256[] calldata amounts, uint256) external returns (uint256 lpMinted) {
         uint256 crvUsdAmount = amounts[uint256(uint128(crvUsdIndex))];
-        if (crvUsdAmount > 0) {
-            crvUSD.transferFrom(msg.sender, address(this), crvUsdAmount);
-        }
-        lpMinted = crvUsdAmount;
+        uint256 pmUsdAmount = amounts[pmUsdIndex];
+        if (crvUsdAmount > 0) crvUSD.transferFrom(msg.sender, address(this), crvUsdAmount);
+        if (pmUsdAmount > 0) pmUSD.transferFrom(msg.sender, address(this), pmUsdAmount);
+        lpMinted = crvUsdAmount + pmUsdAmount;
         if (lpMinted > 0) lp.mint(msg.sender, lpMinted);
     }
 
@@ -171,7 +187,7 @@ contract StratMockLpPool {
     }
 
     function calc_token_amount(uint256[] calldata amounts, bool) external view returns (uint256) {
-        return amounts[uint256(uint128(crvUsdIndex))];
+        return amounts[uint256(uint128(crvUsdIndex))] + amounts[pmUsdIndex];
     }
 
     function calc_withdraw_one_coin(uint256 burn_amount, int128) external pure returns (uint256) {
@@ -402,6 +418,7 @@ contract PmUsdCrvUsdStrategyInvariantTest is Test {
     StratMockUSDT usdt;
     StratMockCrvUSD crvUSD;
     StratMockCRV crv;
+    StratMockPmUSD pmUsd;
     StratMockLP lpToken;
 
     StratMockOracle crvUsdOracle;
@@ -422,6 +439,7 @@ contract PmUsdCrvUsdStrategyInvariantTest is Test {
         usdt = new StratMockUSDT();
         crvUSD = new StratMockCrvUSD();
         crv = new StratMockCRV();
+        pmUsd = new StratMockPmUSD();
         lpToken = new StratMockLP();
 
         // Deploy mock oracles ($1 each, 8 decimals)
@@ -431,7 +449,7 @@ contract PmUsdCrvUsdStrategyInvariantTest is Test {
 
         // Deploy mock Curve pools
         usdtCrvUsdPool = new StratMockUsdtCrvUsdPool(address(usdt), address(crvUSD));
-        lpPool = new StratMockLpPool(address(crvUSD), address(lpToken), 1);
+        lpPool = new StratMockLpPool(address(crvUSD), address(pmUsd), address(lpToken), 1);
 
         // Deploy mock accountant and CRV swapper
         accountant = new StratMockAccountant(address(crv));
@@ -445,6 +463,7 @@ contract PmUsdCrvUsdStrategyInvariantTest is Test {
             address(usdt),
             address(crvUSD),
             address(crv),
+            address(pmUsd),
             mockVault,
             address(usdtCrvUsdPool),
             address(lpPool),

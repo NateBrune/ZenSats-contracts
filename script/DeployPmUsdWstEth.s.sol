@@ -23,6 +23,7 @@ contract DeployPmUsdWstEth is Script {
     address constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
     address constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
     address constant CRV = 0xD533a949740bb3306d119CC777fa900bA034cd52;
+    address constant PMUSD = 0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF;
 
     // Chainlink oracles
     address constant STETH_ETH_ORACLE = 0x86392dC19c0b719886221c78AB11eb8Cf5c52812;
@@ -75,6 +76,7 @@ contract DeployPmUsdWstEth is Script {
             USDT,
             CRVUSD,
             CRV,
+            PMUSD,
             address(0),
             USDT_CRVUSD_POOL,
             PMUSD_CRVUSD_POOL,

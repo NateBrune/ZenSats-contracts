@@ -410,7 +410,7 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
 
         uint256[4] memory state = llamaLend.user_state(address(this));
         uint256 collateralValue = _getCollateralValue(state[0]);
-        uint256 debt = state[2];
+        uint256 debt = llamaLend.debt(address(this));
 
         if (collateralValue == 0) return 0;
         ltv = (debt * PRECISION) / collateralValue;

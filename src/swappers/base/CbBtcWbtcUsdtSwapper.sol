@@ -151,8 +151,10 @@ contract CbBtcWbtcUsdtSwapper is BaseSwapper, ISwapper {
         if (oracleMinOut > minCbBtc) minCbBtc = oracleMinOut;
 
         wbtcToken.ensureApproval(address(cbBtcPool), wbtcReceived);
+        uint256 cbBtcBefore = collateralToken.balanceOf(address(this));
         _exchangeTwo(wbtcIndex, cbBtcIndex, wbtcReceived, minCbBtc, address(this));
-        collateralReceived = collateralToken.balanceOf(address(this));
+        uint256 cbBtcAfter = collateralToken.balanceOf(address(this));
+        collateralReceived = cbBtcAfter > cbBtcBefore ? cbBtcAfter - cbBtcBefore : 0;
         if (collateralReceived > 0) {
             collateralToken.safeTransfer(msg.sender, collateralReceived);
         }

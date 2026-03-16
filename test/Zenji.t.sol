@@ -3519,6 +3519,63 @@ contract ZenjiTest is Test {
         assertGt(victimReceived, 0, "Victim must be able to redeem their funds");
     }
 
+    /// @dev Regression test: large partial withdrawal must not bankrupt remaining depositors.
+    /// Before the fix, _unwindPosition applied a 5% buffer when withdrawing from the yield
+    /// strategy, draining it faster than Aave debt was repaid. After a ~99% withdrawal, the
+    /// remaining depositor was left with full proportional Aave debt but near-zero strategy
+    /// balance — accruing interest with no yield to service it.
+    function test_largeWithdraw_doesNotBankruptRemainingDepositor() public {
+        // Two depositors: user1 (small), user2 (large)
+        vm.prank(user1);
+        vault.deposit(1e6, user1); // 0.01 WBTC
+
+        vm.prank(user2);
+        vault.deposit(1e8, user2); // 1 WBTC (100x larger)
+
+        vm.roll(block.number + 1);
+
+        // Snapshot remaining depositor's value before the large withdrawal
+        uint256 user1SharesBefore = vault.balanceOf(user1);
+        uint256 user1ValueBefore = vault.convertToAssets(user1SharesBefore);
+
+        // Large depositor withdraws everything
+        uint256 user2Shares = vault.balanceOf(user2);
+        vm.prank(user2);
+        vault.redeem(user2Shares, user2, user2);
+
+        // Remaining depositor's shares unchanged
+        uint256 user1SharesAfter = vault.balanceOf(user1);
+        assertEq(user1SharesAfter, user1SharesBefore, "Remaining depositor shares unchanged");
+
+        // Strategy balance must be proportional to remaining Aave debt.
+        // If the strategy is near-zero but debt exists, the position is bankrupt.
+        ILoanManager lm = vault.loanManager();
+        if (lm.loanExists()) {
+            (, uint256 remainingDebt) = lm.getPositionValues();
+            uint256 strategyBal = yieldStrategy.balanceOf();
+            // Strategy should cover at least 90% of remaining debt (allowing for slippage/fees)
+            assertGe(
+                strategyBal * 100,
+                remainingDebt * 90,
+                "Strategy must back remaining Aave debt - depositor would be bankrupted"
+            );
+        }
+
+        // Remaining depositor's share value must not have been materially diluted
+        uint256 user1ValueAfter = vault.convertToAssets(user1SharesAfter);
+        // Allow up to 5% loss from swap slippage/fees, but not bankruptcy
+        assertGe(
+            user1ValueAfter * 100,
+            user1ValueBefore * 95,
+            "Remaining depositor value must not be materially diluted"
+        );
+
+        // Remaining depositor can still withdraw
+        vm.prank(user1);
+        uint256 received = vault.redeem(user1SharesAfter, user1, user1);
+        assertGt(received, 0, "Remaining depositor must be able to withdraw");
+    }
+
     function test_maxMint_withCap() public {
         vm.prank(owner);
         vault.setParam(2, 3e8); // cap = 3 WBTC

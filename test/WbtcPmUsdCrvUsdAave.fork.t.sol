@@ -30,6 +30,7 @@ contract WbtcPmUsdCrvUsdAave is Test {
     address constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
     address constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
     address constant CRV = 0xD533a949740bb3306d119CC777fa900bA034cd52;
+    address constant PMUSD = 0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF;
 
     // Aave V3
     address constant AAVE_POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
@@ -140,6 +141,7 @@ contract WbtcPmUsdCrvUsdAave is Test {
             USDT,
             CRVUSD,
             CRV,
+            PMUSD,
             expectedVaultAddress,
             USDT_CRVUSD_POOL,
             PMUSD_CRVUSD_POOL,

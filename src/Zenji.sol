@@ -29,15 +29,15 @@ contract Zenji is ERC20, IERC4626 {
 
     uint256 public constant PRECISION = 1e18;
     uint256 public constant DEADBAND_SPREAD = 3e16; // 3%
-    uint256 internal constant MIN_TARGET_LTV = 15e16; // 15%
-    uint256 internal constant MAX_TARGET_LTV = 65e16; // 65%
-    uint256 internal constant DEFAULT_LOAN_BANDS = 4;
+    uint256 public constant MIN_TARGET_LTV = 15e16; // 15%
+    uint256 public constant MAX_TARGET_LTV = 65e16; // 65%
+    uint256 internal constant DEFAULT_LOAN_BANDS = 4; // TODO: This should live in llamaloanmanager
     uint256 internal constant MIN_DEPOSIT = 1e4;
-    uint256 internal constant MAX_FEE_RATE = 2e17; // 20%
+    uint256 public constant MAX_FEE_RATE = 2e17; // 20%
     // VIRTUAL_SHARE_OFFSET is now a virtual function — see bottom of contract
     uint256 public constant COOLDOWN_BLOCKS = 1;
-    uint256 internal constant MAX_REBALANCE_BOUNTY = 1e18; // 100%
-    uint256 internal constant TIMELOCK_DELAY = 1 weeks;
+    uint256 public constant MAX_REBALANCE_BOUNTY = 1e18; // 100%
+    uint256 public constant TIMELOCK_DELAY = 1 weeks;
     uint256 public constant MAX_VAULT_SLIPPAGE = 1e17; // 10% cap
 
     // ============ Immutables ============
@@ -698,6 +698,7 @@ contract Zenji is ERC20, IERC4626 {
 
     /// @notice Emergency step: 0=withdrawYield, 1=unwindLoan, 2=completeLiquidation
     function emergencyStep(uint8 step) external nonReentrant onlyGuardian {
+        if (step > 2) revert InvalidEmergencyStep();
         if (!emergencyMode) revert EmergencyModeNotActive();
         if (liquidationComplete) revert LiquidationAlreadyComplete();
         // Step 2: requires both prior steps to be resolved (run or explicitly skipped)
@@ -938,12 +939,7 @@ contract Zenji is ERC20, IERC4626 {
         // Accrue fees before pricing to prevent fee bypass on redemption
         _accrueYieldFees();
 
-        // Detect final withdrawal: only when this redemption burns every real share
-        // (totalSupply == shareAmount means the redeemer holds all shares, none remain for
-        // other users). Using a threshold like <= VIRTUAL_SHARE_OFFSET is exploitable —
-        // any user with fewer shares than the offset value would be absorbed into the
-        // "virtual" range, allowing an attacker with more shares to trigger a full unwind
-        // that drains the remaining holders' collateral while their shares survive worthless.
+        // Detect final withdrawal: only when this redemption burns every real share.
         // Note: allowance-based redemptions (msg.sender != share holder) must also trigger final
         // withdrawal when burning the entire supply, otherwise residual value is stranded
         // with totalSupply() == 0 and can be captured by the next depositor.
@@ -1096,9 +1092,13 @@ contract Zenji is ERC20, IERC4626 {
                     ? (positionDebt * collateralNeeded) / positionCollateral
                     : 0;
                 if (debtToRepay > 0) {
-                    // Add 5% buffer for slippage/rounding
-                    uint256 debtNeeded = (debtToRepay * 105) / 100;
-                    _withdrawFromYieldStrategy(debtNeeded);
+                    // Withdraw only the proportional debt — no buffer.
+                    // Over-withdrawing (e.g. +5%) drains the strategy faster than
+                    // debt is repaid, leaving remaining depositors with accruing
+                    // Aave interest but near-zero strategy balance to service it.
+                    // The loan manager's flashloan handles any shortfall from
+                    // rounding or strategy withdrawal slippage.
+                    _withdrawFromYieldStrategy(debtToRepay);
                 }
             }
             debtBalance = debtAsset.balanceOf(address(this));

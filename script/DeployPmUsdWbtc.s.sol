@@ -21,6 +21,7 @@ contract DeployPmUsdWbtc is Script {
     address constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
     address constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
     address constant CRV = 0xD533a949740bb3306d119CC777fa900bA034cd52;
+    address constant PMUSD = 0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF;
 
     // Chainlink oracles
     address constant BTC_USD_ORACLE = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
@@ -81,6 +82,7 @@ contract DeployPmUsdWbtc is Script {
             USDT,
             CRVUSD,
             CRV,
+            PMUSD,
             address(0),
             USDT_CRVUSD_POOL,
             PMUSD_CRVUSD_POOL,

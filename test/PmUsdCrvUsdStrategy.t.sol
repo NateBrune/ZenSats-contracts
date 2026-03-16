@@ -116,25 +116,34 @@ contract MockCurveStableSwap {
 /// @notice Mock Curve StableSwapNG pool (pmUSD/crvUSD) with LP token minting
 contract MockCurveStableSwapNG {
     MockERC20 public immutable crvUSD;
+    MockERC20 public pmUSD;
     MockERC20 public lpToken;
     int128 public immutable crvUsdIdx;
+    uint256 public pmUsdIdx;
 
     constructor(address _crvUSD, int128 _crvUsdIdx) {
         crvUSD = MockERC20(_crvUSD);
         crvUsdIdx = _crvUsdIdx;
-        // LP token created externally and set
+        pmUsdIdx = _crvUsdIdx == int128(0) ? 1 : 0;
     }
 
     function setLpToken(address _lpToken) external {
         lpToken = MockERC20(_lpToken);
     }
 
+    function setPmUsd(address _pmUSD) external {
+        pmUSD = MockERC20(_pmUSD);
+    }
+
     function add_liquidity(uint256[] calldata amounts, uint256) external returns (uint256) {
         uint256 crvUsdAmount = amounts[uint256(uint128(crvUsdIdx))];
-        crvUSD.transferFrom(msg.sender, address(this), crvUsdAmount);
+        uint256 pmUsdAmount = amounts[pmUsdIdx];
+        if (crvUsdAmount > 0) crvUSD.transferFrom(msg.sender, address(this), crvUsdAmount);
+        if (pmUsdAmount > 0 && address(pmUSD) != address(0)) pmUSD.transferFrom(msg.sender, address(this), pmUsdAmount);
         // 1:1 LP minting for simplicity
-        lpToken.mint(msg.sender, crvUsdAmount);
-        return crvUsdAmount;
+        uint256 totalMinted = crvUsdAmount + pmUsdAmount;
+        if (totalMinted > 0) lpToken.mint(msg.sender, totalMinted);
+        return totalMinted;
     }
 
     function remove_liquidity_one_coin(uint256 burn_amount, int128, uint256) external returns (uint256) {
@@ -145,7 +154,7 @@ contract MockCurveStableSwapNG {
     }
 
     function calc_token_amount(uint256[] calldata amounts, bool) external view returns (uint256) {
-        return amounts[uint256(uint128(crvUsdIdx))]; // 1:1
+        return amounts[uint256(uint128(crvUsdIdx))] + amounts[pmUsdIdx]; // 1:1
     }
 
     function calc_withdraw_one_coin(uint256 burn_amount, int128) external pure returns (uint256) {
@@ -342,6 +351,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
     MockERC20 usdt;
     MockERC20 crvUSD;
     MockERC20 crv;
+    MockERC20 pmUsd;
     MockERC20 lpToken;
     MockERC20 aToken;
     MockERC20 debtToken;
@@ -372,6 +382,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
         usdt = new MockERC20("USDT", "USDT", 6);
         crvUSD = new MockERC20("crvUSD", "crvUSD", 18);
         crv = new MockERC20("CRV", "CRV", 18);
+        pmUsd = new MockERC20("pmUSD", "pmUSD", 18);
         lpToken = new MockERC20("pmUSD/crvUSD LP", "LP", 18);
         aToken = new MockERC20("aWBTC", "aWBTC", 8);
         debtToken = new MockERC20("vUSDT", "vUSDT", 6);
@@ -387,6 +398,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
         usdtCrvUsdPool = new MockCurveStableSwap(address(usdt), address(crvUSD), 0, 1);
         lpPool = new MockCurveStableSwapNG(address(crvUSD), 1);
         lpPool.setLpToken(address(lpToken));
+        lpPool.setPmUsd(address(pmUsd));
         accountant = new MockAccountant(address(crv));
         rewardVault = new MockRewardVault(address(lpToken), address(crv), address(accountant));
         crvSwapper = new MockCrvSwapper(address(crv), address(crvUSD));
@@ -418,6 +430,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
             address(usdt),
             address(crvUSD),
             address(crv),
+            address(pmUsd),
             predictedVault,
             address(usdtCrvUsdPool),
             address(lpPool),
@@ -803,6 +816,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
             address(usdt),
             address(crvUSD),
             address(crv),
+            address(pmUsd),
             address(vault),
             address(usdtCrvUsdPool),
             address(lpPool),
@@ -824,6 +838,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
             address(usdt),
             address(0), // crvUSD = 0
             address(crv),
+            address(pmUsd),
             address(vault),
             address(usdtCrvUsdPool),
             address(lpPool),
@@ -845,6 +860,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
             address(usdt),
             address(crvUSD),
             address(0), // crv = 0
+            address(pmUsd),
             address(vault),
             address(usdtCrvUsdPool),
             address(lpPool),
@@ -866,6 +882,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
             address(usdt),
             address(crvUSD),
             address(crv),
+            address(pmUsd),
             address(vault),
             address(0), // usdtCrvUsdPool = 0
             address(lpPool),
@@ -887,6 +904,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
             address(usdt),
             address(crvUSD),
             address(crv),
+            address(pmUsd),
             address(vault),
             address(usdtCrvUsdPool),
             address(0), // lpPool = 0
@@ -908,6 +926,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
             address(usdt),
             address(crvUSD),
             address(crv),
+            address(pmUsd),
             address(vault),
             address(usdtCrvUsdPool),
             address(lpPool),
@@ -929,6 +948,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
             address(usdt),
             address(crvUSD),
             address(crv),
+            address(pmUsd),
             address(vault),
             address(usdtCrvUsdPool),
             address(lpPool),
@@ -950,6 +970,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
             address(usdt),
             address(crvUSD),
             address(crv),
+            address(pmUsd),
             address(vault),
             address(usdtCrvUsdPool),
             address(lpPool),
@@ -971,6 +992,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
             address(usdt),
             address(crvUSD),
             address(crv),
+            address(pmUsd),
             address(vault),
             address(usdtCrvUsdPool),
             address(lpPool),

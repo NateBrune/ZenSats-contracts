@@ -26,7 +26,11 @@ contract CrvToCrvUsdSwapper is BaseSwapper {
     IChainlinkOracle public immutable crvOracle;
     IChainlinkOracle public immutable crvUsdOracle;
 
+    address public authorizedCaller;
+
     event Swapped(uint256 crvIn, uint256 crvUsdOut);
+    event AuthorizedCallerUpdated(address indexed caller);
+    event TokenRescued(address indexed token, address indexed to, uint256 amount);
 
     error SwapFailed();
 
@@ -51,6 +55,20 @@ contract CrvToCrvUsdSwapper is BaseSwapper {
         crvUsdOracle = IChainlinkOracle(_crvUsdOracle);
     }
 
+    /// @notice Set the authorized caller for swap()
+    function setAuthorizedCaller(address caller) external onlyGov {
+        if (caller == address(0)) revert ISwapper.InvalidAddress();
+        authorizedCaller = caller;
+        emit AuthorizedCallerUpdated(caller);
+    }
+
+    /// @notice Rescue tokens stuck in the swapper (gov-only)
+    function rescueToken(address token, address to, uint256 amount) external onlyGov {
+        if (to == address(0)) revert ISwapper.InvalidAddress();
+        IERC20(token).safeTransfer(to, amount);
+        emit TokenRescued(token, to, amount);
+    }
+
     /// @notice Quote CRV -> crvUSD via Curve LP price (no Chainlink dependency)
     /// @param crvAmount Amount of CRV to quote
     /// @return crvUsdOut Expected crvUSD output
@@ -64,6 +82,7 @@ contract CrvToCrvUsdSwapper is BaseSwapper {
     /// @param crvAmount Amount of CRV to swap
     /// @return crvUsdReceived Amount of crvUSD received
     function swap(uint256 crvAmount) external returns (uint256 crvUsdReceived) {
+        if (authorizedCaller != address(0) && msg.sender != authorizedCaller) revert Unauthorized();
         if (crvAmount == 0) return 0;
 
         uint256 expectedOut = triCryptoPool.get_dy(CRV_INDEX, CRVUSD_INDEX, crvAmount);
@@ -77,10 +96,19 @@ contract CrvToCrvUsdSwapper is BaseSwapper {
         if (oracleMinOut > minOut) minOut = oracleMinOut;
 
         crv.ensureApproval(address(triCryptoPool), crvAmount);
+        uint256 balanceBefore = crvUSD.balanceOf(address(this));
         crvUsdReceived = triCryptoPool.exchange(CRV_INDEX, CRVUSD_INDEX, crvAmount, minOut, false);
 
+        // Fallback: older pools may return 0 despite transferring tokens
+        if (crvUsdReceived == 0) {
+            uint256 balanceAfter = crvUSD.balanceOf(address(this));
+            crvUsdReceived = balanceAfter > balanceBefore ? balanceAfter - balanceBefore : 0;
+        }
+
         // Transfer crvUSD back to caller
-        crvUSD.safeTransfer(msg.sender, crvUsdReceived);
+        if (crvUsdReceived > 0) {
+            crvUSD.safeTransfer(msg.sender, crvUsdReceived);
+        }
 
         emit Swapped(crvAmount, crvUsdReceived);
     }

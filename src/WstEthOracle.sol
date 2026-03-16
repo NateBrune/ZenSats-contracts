@@ -17,6 +17,8 @@ contract WstEthOracle is IChainlinkOracle {
 
     /// @notice stETH/ETH Chainlink heartbeat is 24 hours
     uint256 public constant STETH_ETH_MAX_STALENESS = 90000; // 25 hours
+    /// @notice ETH/USD Chainlink heartbeat is 1 hour
+    uint256 public constant ETH_USD_MAX_STALENESS = 7200; // 2 hours
 
     constructor(address _wstETH, address _stEthEthFeed, address _ethUsdFeed) {
         wstETH = IWstETH(_wstETH);
@@ -38,11 +40,12 @@ contract WstEthOracle is IChainlinkOracle {
         require(stEthAnsweredInRound >= stEthRoundId, "stETH/ETH: stale round");
         require(block.timestamp - stEthEthUpdatedAt <= STETH_ETH_MAX_STALENESS, "stETH/ETH: stale");
 
-        // Get ETH/USD price (8 decimals) — 1h heartbeat, staleness checked by consumer
+        // Get ETH/USD price (8 decimals) — 1h heartbeat
         (uint80 ethUsdRoundId, int256 ethUsdPrice, uint256 ethUsdStartedAt, uint256 ethUsdUpdatedAt, uint80 ethUsdAnsweredInRound) =
             ethUsdFeed.latestRoundData();
         require(ethUsdPrice > 0, "ETH/USD: invalid price");
         require(ethUsdAnsweredInRound >= ethUsdRoundId, "ETH/USD: stale round");
+        require(block.timestamp - ethUsdUpdatedAt <= ETH_USD_MAX_STALENESS, "ETH/USD: stale");
 
         // stEthPerToken is 18 decimals
         uint256 ratio = wstETH.stEthPerToken();
@@ -73,13 +76,17 @@ contract WstEthOracle is IChainlinkOracle {
 
     /// @inheritdoc IChainlinkOracle
     function latestAnswer() external view override returns (int256) {
-        (uint80 stEthRoundId, int256 stEthEthPrice,,, uint80 stEthAnsweredInRound) = stEthEthFeed.latestRoundData();
+        (uint80 stEthRoundId, int256 stEthEthPrice,, uint256 stEthEthUpdatedAt, uint80 stEthAnsweredInRound) =
+            stEthEthFeed.latestRoundData();
         require(stEthEthPrice > 0, "stETH/ETH: invalid price");
         require(stEthAnsweredInRound >= stEthRoundId, "stETH/ETH: stale round");
+        require(block.timestamp - stEthEthUpdatedAt <= STETH_ETH_MAX_STALENESS, "stETH/ETH: stale");
 
-        (uint80 ethUsdRoundId, int256 ethUsdPrice,,, uint80 ethUsdAnsweredInRound) = ethUsdFeed.latestRoundData();
+        (uint80 ethUsdRoundId, int256 ethUsdPrice,, uint256 ethUsdUpdatedAt, uint80 ethUsdAnsweredInRound) =
+            ethUsdFeed.latestRoundData();
         require(ethUsdPrice > 0, "ETH/USD: invalid price");
         require(ethUsdAnsweredInRound >= ethUsdRoundId, "ETH/USD: stale round");
+        require(block.timestamp - ethUsdUpdatedAt <= ETH_USD_MAX_STALENESS, "ETH/USD: stale");
 
         uint256 ratio = wstETH.stEthPerToken();
         return int256((ratio * uint256(stEthEthPrice) * uint256(ethUsdPrice)) / (1e18 * 1e18));
