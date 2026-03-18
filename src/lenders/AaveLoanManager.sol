@@ -218,7 +218,8 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         } else if (remainingDebt > 0) {
             // Dust unrepaid debt but Aave still has remaining debt.
             // Check if remaining collateral can safely back that debt.
-            uint256 remainingCollateral = collateral > collateralNeeded ? collateral - collateralNeeded : 0;
+            uint256 remainingCollateral =
+                collateral > collateralNeeded ? collateral - collateralNeeded : 0;
             uint256 remainingCollateralUsd = _getCollateralUsdValue(remainingCollateral);
             uint256 remainingDebtUsd = _getDebtUsdValue(remainingDebt);
             // Health factor: (collateralUsd * liquidationThreshold) / debtUsd must be >= 1e18
@@ -236,7 +237,9 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
                 address(this), address(debtToken), flashloanAmount, data, AAVE_REFERRAL_CODE
             );
 
-            if (fullyClose && variableDebtToken.balanceOf(address(this)) > 0) revert DebtNotFullyRepaid();
+            if (fullyClose && variableDebtToken.balanceOf(address(this)) > 0) {
+                revert DebtNotFullyRepaid();
+            }
             uint256 idleCollateral = collateralToken.balanceOf(address(this));
             if (idleCollateral > 0) {
                 collateralToken.safeTransfer(vault, idleCollateral);
@@ -313,7 +316,9 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
                 uint256 debtAfter = debtToken.balanceOf(address(this));
                 if (debtAfter <= debtBefore) revert SwapperUnderperformed(expectedDebt, 0);
                 uint256 debtDelta = debtAfter - debtBefore;
-                if (debtDelta < expectedDebt) revert SwapperUnderperformed(expectedDebt, debtDelta);
+                if (debtDelta < expectedDebt) {
+                    revert SwapperUnderperformed(expectedDebt, debtDelta);
+                }
             }
 
             debtAvailable = debtToken.balanceOf(address(this));
@@ -321,14 +326,16 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
                 uint256 remainingCollateral = collateralToken.balanceOf(address(this));
                 if (remainingCollateral > 0) {
                     uint256 debtBefore = debtToken.balanceOf(address(this));
-                    uint256 expectedDebt = (_getCollateralValue(remainingCollateral) * MIN_SWAP_OUT_BPS)
-                        / 10000;
+                    uint256 expectedDebt =
+                        (_getCollateralValue(remainingCollateral) * MIN_SWAP_OUT_BPS) / 10000;
                     collateralToken.safeTransfer(address(swapper), remainingCollateral);
                     swapper.swapCollateralForDebt(remainingCollateral);
                     uint256 debtAfter = debtToken.balanceOf(address(this));
                     if (debtAfter <= debtBefore) revert SwapperUnderperformed(expectedDebt, 0);
                     uint256 debtDelta = debtAfter - debtBefore;
-                    if (debtDelta < expectedDebt) revert SwapperUnderperformed(expectedDebt, debtDelta);
+                    if (debtDelta < expectedDebt) {
+                        revert SwapperUnderperformed(expectedDebt, debtDelta);
+                    }
                 }
             }
         }
@@ -559,8 +566,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
     }
 
     function _getDebtUsdValue(uint256 debtAmount) internal view returns (uint256) {
-        return OracleLib.getDebtUsdValue(
-            debtAmount, debtOracle, MAX_DEBT_ORACLE_STALENESS, debtToken
-        );
+        return
+            OracleLib.getDebtUsdValue(debtAmount, debtOracle, MAX_DEBT_ORACLE_STALENESS, debtToken);
     }
 }

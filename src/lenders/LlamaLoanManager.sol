@@ -7,7 +7,9 @@ import { IChainlinkOracle } from "../interfaces/IChainlinkOracle.sol";
 import { ICurveTwoCrypto } from "../interfaces/ICurveTwoCrypto.sol";
 import { ILoanManager } from "../interfaces/ILoanManager.sol";
 import { ISwapper } from "../interfaces/ISwapper.sol";
-import { IERC3156FlashBorrower } from "@openzeppelin/contracts/interfaces/IERC3156FlashBorrower.sol";
+import {
+    IERC3156FlashBorrower
+} from "@openzeppelin/contracts/interfaces/IERC3156FlashBorrower.sol";
 import { IERC3156FlashLender } from "@openzeppelin/contracts/interfaces/IERC3156FlashLender.sol";
 import { SafeTransferLib } from "../libraries/SafeTransferLib.sol";
 import { TimelockLib } from "../libraries/TimelockLib.sol";
@@ -277,9 +279,10 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
             // 5. Debt remains → flashloan the shortfall (+ 0.5% buffer)
             uint256 flashloanAmount = (remainingDebt * 10300) / 10000;
             bytes memory data = abi.encode(collateralNeeded, fullyClose);
-            IERC3156FlashLender(DEBT_FLASH_LENDER).flashLoan(
-                IERC3156FlashBorrower(address(this)), address(debtToken), flashloanAmount, data
-            );
+            IERC3156FlashLender(DEBT_FLASH_LENDER)
+                .flashLoan(
+                    IERC3156FlashBorrower(address(this)), address(debtToken), flashloanAmount, data
+                );
         } else {
             // 6. No meaningful debt remains → remove collateral directly
             if (llamaLend.loan_exists(address(this))) {

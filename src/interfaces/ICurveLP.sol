@@ -54,10 +54,7 @@ interface ICurveLP {
     /// @param _burn_amount Amount of LP tokens
     /// @param i Index of the coin
     /// @return Amount of coin
-    function calc_withdraw_one_coin(uint256 _burn_amount, int128 i)
-        external
-        view
-        returns (uint256);
+    function calc_withdraw_one_coin(uint256 _burn_amount, int128 i) external view returns (uint256);
 
     /// @notice Get the address of a coin in the pool
     /// @param i Index of the coin

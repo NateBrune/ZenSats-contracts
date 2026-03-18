@@ -19,9 +19,7 @@ import { IERC20 as OZ_IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.
 contract MockERC20 is ERC20 {
     uint8 private immutable _decimals;
 
-    constructor(string memory name_, string memory symbol_, uint8 decimals_)
-        ERC20(name_, symbol_)
-    {
+    constructor(string memory name_, string memory symbol_, uint8 decimals_) ERC20(name_, symbol_) {
         _decimals = decimals_;
     }
 
@@ -193,9 +191,8 @@ contract MockAavePool is IAavePool {
         uint16
     ) external {
         MockERC20(asset).mint(receiverAddress, amount);
-        IFlashLoanSimpleReceiver(receiverAddress).executeOperation(
-            asset, amount, 0, receiverAddress, params
-        );
+        IFlashLoanSimpleReceiver(receiverAddress)
+            .executeOperation(asset, amount, 0, receiverAddress, params);
         IERC20(asset).transferFrom(receiverAddress, address(this), amount);
     }
 }

@@ -2,8 +2,7 @@
 pragma solidity ^0.8.33;
 
 interface IAavePool {
-    function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode)
-        external;
+    function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external;
 
     function borrow(
         address asset,

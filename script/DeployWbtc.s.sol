@@ -4,13 +4,13 @@ pragma solidity ^0.8.33;
 import "forge-std/Script.sol";
 import "forge-std/console2.sol";
 
-import {ZenjiViewHelper} from "../src/ZenjiViewHelper.sol";
-import {VaultTracker} from "../src/VaultTracker.sol";
+import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
+import { VaultTracker } from "../src/VaultTracker.sol";
 // import {ZenjiRebalanceKeeper} from "../src/keepers/ZenjiRebalanceKeeper.sol";
-import {CurveThreeCryptoSwapper} from "../src/swappers/base/CurveThreeCryptoSwapper.sol";
-import {AaveLoanManager} from "../src/lenders/AaveLoanManager.sol";
-import {UsdtIporYieldStrategy} from "../src/strategies/UsdtIporYieldStrategy.sol";
-import {ZenjiWbtc} from "../src/implementations/ZenjiWbtc.sol";
+import { CurveThreeCryptoSwapper } from "../src/swappers/base/CurveThreeCryptoSwapper.sol";
+import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
+import { UsdtIporYieldStrategy } from "../src/strategies/UsdtIporYieldStrategy.sol";
+import { ZenjiWbtc } from "../src/implementations/ZenjiWbtc.sol";
 
 contract DeployWbtc is Script {
     // Assets
@@ -68,7 +68,7 @@ contract DeployWbtc is Script {
             BTC_USD_ORACLE,
             USDT_USD_ORACLE,
             address(swapper),
-            7300,           
+            7300,
             7800,
             address(0)
         );
@@ -86,11 +86,7 @@ contract DeployWbtc is Script {
         );
 
         ZenjiWbtc vault = new ZenjiWbtc(
-            address(loanManager),
-            address(strategy),
-            address(swapper),
-            owner,
-            address(viewHelper)
+            address(loanManager), address(strategy), address(swapper), owner, address(viewHelper)
         );
 
         VaultTracker vaultTracker = new VaultTracker(address(vault));
@@ -112,7 +108,11 @@ contract DeployWbtc is Script {
         // console2.log("RebalanceKeeper", address(rebalanceKeeper));
     }
 
-    function _envOrAddress(string memory key, address defaultValue) internal view returns (address) {
+    function _envOrAddress(string memory key, address defaultValue)
+        internal
+        view
+        returns (address)
+    {
         try vm.envAddress(key) returns (address val) {
             if (val != address(0)) return val;
             return defaultValue;

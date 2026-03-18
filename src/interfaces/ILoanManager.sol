@@ -115,10 +115,7 @@ interface ILoanManager {
     /// @notice Get position values (collateral and debt)
     /// @return collateralValue Current collateral value
     /// @return debtValue Current debt value
-    function getPositionValues()
-        external
-        view
-        returns (uint256 collateralValue, uint256 debtValue);
+    function getPositionValues() external view returns (uint256 collateralValue, uint256 debtValue);
 
     /// @notice Get net collateral value (collateral - debt in collateral terms)
     /// @return value Net value in collateral asset

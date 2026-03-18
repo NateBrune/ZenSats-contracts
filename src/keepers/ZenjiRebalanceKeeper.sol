@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import {AutomationCompatibleInterface} from "../interfaces/AutomationCompatibleInterface.sol";
-import {ILoanManager} from "../interfaces/ILoanManager.sol";
-import {IERC20} from "../interfaces/IERC20.sol";
-import {SafeTransferLib} from "../libraries/SafeTransferLib.sol";
+import { AutomationCompatibleInterface } from "../interfaces/AutomationCompatibleInterface.sol";
+import { ILoanManager } from "../interfaces/ILoanManager.sol";
+import { IERC20 } from "../interfaces/IERC20.sol";
+import { SafeTransferLib } from "../libraries/SafeTransferLib.sol";
 
 interface IZenjiKeeperTarget {
     function loanManager() external view returns (ILoanManager);
@@ -44,8 +44,8 @@ contract ZenjiRebalanceKeeper is AutomationCompatibleInterface {
 
     function checkUpkeep(bytes calldata)
         external
-        override
         view
+        override
         returns (bool upkeepNeeded, bytes memory performData)
     {
         (upkeepNeeded, performData) = _shouldRebalance();
@@ -55,7 +55,8 @@ contract ZenjiRebalanceKeeper is AutomationCompatibleInterface {
         (bool needed, bytes memory data) = _shouldRebalance();
         if (!needed) return;
 
-        (uint256 currentLtv, uint256 lowerBand, uint256 upperBand) = abi.decode(data, (uint256, uint256, uint256));
+        (uint256 currentLtv, uint256 lowerBand, uint256 upperBand) =
+            abi.decode(data, (uint256, uint256, uint256));
 
         vault.rebalance();
         emit UpkeepPerformed(currentLtv, lowerBand, upperBand);
@@ -75,7 +76,11 @@ contract ZenjiRebalanceKeeper is AutomationCompatibleInterface {
         emit ERC20Drained(token, to, amount);
     }
 
-    function _shouldRebalance() internal view returns (bool upkeepNeeded, bytes memory performData) {
+    function _shouldRebalance()
+        internal
+        view
+        returns (bool upkeepNeeded, bytes memory performData)
+    {
         if (vault.idle() || vault.emergencyMode()) return (false, bytes(""));
 
         ILoanManager loanManager_ = vault.loanManager();

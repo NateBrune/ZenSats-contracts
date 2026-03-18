@@ -31,18 +31,33 @@ contract WstEthOracle is IChainlinkOracle {
         external
         view
         override
-        returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
+        returns (
+            uint80 roundId,
+            int256 answer,
+            uint256 startedAt,
+            uint256 updatedAt,
+            uint80 answeredInRound
+        )
     {
         // Get stETH/ETH price (18 decimals) — 24h heartbeat, validated here
-        (uint80 stEthRoundId, int256 stEthEthPrice,, uint256 stEthEthUpdatedAt, uint80 stEthAnsweredInRound) =
-            stEthEthFeed.latestRoundData();
+        (
+            uint80 stEthRoundId,
+            int256 stEthEthPrice,,
+            uint256 stEthEthUpdatedAt,
+            uint80 stEthAnsweredInRound
+        ) = stEthEthFeed.latestRoundData();
         require(stEthEthPrice > 0, "stETH/ETH: invalid price");
         require(stEthAnsweredInRound >= stEthRoundId, "stETH/ETH: stale round");
         require(block.timestamp - stEthEthUpdatedAt <= STETH_ETH_MAX_STALENESS, "stETH/ETH: stale");
 
         // Get ETH/USD price (8 decimals) — 1h heartbeat
-        (uint80 ethUsdRoundId, int256 ethUsdPrice, uint256 ethUsdStartedAt, uint256 ethUsdUpdatedAt, uint80 ethUsdAnsweredInRound) =
-            ethUsdFeed.latestRoundData();
+        (
+            uint80 ethUsdRoundId,
+            int256 ethUsdPrice,
+            uint256 ethUsdStartedAt,
+            uint256 ethUsdUpdatedAt,
+            uint80 ethUsdAnsweredInRound
+        ) = ethUsdFeed.latestRoundData();
         require(ethUsdPrice > 0, "ETH/USD: invalid price");
         require(ethUsdAnsweredInRound >= ethUsdRoundId, "ETH/USD: stale round");
         require(block.timestamp - ethUsdUpdatedAt <= ETH_USD_MAX_STALENESS, "ETH/USD: stale");
@@ -76,14 +91,22 @@ contract WstEthOracle is IChainlinkOracle {
 
     /// @inheritdoc IChainlinkOracle
     function latestAnswer() external view override returns (int256) {
-        (uint80 stEthRoundId, int256 stEthEthPrice,, uint256 stEthEthUpdatedAt, uint80 stEthAnsweredInRound) =
-            stEthEthFeed.latestRoundData();
+        (
+            uint80 stEthRoundId,
+            int256 stEthEthPrice,,
+            uint256 stEthEthUpdatedAt,
+            uint80 stEthAnsweredInRound
+        ) = stEthEthFeed.latestRoundData();
         require(stEthEthPrice > 0, "stETH/ETH: invalid price");
         require(stEthAnsweredInRound >= stEthRoundId, "stETH/ETH: stale round");
         require(block.timestamp - stEthEthUpdatedAt <= STETH_ETH_MAX_STALENESS, "stETH/ETH: stale");
 
-        (uint80 ethUsdRoundId, int256 ethUsdPrice,, uint256 ethUsdUpdatedAt, uint80 ethUsdAnsweredInRound) =
-            ethUsdFeed.latestRoundData();
+        (
+            uint80 ethUsdRoundId,
+            int256 ethUsdPrice,,
+            uint256 ethUsdUpdatedAt,
+            uint80 ethUsdAnsweredInRound
+        ) = ethUsdFeed.latestRoundData();
         require(ethUsdPrice > 0, "ETH/USD: invalid price");
         require(ethUsdAnsweredInRound >= ethUsdRoundId, "ETH/USD: stale round");
         require(block.timestamp - ethUsdUpdatedAt <= ETH_USD_MAX_STALENESS, "ETH/USD: stale");

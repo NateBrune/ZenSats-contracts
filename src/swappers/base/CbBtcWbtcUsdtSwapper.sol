@@ -46,8 +46,8 @@ contract CbBtcWbtcUsdtSwapper is BaseSwapper, ISwapper {
         address _debtOracle
     ) BaseSwapper(_gov) {
         if (
-            _collateralToken == address(0) || _debtToken == address(0)
-                || _wbtcToken == address(0) || _cbBtcPool == address(0) || _triCryptoPool == address(0)
+            _collateralToken == address(0) || _debtToken == address(0) || _wbtcToken == address(0)
+                || _cbBtcPool == address(0) || _triCryptoPool == address(0)
                 || _collateralOracle == address(0) || _debtOracle == address(0)
         ) {
             revert InvalidAddress();
@@ -175,13 +175,18 @@ contract CbBtcWbtcUsdtSwapper is BaseSwapper, ISwapper {
         return adjusted;
     }
 
-    function _safeGetDyTwo(uint256 i, uint256 j, uint256 dx) private view returns (uint256 amountOut) {
+    function _safeGetDyTwo(uint256 i, uint256 j, uint256 dx)
+        private
+        view
+        returns (uint256 amountOut)
+    {
         try cbBtcPool.get_dy(i, j, dx) returns (uint256 dy) {
             amountOut = dy;
         } catch {
-            try ICurveTwoCryptoInt128(address(cbBtcPool)).get_dy(int128(int256(i)), int128(int256(j)), dx)
-                returns (uint256 legacyDy)
-            {
+            try ICurveTwoCryptoInt128(address(cbBtcPool))
+                .get_dy(int128(int256(i)), int128(int256(j)), dx) returns (
+                uint256 legacyDy
+            ) {
                 amountOut = legacyDy;
             } catch {
                 return 0;
@@ -194,9 +199,8 @@ contract CbBtcWbtcUsdtSwapper is BaseSwapper, ISwapper {
         view
         returns (uint256 amountOut)
     {
-        (bool ok, bytes memory data) = address(triCryptoPool).staticcall(
-            abi.encodeWithSelector(ICurveThreeCrypto.get_dy.selector, i, j, dx)
-        );
+        (bool ok, bytes memory data) = address(triCryptoPool)
+            .staticcall(abi.encodeWithSelector(ICurveThreeCrypto.get_dy.selector, i, j, dx));
         if (!ok || data.length < 32) return 0;
         amountOut = abi.decode(data, (uint256));
     }
@@ -207,9 +211,8 @@ contract CbBtcWbtcUsdtSwapper is BaseSwapper, ISwapper {
         try cbBtcPool.exchange(i, j, dx, minOut, receiver) {
             return;
         } catch {
-            try ICurveTwoCryptoInt128(address(cbBtcPool)).exchange(
-                int128(int256(i)), int128(int256(j)), dx, minOut, receiver
-            ) {
+            try ICurveTwoCryptoInt128(address(cbBtcPool))
+                .exchange(int128(int256(i)), int128(int256(j)), dx, minOut, receiver) {
                 return;
             } catch {
                 revert TransferFailed();
@@ -239,9 +242,8 @@ contract CbBtcWbtcUsdtSwapper is BaseSwapper, ISwapper {
     }
 
     function _safeTransferDebt(address to, uint256 amount) private {
-        (bool ok, bytes memory data) = address(debtToken).call(
-            abi.encodeWithSelector(IERC20.transfer.selector, to, amount)
-        );
+        (bool ok, bytes memory data) =
+            address(debtToken).call(abi.encodeWithSelector(IERC20.transfer.selector, to, amount));
         if (!ok) revert TransferFailed();
         if (data.length >= 32 && !abi.decode(data, (bool))) {
             revert TransferFailed();

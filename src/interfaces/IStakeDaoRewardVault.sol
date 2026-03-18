@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import {ICurveRewardVault} from "./ICurveRewardVault.sol";
+import { ICurveRewardVault } from "./ICurveRewardVault.sol";
 
 /// @title IStakeDaoRewardVault
 /// @notice Minimal extension for Stake DAO reward vaults exposing the accountant address

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import {BaseIporStrategy} from "./BaseIporStrategy.sol";
-import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
+import { BaseIporStrategy } from "./BaseIporStrategy.sol";
+import { IYieldStrategy } from "../interfaces/IYieldStrategy.sol";
 
 /// @title IporYieldStrategy
 /// @notice Yield strategy that deposits crvUSD directly into IPOR PlasmaVault
@@ -10,7 +10,7 @@ import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
 contract IporYieldStrategy is BaseIporStrategy {
     constructor(address _crvUSD, address _vault, address _iporVault)
         BaseIporStrategy(_crvUSD, _vault, _iporVault)
-    {}
+    { }
 
     // ============ View Functions ============
 

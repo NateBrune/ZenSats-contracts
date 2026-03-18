@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import {Test, console} from "forge-std/Test.sol";
-import {LlamaLoanManager} from "../src/lenders/LlamaLoanManager.sol";
-import {IERC20} from "../src/interfaces/IERC20.sol";
-import {ISwapper} from "../src/interfaces/ISwapper.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {IERC3156FlashBorrower} from "@openzeppelin/contracts/interfaces/IERC3156FlashBorrower.sol";
+import { Test, console } from "forge-std/Test.sol";
+import { LlamaLoanManager } from "../src/lenders/LlamaLoanManager.sol";
+import { IERC20 } from "../src/interfaces/IERC20.sol";
+import { ISwapper } from "../src/interfaces/ISwapper.sol";
+import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {
+    IERC3156FlashBorrower
+} from "@openzeppelin/contracts/interfaces/IERC3156FlashBorrower.sol";
 
 // ============ Mock ERC20 tokens ============
 
 contract LlamaMockCollateral is ERC20 {
-    constructor() ERC20("Mock WBTC", "WBTC") {}
+    constructor() ERC20("Mock WBTC", "WBTC") { }
 
     function decimals() public pure override returns (uint8) {
         return 8;
@@ -27,7 +29,7 @@ contract LlamaMockCollateral is ERC20 {
 }
 
 contract LlamaMockDebt is ERC20 {
-    constructor() ERC20("Mock crvUSD", "crvUSD") {}
+    constructor() ERC20("Mock crvUSD", "crvUSD") { }
 
     function decimals() public pure override returns (uint8) {
         return 18;
@@ -64,7 +66,13 @@ contract LlamaMockOracle {
     function latestRoundData()
         external
         view
-        returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
+        returns (
+            uint80 roundId,
+            int256 answer,
+            uint256 startedAt,
+            uint256 updatedAt,
+            uint80 answeredInRound
+        )
     {
         return (1, price, block.timestamp, block.timestamp, 1);
     }
@@ -246,10 +254,12 @@ contract LlamaMockFlashLender {
         return (amount * FEE_BPS) / 10000;
     }
 
-    function flashLoan(IERC3156FlashBorrower receiver, address token, uint256 amount, bytes calldata data)
-        external
-        returns (bool)
-    {
+    function flashLoan(
+        IERC3156FlashBorrower receiver,
+        address token,
+        uint256 amount,
+        bytes calldata data
+    ) external returns (bool) {
         require(token == address(debtToken), "Wrong token");
         uint256 fee = (amount * FEE_BPS) / 10000;
 
@@ -278,7 +288,12 @@ contract LlamaMockSwapper is ISwapper {
     LlamaMockOracle public collateralOracle;
     LlamaMockOracle public debtOracle;
 
-    constructor(address _collateral, address _debt, address _collateralOracle, address _debtOracle) {
+    constructor(
+        address _collateral,
+        address _debt,
+        address _collateralOracle,
+        address _debtOracle
+    ) {
         collateralToken = LlamaMockCollateral(_collateral);
         debtToken = LlamaMockDebt(_debt);
         collateralOracle = LlamaMockOracle(_collateralOracle);
@@ -373,7 +388,7 @@ contract LlamaLoanManagerHandler is Test {
             ghost_lastActionWasFullUnwind = false;
             ghost_priceChangedDuringLoan = false;
             calls_createLoan++;
-        } catch {}
+        } catch { }
     }
 
     function addCollateral(uint256 amount) external {
@@ -385,7 +400,7 @@ contract LlamaLoanManagerHandler is Test {
         try lm.addCollateral(amount) {
             ghost_lastActionWasFullUnwind = false;
             calls_addCollateral++;
-        } catch {}
+        } catch { }
     }
 
     function borrowMore(uint256 collateralAmount, uint256 debtAmount) external {
@@ -397,7 +412,8 @@ contract LlamaLoanManagerHandler is Test {
         uint256 totalCollateral = state[0] + collateralAmount;
         uint256 totalCollateralValue = lm.getCollateralValue(totalCollateral);
         uint256 currentDebt = llamaLend.debt(address(lm));
-        uint256 maxNewDebt = totalCollateralValue > currentDebt * 2 ? (totalCollateralValue / 2) - currentDebt : 0;
+        uint256 maxNewDebt =
+            totalCollateralValue > currentDebt * 2 ? (totalCollateralValue / 2) - currentDebt : 0;
         if (maxNewDebt < 1e18) return;
         debtAmount = bound(debtAmount, 1e18, maxNewDebt);
 
@@ -406,7 +422,7 @@ contract LlamaLoanManagerHandler is Test {
         try lm.borrowMore(collateralAmount, debtAmount) {
             ghost_lastActionWasFullUnwind = false;
             calls_borrowMore++;
-        } catch {}
+        } catch { }
     }
 
     function repayDebt(uint256 amount) external {
@@ -421,7 +437,7 @@ contract LlamaLoanManagerHandler is Test {
         try lm.repayDebt(amount) {
             ghost_lastActionWasFullUnwind = false;
             calls_repayDebt++;
-        } catch {}
+        } catch { }
     }
 
     function removeCollateral(uint256 amount) external {
@@ -437,7 +453,8 @@ contract LlamaLoanManagerHandler is Test {
             uint256 maxRemovable = currentCollateral / 10;
             if (maxRemovable == 0) return;
 
-            int256 hypotheticalHealth = llamaLend.health_calculator(address(lm), -int256(maxRemovable), 0, true);
+            int256 hypotheticalHealth =
+                llamaLend.health_calculator(address(lm), -int256(maxRemovable), 0, true);
             if (hypotheticalHealth < 0.2e18) return;
 
             amount = bound(amount, 1, maxRemovable);
@@ -455,7 +472,7 @@ contract LlamaLoanManagerHandler is Test {
                 vm.prank(vault);
                 lm.transferCollateral(vault, idle);
             }
-        } catch {}
+        } catch { }
     }
 
     function unwindPartial(uint256 collateralNeeded) external {
@@ -469,7 +486,8 @@ contract LlamaLoanManagerHandler is Test {
 
         // Fund LM with proportional debt for repayment
         uint256 currentDebt = llamaLend.debt(address(lm));
-        uint256 proportionalDebt = currentCollateral > 0 ? (currentDebt * collateralNeeded) / currentCollateral : 0;
+        uint256 proportionalDebt =
+            currentCollateral > 0 ? (currentDebt * collateralNeeded) / currentCollateral : 0;
         if (proportionalDebt > 0) {
             debt.mint(address(lm), proportionalDebt);
         }
@@ -478,7 +496,7 @@ contract LlamaLoanManagerHandler is Test {
         try lm.unwindPosition(collateralNeeded) {
             ghost_lastActionWasFullUnwind = false;
             calls_unwindPartial++;
-        } catch {}
+        } catch { }
     }
 
     function unwindFull() external {
@@ -495,7 +513,7 @@ contract LlamaLoanManagerHandler is Test {
             ghost_lastActionWasFullUnwind = true;
             ghost_priceChangedDuringLoan = false;
             calls_unwindFull++;
-        } catch {}
+        } catch { }
     }
 
     function changePrice(uint256 newPrice) external {
@@ -542,7 +560,9 @@ contract LlamaLoanManagerInvariantTest is Test {
         debtOracle = new LlamaMockOracle(1e8, 8);
 
         // Deploy mock swapper
-        swapper = new LlamaMockSwapper(address(collateral), address(debt), address(collateralOracle), address(debtOracle));
+        swapper = new LlamaMockSwapper(
+            address(collateral), address(debt), address(collateralOracle), address(debtOracle)
+        );
 
         // Deploy mock flash lender and etch at the hardcoded address
         LlamaMockFlashLender flashLenderImpl = new LlamaMockFlashLender(address(debt));
@@ -580,7 +600,9 @@ contract LlamaLoanManagerInvariantTest is Test {
     function invariant_loanStateConsistency() public view {
         uint256 lmCollateral = lm.getCurrentCollateral();
         uint256 mockCollateral = llamaLend.userCollateral(address(lm));
-        assertEq(lmCollateral, mockCollateral, "getCurrentCollateral != llamaLend tracked collateral");
+        assertEq(
+            lmCollateral, mockCollateral, "getCurrentCollateral != llamaLend tracked collateral"
+        );
 
         uint256 lmDebt = lm.getCurrentDebt();
         uint256 mockDebt = llamaLend.debt(address(lm));

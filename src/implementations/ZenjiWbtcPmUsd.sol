@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import {Zenji} from "../Zenji.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import { Zenji } from "../Zenji.sol";
+import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 /// @notice Zenji vault implementation for WBTC/USDT using pmUSD/crvUSD strategy
 contract ZenjiWbtcPmUsd is Zenji {
@@ -16,7 +16,7 @@ contract ZenjiWbtcPmUsd is Zenji {
         address _swapper,
         address _owner,
         address _viewHelper
-    ) Zenji(WBTC, USDT, _loanManager, _yieldStrategy, _swapper, _owner, _viewHelper) {}
+    ) Zenji(WBTC, USDT, _loanManager, _yieldStrategy, _swapper, _owner, _viewHelper) { }
 
     function name() public pure override(ERC20, IERC20Metadata) returns (string memory) {
         return "Zen WBTC (pmUSD/crvUSD StakeDao) ";

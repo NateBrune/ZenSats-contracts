@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import {BaseIporStrategy} from "./BaseIporStrategy.sol";
-import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
-import {IChainlinkOracle} from "../interfaces/IChainlinkOracle.sol";
-import {ICurveStableSwap} from "../interfaces/ICurveStableSwap.sol";
-import {IERC20} from "../interfaces/IERC20.sol";
-import {CurveUsdtSwapLib} from "../libraries/CurveUsdtSwapLib.sol";
+import { BaseIporStrategy } from "./BaseIporStrategy.sol";
+import { IYieldStrategy } from "../interfaces/IYieldStrategy.sol";
+import { IChainlinkOracle } from "../interfaces/IChainlinkOracle.sol";
+import { ICurveStableSwap } from "../interfaces/ICurveStableSwap.sol";
+import { IERC20 } from "../interfaces/IERC20.sol";
+import { CurveUsdtSwapLib } from "../libraries/CurveUsdtSwapLib.sol";
 
 /// @title UsdtIporYieldStrategy
 /// @notice Swaps USDT to crvUSD and deposits into IPOR PlasmaVault
@@ -41,7 +41,9 @@ contract UsdtIporYieldStrategy is BaseIporStrategy {
         address _crvUsdOracle,
         address _usdtOracle
     ) BaseIporStrategy(_usdt, _vault, _iporVault) {
-        if (_crvUSD == address(0) || _curvePool == address(0)) revert InvalidAddress();
+        if (_crvUSD == address(0) || _curvePool == address(0)) {
+            revert InvalidAddress();
+        }
         if (_crvUsdOracle == address(0) || _usdtOracle == address(0)) revert InvalidAddress();
         crvUSD = IERC20(_crvUSD);
         curvePool = ICurveStableSwap(_curvePool);
@@ -127,7 +129,14 @@ contract UsdtIporYieldStrategy is BaseIporStrategy {
     {
         _ensureApprove(address(debtAsset), address(curvePool), usdtAmount);
         crvUsdReceived = CurveUsdtSwapLib.swapUsdtToCrvUsd(
-            curvePool, usdtIndex, crvUsdIndex, usdtAmount, slippage, usdtOracle, crvUsdOracle, MAX_USDT_ORACLE_STALENESS
+            curvePool,
+            usdtIndex,
+            crvUsdIndex,
+            usdtAmount,
+            slippage,
+            usdtOracle,
+            crvUsdOracle,
+            MAX_USDT_ORACLE_STALENESS
         );
         emit SwappedUsdtToCrvUsd(usdtAmount, crvUsdReceived);
     }
@@ -138,7 +147,14 @@ contract UsdtIporYieldStrategy is BaseIporStrategy {
     {
         _ensureApprove(address(crvUSD), address(curvePool), crvUsdAmount);
         usdtReceived = CurveUsdtSwapLib.swapCrvUsdToUsdt(
-            curvePool, crvUsdIndex, usdtIndex, crvUsdAmount, slippage, crvUsdOracle, usdtOracle, MAX_CRVUSD_ORACLE_STALENESS
+            curvePool,
+            crvUsdIndex,
+            usdtIndex,
+            crvUsdAmount,
+            slippage,
+            crvUsdOracle,
+            usdtOracle,
+            MAX_CRVUSD_ORACLE_STALENESS
         );
         emit SwappedCrvUsdToUsdt(crvUsdAmount, usdtReceived);
     }

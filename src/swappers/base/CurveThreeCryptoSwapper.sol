@@ -144,9 +144,8 @@ contract CurveThreeCryptoSwapper is BaseSwapper, ISwapper {
     }
 
     function _safeTransferDebt(address to, uint256 amount) private {
-        (bool ok, bytes memory data) = address(debtToken).call(
-            abi.encodeWithSelector(IERC20.transfer.selector, to, amount)
-        );
+        (bool ok, bytes memory data) =
+            address(debtToken).call(abi.encodeWithSelector(IERC20.transfer.selector, to, amount));
         if (!ok) revert TransferFailed();
         if (data.length >= 32 && !abi.decode(data, (bool))) {
             revert TransferFailed();

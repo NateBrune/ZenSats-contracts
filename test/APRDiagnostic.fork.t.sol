@@ -109,8 +109,9 @@ contract APRDiagnosticForkTest is Test {
         // Deploy vault
         uint64 nonce = vm.getNonce(address(this));
         address predictedVault = vm.computeCreateAddress(address(this), nonce + 3);
-        CurveTwoCryptoSwapper swapper =
-            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE);
+        CurveTwoCryptoSwapper swapper = new CurveTwoCryptoSwapper(
+            owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE
+        );
         strategy = new IporYieldStrategy(CRVUSD, predictedVault, IPOR_VAULT);
         LlamaLoanManager loanManager = new LlamaLoanManager(
             WBTC,

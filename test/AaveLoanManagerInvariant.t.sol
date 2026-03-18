@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import {Test, console} from "forge-std/Test.sol";
-import {AaveLoanManager} from "../src/lenders/AaveLoanManager.sol";
-import {IERC20} from "../src/interfaces/IERC20.sol";
-import {ISwapper} from "../src/interfaces/ISwapper.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import { Test, console } from "forge-std/Test.sol";
+import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
+import { IERC20 } from "../src/interfaces/IERC20.sol";
+import { ISwapper } from "../src/interfaces/ISwapper.sol";
+import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 // ============ Mock ERC20 tokens ============
 
 contract AaveMockCollateral is ERC20 {
-    constructor() ERC20("Mock WBTC", "WBTC") {}
+    constructor() ERC20("Mock WBTC", "WBTC") { }
 
     function decimals() public pure override returns (uint8) {
         return 8;
@@ -26,7 +26,7 @@ contract AaveMockCollateral is ERC20 {
 }
 
 contract AaveMockDebt is ERC20 {
-    constructor() ERC20("Mock USDT", "USDT") {}
+    constructor() ERC20("Mock USDT", "USDT") { }
 
     function decimals() public pure override returns (uint8) {
         return 6;
@@ -63,7 +63,13 @@ contract AaveMockOracle {
     function latestRoundData()
         external
         view
-        returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
+        returns (
+            uint80 roundId,
+            int256 answer,
+            uint256 startedAt,
+            uint256 updatedAt,
+            uint80 answeredInRound
+        )
     {
         return (1, price, block.timestamp, block.timestamp, 1);
     }
@@ -80,7 +86,7 @@ contract AaveMockOracle {
 // ============ Mock aToken / variableDebtToken ============
 
 contract AaveMockAToken is ERC20 {
-    constructor() ERC20("Mock aWBTC", "aWBTC") {}
+    constructor() ERC20("Mock aWBTC", "aWBTC") { }
 
     function decimals() public pure override returns (uint8) {
         return 8;
@@ -96,7 +102,7 @@ contract AaveMockAToken is ERC20 {
 }
 
 contract AaveMockVariableDebtToken is ERC20 {
-    constructor() ERC20("Mock varDebtUSDT", "vdUSDT") {}
+    constructor() ERC20("Mock varDebtUSDT", "vdUSDT") { }
 
     function decimals() public pure override returns (uint8) {
         return 6;
@@ -140,7 +146,10 @@ contract AaveMockPool {
         variableDebtToken.mint(onBehalfOf, amount);
     }
 
-    function repay(address asset, uint256 amount, uint256, address onBehalfOf) external returns (uint256) {
+    function repay(address asset, uint256 amount, uint256, address onBehalfOf)
+        external
+        returns (uint256)
+    {
         require(asset == address(debt), "Wrong asset");
         uint256 currentDebt = variableDebtToken.balanceOf(onBehalfOf);
         uint256 toRepay = amount > currentDebt ? currentDebt : amount;
@@ -162,9 +171,13 @@ contract AaveMockPool {
         return toWithdraw;
     }
 
-    function flashLoanSimple(address receiver, address asset, uint256 amount, bytes calldata params, uint16)
-        external
-    {
+    function flashLoanSimple(
+        address receiver,
+        address asset,
+        uint256 amount,
+        bytes calldata params,
+        uint16
+    ) external {
         require(asset == address(debt), "Wrong asset");
         uint256 premium = (amount * FLASHLOAN_PREMIUM_BPS) / 10000;
 
@@ -198,7 +211,12 @@ contract AaveMockSwapper is ISwapper {
     AaveMockOracle public collateralOracle;
     AaveMockOracle public debtOracle;
 
-    constructor(address _collateral, address _debt, address _collateralOracle, address _debtOracle) {
+    constructor(
+        address _collateral,
+        address _debt,
+        address _collateralOracle,
+        address _debtOracle
+    ) {
         collateralToken = AaveMockCollateral(_collateral);
         debtToken = AaveMockDebt(_debt);
         collateralOracle = AaveMockOracle(_collateralOracle);
@@ -297,7 +315,7 @@ contract AaveLoanManagerHandler is Test {
             ghost_lastActionWasFullUnwind = false;
             ghost_priceChangedDuringLoan = false; // Fresh loan at current price
             calls_createLoan++;
-        } catch {}
+        } catch { }
     }
 
     function addCollateral(uint256 amount) external {
@@ -309,7 +327,7 @@ contract AaveLoanManagerHandler is Test {
         try lm.addCollateral(amount) {
             ghost_lastActionWasFullUnwind = false;
             calls_addCollateral++;
-        } catch {}
+        } catch { }
     }
 
     function borrowMore(uint256 collateralAmount, uint256 debtAmount) external {
@@ -320,7 +338,8 @@ contract AaveLoanManagerHandler is Test {
         uint256 totalCollateral = aToken.balanceOf(address(lm)) + collateralAmount;
         uint256 totalCollateralValue = lm.getCollateralValue(totalCollateral);
         uint256 currentDebt = variableDebtToken.balanceOf(address(lm));
-        uint256 maxNewDebt = totalCollateralValue > currentDebt * 2 ? (totalCollateralValue / 2) - currentDebt : 0;
+        uint256 maxNewDebt =
+            totalCollateralValue > currentDebt * 2 ? (totalCollateralValue / 2) - currentDebt : 0;
         if (maxNewDebt == 0) return;
         debtAmount = bound(debtAmount, 1, maxNewDebt);
 
@@ -329,7 +348,7 @@ contract AaveLoanManagerHandler is Test {
         try lm.borrowMore(collateralAmount, debtAmount) {
             ghost_lastActionWasFullUnwind = false;
             calls_borrowMore++;
-        } catch {}
+        } catch { }
     }
 
     function repayDebt(uint256 amount) external {
@@ -344,7 +363,7 @@ contract AaveLoanManagerHandler is Test {
         try lm.repayDebt(amount) {
             ghost_lastActionWasFullUnwind = false;
             calls_repayDebt++;
-        } catch {}
+        } catch { }
     }
 
     function removeCollateral(uint256 amount) external {
@@ -381,7 +400,7 @@ contract AaveLoanManagerHandler is Test {
                 vm.prank(vault);
                 lm.transferCollateral(vault, idle);
             }
-        } catch {}
+        } catch { }
     }
 
     function unwindPartial(uint256 collateralNeeded) external {
@@ -394,7 +413,8 @@ contract AaveLoanManagerHandler is Test {
 
         // Fund LM with proportional debt for repayment
         uint256 currentDebt = variableDebtToken.balanceOf(address(lm));
-        uint256 proportionalDebt = currentCollateral > 0 ? (currentDebt * collateralNeeded) / currentCollateral : 0;
+        uint256 proportionalDebt =
+            currentCollateral > 0 ? (currentDebt * collateralNeeded) / currentCollateral : 0;
         if (proportionalDebt > 0) {
             debt.mint(address(lm), proportionalDebt);
         }
@@ -403,7 +423,7 @@ contract AaveLoanManagerHandler is Test {
         try lm.unwindPosition(collateralNeeded) {
             ghost_lastActionWasFullUnwind = false;
             calls_unwindPartial++;
-        } catch {}
+        } catch { }
     }
 
     function unwindFull() external {
@@ -420,7 +440,7 @@ contract AaveLoanManagerHandler is Test {
             ghost_lastActionWasFullUnwind = true;
             ghost_priceChangedDuringLoan = false; // Loan fully closed
             calls_unwindFull++;
-        } catch {}
+        } catch { }
     }
 
     function changePrice(uint256 newPrice) external {
@@ -457,7 +477,9 @@ contract AaveLoanManagerInvariantTest is Test {
         variableDebtToken = new AaveMockVariableDebtToken();
 
         // Deploy mock pool
-        pool = new AaveMockPool(address(collateral), address(debt), address(aToken), address(variableDebtToken));
+        pool = new AaveMockPool(
+            address(collateral), address(debt), address(aToken), address(variableDebtToken)
+        );
         // Fund pool with collateral for withdrawals
         collateral.mint(address(pool), 1000e8);
 
@@ -466,7 +488,9 @@ contract AaveLoanManagerInvariantTest is Test {
         debtOracle = new AaveMockOracle(1e8, 8);
 
         // Deploy mock swapper
-        swapper = new AaveMockSwapper(address(collateral), address(debt), address(collateralOracle), address(debtOracle));
+        swapper = new AaveMockSwapper(
+            address(collateral), address(debt), address(collateralOracle), address(debtOracle)
+        );
 
         // Deploy real AaveLoanManager
         lm = new AaveLoanManager(

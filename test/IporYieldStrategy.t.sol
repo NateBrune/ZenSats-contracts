@@ -11,9 +11,7 @@ import { IERC20 as OZ_IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.
 contract MockERC20 is ERC20 {
     uint8 private _decimals;
 
-    constructor(string memory name_, string memory symbol_, uint8 decimals_)
-        ERC20(name_, symbol_)
-    {
+    constructor(string memory name_, string memory symbol_, uint8 decimals_) ERC20(name_, symbol_) {
         _decimals = decimals_;
     }
 
@@ -273,7 +271,8 @@ contract IporYieldStrategyTest is Test {
         new IporYieldStrategy(address(0), vault, address(iporVault));
 
         // vault == address(0) is valid (deferred init), so no revert expected
-        IporYieldStrategy deferredStrategy = new IporYieldStrategy(address(crvUSD), address(0), address(iporVault));
+        IporYieldStrategy deferredStrategy =
+            new IporYieldStrategy(address(crvUSD), address(0), address(iporVault));
         assertEq(deferredStrategy.vault(), address(0));
 
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
@@ -283,7 +282,8 @@ contract IporYieldStrategyTest is Test {
     // ============ Branch Coverage: initializeVault ============
 
     function test_initializeVault_success() public {
-        IporYieldStrategy deferred = new IporYieldStrategy(address(crvUSD), address(0), address(iporVault));
+        IporYieldStrategy deferred =
+            new IporYieldStrategy(address(crvUSD), address(0), address(iporVault));
         assertEq(deferred.vault(), address(0));
 
         deferred.initializeVault(vault);
@@ -297,13 +297,15 @@ contract IporYieldStrategyTest is Test {
     }
 
     function test_initializeVault_zeroAddress_reverts() public {
-        IporYieldStrategy deferred = new IporYieldStrategy(address(crvUSD), address(0), address(iporVault));
+        IporYieldStrategy deferred =
+            new IporYieldStrategy(address(crvUSD), address(0), address(iporVault));
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
         deferred.initializeVault(address(0));
     }
 
     function test_initializeVault_wrongSender_reverts() public {
-        IporYieldStrategy deferred = new IporYieldStrategy(address(crvUSD), address(0), address(iporVault));
+        IporYieldStrategy deferred =
+            new IporYieldStrategy(address(crvUSD), address(0), address(iporVault));
         vm.prank(user);
         vm.expectRevert(IYieldStrategy.Unauthorized.selector);
         deferred.initializeVault(vault);

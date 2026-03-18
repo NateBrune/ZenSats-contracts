@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import {Test, console} from "forge-std/Test.sol";
-import {Zenji} from "../src/Zenji.sol";
-import {ZenjiViewHelper} from "../src/ZenjiViewHelper.sol";
-import {PmUsdCrvUsdStrategy} from "../src/strategies/PmUsdCrvUsdStrategy.sol";
-import {IERC20} from "../src/interfaces/IERC20.sol";
-import {ILoanManager} from "../src/interfaces/ILoanManager.sol";
-import {ISwapper} from "../src/interfaces/ISwapper.sol";
-import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {IERC20 as OZ_IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { Test, console } from "forge-std/Test.sol";
+import { Zenji } from "../src/Zenji.sol";
+import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
+import { PmUsdCrvUsdStrategy } from "../src/strategies/PmUsdCrvUsdStrategy.sol";
+import { IERC20 } from "../src/interfaces/IERC20.sol";
+import { ILoanManager } from "../src/interfaces/ILoanManager.sol";
+import { ISwapper } from "../src/interfaces/ISwapper.sol";
+import { ERC4626 } from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
+import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import { IERC20 as OZ_IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 // ============ Mock ERC20 tokens ============
 
 contract PmMockWBTC is ERC20 {
-    constructor() ERC20("Mock WBTC", "WBTC") {}
+    constructor() ERC20("Mock WBTC", "WBTC") { }
 
     function decimals() public pure override returns (uint8) {
         return 8;
@@ -27,7 +27,7 @@ contract PmMockWBTC is ERC20 {
 }
 
 contract PmMockUSDT is ERC20 {
-    constructor() ERC20("Mock USDT", "USDT") {}
+    constructor() ERC20("Mock USDT", "USDT") { }
 
     function decimals() public pure override returns (uint8) {
         return 6;
@@ -39,7 +39,7 @@ contract PmMockUSDT is ERC20 {
 }
 
 contract PmMockCrvUSD is ERC20 {
-    constructor() ERC20("Mock crvUSD", "crvUSD") {}
+    constructor() ERC20("Mock crvUSD", "crvUSD") { }
 
     function decimals() public pure override returns (uint8) {
         return 18;
@@ -51,7 +51,7 @@ contract PmMockCrvUSD is ERC20 {
 }
 
 contract PmMockCRV is ERC20 {
-    constructor() ERC20("Mock CRV", "CRV") {}
+    constructor() ERC20("Mock CRV", "CRV") { }
 
     function decimals() public pure override returns (uint8) {
         return 18;
@@ -63,7 +63,7 @@ contract PmMockCRV is ERC20 {
 }
 
 contract PmMockPmUSD is ERC20 {
-    constructor() ERC20("Mock pmUSD", "pmUSD") {}
+    constructor() ERC20("Mock pmUSD", "pmUSD") { }
 
     function decimals() public pure override returns (uint8) {
         return 18;
@@ -75,7 +75,7 @@ contract PmMockPmUSD is ERC20 {
 }
 
 contract PmMockLP is ERC20 {
-    constructor() ERC20("Mock pmUSD/crvUSD LP", "pmUSD-crvUSD") {}
+    constructor() ERC20("Mock pmUSD/crvUSD LP", "pmUSD-crvUSD") { }
 
     function decimals() public pure override returns (uint8) {
         return 18;
@@ -107,7 +107,13 @@ contract PmMockOracle {
     function latestRoundData()
         external
         view
-        returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
+        returns (
+            uint80 roundId,
+            int256 answer,
+            uint256 startedAt,
+            uint256 updatedAt,
+            uint80 answeredInRound
+        )
     {
         return (1, price, block.timestamp, block.timestamp, 1);
     }
@@ -144,7 +150,10 @@ contract PmMockUsdtCrvUsdPool {
     }
 
     // exchange with receiver param (called first by CurveUsdtSwapLib)
-    function exchange(int128 i, int128, uint256 dx, uint256, address receiver) external returns (uint256) {
+    function exchange(int128 i, int128, uint256 dx, uint256, address receiver)
+        external
+        returns (uint256)
+    {
         return _doExchange(i, dx, receiver);
     }
 
@@ -198,7 +207,10 @@ contract PmMockLpPool {
         pmUsdIndex = _crvUsdIndex == int128(0) ? 1 : 0;
     }
 
-    function add_liquidity(uint256[] calldata amounts, uint256) external returns (uint256 lpMinted) {
+    function add_liquidity(uint256[] calldata amounts, uint256)
+        external
+        returns (uint256 lpMinted)
+    {
         uint256 crvUsdAmount = amounts[uint256(uint128(crvUsdIndex))];
         uint256 pmUsdAmount = amounts[pmUsdIndex];
         if (crvUsdAmount > 0) crvUSD.transferFrom(msg.sender, address(this), crvUsdAmount);
@@ -207,7 +219,10 @@ contract PmMockLpPool {
         if (lpMinted > 0) lp.mint(msg.sender, lpMinted);
     }
 
-    function remove_liquidity_one_coin(uint256 burn_amount, int128, uint256) external returns (uint256) {
+    function remove_liquidity_one_coin(uint256 burn_amount, int128, uint256)
+        external
+        returns (uint256)
+    {
         lp.burn(msg.sender, burn_amount);
         uint256 crvUsdOut = burn_amount; // 1:1
         crvUSD.mint(msg.sender, crvUsdOut);
@@ -381,7 +396,8 @@ contract PmMockLoanManager is ILoanManager {
     }
 
     function unwindPosition(uint256 collateralNeeded) external onlyVault {
-        bool fullyClose = collateralNeeded == type(uint256).max || collateralNeeded >= positionCollateral;
+        bool fullyClose =
+            collateralNeeded == type(uint256).max || collateralNeeded >= positionCollateral;
 
         uint256 debtBal = _debtAsset.balanceOf(address(this));
 
@@ -452,7 +468,11 @@ contract PmMockLoanManager is ILoanManager {
         return _getDebtValue(debtAmount);
     }
 
-    function calculateBorrowAmount(uint256 collateral, uint256 targetLtv) external view returns (uint256) {
+    function calculateBorrowAmount(uint256 collateral, uint256 targetLtv)
+        external
+        view
+        returns (uint256)
+    {
         uint256 colVal = _getCollateralValue(collateral);
         return (colVal * targetLtv) / 1e18;
     }
@@ -474,7 +494,7 @@ contract PmMockLoanManager is ILoanManager {
         return positionCollateral > debtInCollateral ? positionCollateral - debtInCollateral : 0;
     }
 
-    function checkOracleFreshness() external pure {}
+    function checkOracleFreshness() external pure { }
 
     function transferCollateral(address to, uint256 amount) external onlyVault {
         uint256 bal = _collateralAsset.balanceOf(address(this));
@@ -635,7 +655,7 @@ contract PmUsdHandler is Test {
             ghost_totalWithdrawn[actor] += collateralOut;
             ghost_sumWithdrawals += collateralOut;
             calls_redeem++;
-        } catch {}
+        } catch { }
     }
 
     function withdraw(uint256 actorSeed, uint256 assetFraction) external {
@@ -652,7 +672,7 @@ contract PmUsdHandler is Test {
             ghost_totalWithdrawn[actor] += assetsToWithdraw;
             ghost_sumWithdrawals += assetsToWithdraw;
             calls_withdraw++;
-        } catch {}
+        } catch { }
     }
 
     /// @dev Simulate a BTC price change to push LTV out of deadband, then rebalance.
@@ -668,7 +688,7 @@ contract PmUsdHandler is Test {
 
         try vault.rebalance() {
             calls_rebalance++;
-        } catch {}
+        } catch { }
     }
 
     /// @dev Simulate CRV rewards accrual and call harvestYield.
@@ -694,7 +714,7 @@ contract PmUsdHandler is Test {
 
         try vault.harvestYield() {
             calls_harvest++;
-        } catch {}
+        } catch { }
     }
 
     // ============ View helpers ============
@@ -884,7 +904,11 @@ contract PmUsdCrvUsdInvariantTest is Test {
         uint256 oneShare = 10 ** vault.decimals();
         uint256 assetsPerShare = vault.convertToAssets(oneShare);
 
-        assertLe(assetsPerShare, oneShare * 100, "Share price inflated beyond 100x - possible inflation attack");
+        assertLe(
+            assetsPerShare,
+            oneShare * 100,
+            "Share price inflated beyond 100x - possible inflation attack"
+        );
     }
 
     // ============ INVARIANT 5: No shares without collateral ============

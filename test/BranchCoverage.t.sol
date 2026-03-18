@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import {Test} from "forge-std/Test.sol";
-import {TimelockLib} from "../src/libraries/TimelockLib.sol";
-import {SafeTransferLib} from "../src/libraries/SafeTransferLib.sol";
-import {OracleLib} from "../src/libraries/OracleLib.sol";
-import {CurveUsdtSwapLib} from "../src/libraries/CurveUsdtSwapLib.sol";
-import {ISwapper} from "../src/interfaces/ISwapper.sol";
-import {IChainlinkOracle} from "../src/interfaces/IChainlinkOracle.sol";
-import {IERC20} from "../src/interfaces/IERC20.sol";
-import {BaseSwapper} from "../src/swappers/base/BaseSwapper.sol";
-import {CurveTwoCryptoSwapper} from "../src/swappers/base/CurveTwoCryptoSwapper.sol";
+import { Test } from "forge-std/Test.sol";
+import { TimelockLib } from "../src/libraries/TimelockLib.sol";
+import { SafeTransferLib } from "../src/libraries/SafeTransferLib.sol";
+import { OracleLib } from "../src/libraries/OracleLib.sol";
+import { CurveUsdtSwapLib } from "../src/libraries/CurveUsdtSwapLib.sol";
+import { ISwapper } from "../src/interfaces/ISwapper.sol";
+import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
+import { IERC20 } from "../src/interfaces/IERC20.sol";
+import { BaseSwapper } from "../src/swappers/base/BaseSwapper.sol";
+import { CurveTwoCryptoSwapper } from "../src/swappers/base/CurveTwoCryptoSwapper.sol";
 
 // ============ Harness Contracts ============
 
@@ -187,7 +187,7 @@ contract MockTokenDecimals {
 // ============ Concrete swapper for BaseSwapper tests ============
 
 contract ConcreteSwapper is BaseSwapper, ISwapper {
-    constructor(address _gov) BaseSwapper(_gov) {}
+    constructor(address _gov) BaseSwapper(_gov) { }
 
     function quoteCollateralForDebt(uint256) external pure returns (uint256) {
         return 0;
@@ -331,7 +331,10 @@ contract OracleLibTest is Test {
         collateralOracle.setAnsweredBehind();
         vm.expectRevert(OracleLib.StaleOracle.selector);
         OracleLib.getCollateralUsdValue(
-            1e8, IChainlinkOracle(address(collateralOracle)), 90000, IERC20(address(collateralToken))
+            1e8,
+            IChainlinkOracle(address(collateralOracle)),
+            90000,
+            IERC20(address(collateralToken))
         );
     }
 
@@ -339,7 +342,10 @@ contract OracleLibTest is Test {
         collateralOracle.setPrice(0);
         vm.expectRevert(OracleLib.InvalidPrice.selector);
         OracleLib.getCollateralUsdValue(
-            1e8, IChainlinkOracle(address(collateralOracle)), 90000, IERC20(address(collateralToken))
+            1e8,
+            IChainlinkOracle(address(collateralOracle)),
+            90000,
+            IERC20(address(collateralToken))
         );
     }
 
@@ -347,7 +353,10 @@ contract OracleLibTest is Test {
         collateralOracle.setPrice(-1);
         vm.expectRevert(OracleLib.InvalidPrice.selector);
         OracleLib.getCollateralUsdValue(
-            1e8, IChainlinkOracle(address(collateralOracle)), 90000, IERC20(address(collateralToken))
+            1e8,
+            IChainlinkOracle(address(collateralOracle)),
+            90000,
+            IERC20(address(collateralToken))
         );
     }
 
@@ -486,7 +495,9 @@ contract CurveUsdtSwapLibWrapper {
         IChainlinkOracle usdtOracle,
         uint256 maxStaleness
     ) external view returns (uint256) {
-        return CurveUsdtSwapLib.convertCrvUsdToUsdt(crvUsdValue, crvUsdOracle, usdtOracle, maxStaleness);
+        return CurveUsdtSwapLib.convertCrvUsdToUsdt(
+            crvUsdValue, crvUsdOracle, usdtOracle, maxStaleness
+        );
     }
 }
 
@@ -508,7 +519,10 @@ contract CurveUsdtSwapLibTest is Test {
         usdtOracle = new MockOracleFull(8, 1e8);
         vm.expectRevert(CurveUsdtSwapLib.StaleOrInvalidOracle.selector);
         wrapper.convertCrvUsdToUsdt(
-            1e18, IChainlinkOracle(address(crvUsdOracle)), IChainlinkOracle(address(usdtOracle)), 90000
+            1e18,
+            IChainlinkOracle(address(crvUsdOracle)),
+            IChainlinkOracle(address(usdtOracle)),
+            90000
         );
     }
 
@@ -519,7 +533,10 @@ contract CurveUsdtSwapLibTest is Test {
         usdtOracle.setStale(100000);
         vm.expectRevert(CurveUsdtSwapLib.StaleOrInvalidOracle.selector);
         wrapper.convertCrvUsdToUsdt(
-            1e18, IChainlinkOracle(address(crvUsdOracle)), IChainlinkOracle(address(usdtOracle)), 90000
+            1e18,
+            IChainlinkOracle(address(crvUsdOracle)),
+            IChainlinkOracle(address(usdtOracle)),
+            90000
         );
     }
 
@@ -527,7 +544,10 @@ contract CurveUsdtSwapLibTest is Test {
         crvUsdOracle.setPrice(-1);
         vm.expectRevert(CurveUsdtSwapLib.StaleOrInvalidOracle.selector);
         wrapper.convertCrvUsdToUsdt(
-            1e18, IChainlinkOracle(address(crvUsdOracle)), IChainlinkOracle(address(usdtOracle)), 90000
+            1e18,
+            IChainlinkOracle(address(crvUsdOracle)),
+            IChainlinkOracle(address(usdtOracle)),
+            90000
         );
     }
 
@@ -535,7 +555,10 @@ contract CurveUsdtSwapLibTest is Test {
         usdtOracle.setPrice(-1);
         vm.expectRevert(CurveUsdtSwapLib.StaleOrInvalidOracle.selector);
         wrapper.convertCrvUsdToUsdt(
-            1e18, IChainlinkOracle(address(crvUsdOracle)), IChainlinkOracle(address(usdtOracle)), 90000
+            1e18,
+            IChainlinkOracle(address(crvUsdOracle)),
+            IChainlinkOracle(address(usdtOracle)),
+            90000
         );
     }
 
@@ -546,7 +569,10 @@ contract CurveUsdtSwapLibTest is Test {
         usdtOracle = new MockOracleFull(8, 1e8);
         vm.expectRevert(CurveUsdtSwapLib.StaleOrInvalidOracle.selector);
         wrapper.convertCrvUsdToUsdt(
-            1e18, IChainlinkOracle(address(crvUsdOracle)), IChainlinkOracle(address(usdtOracle)), 90000
+            1e18,
+            IChainlinkOracle(address(crvUsdOracle)),
+            IChainlinkOracle(address(usdtOracle)),
+            90000
         );
     }
 
@@ -557,7 +583,10 @@ contract CurveUsdtSwapLibTest is Test {
         usdtOracle.setAnsweredBehind();
         vm.expectRevert(CurveUsdtSwapLib.StaleOrInvalidOracle.selector);
         wrapper.convertCrvUsdToUsdt(
-            1e18, IChainlinkOracle(address(crvUsdOracle)), IChainlinkOracle(address(usdtOracle)), 90000
+            1e18,
+            IChainlinkOracle(address(crvUsdOracle)),
+            IChainlinkOracle(address(usdtOracle)),
+            90000
         );
     }
 
@@ -570,7 +599,10 @@ contract CurveUsdtSwapLibTest is Test {
 
     function test_convertCrvUsdToUsdt_normal() public view {
         uint256 result = wrapper.convertCrvUsdToUsdt(
-            1e18, IChainlinkOracle(address(crvUsdOracle)), IChainlinkOracle(address(usdtOracle)), 90000
+            1e18,
+            IChainlinkOracle(address(crvUsdOracle)),
+            IChainlinkOracle(address(usdtOracle)),
+            90000
         );
         // Both at $1, so 1e18 crvUSD = 1e6 USDT
         assertEq(result, 1e6);

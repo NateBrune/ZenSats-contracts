@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import {BaseCurveRewardVaultStrategy} from "./BaseCurveRewardVaultStrategy.sol";
-import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
-import {IChainlinkOracle} from "../interfaces/IChainlinkOracle.sol";
-import {IAccountant} from "../interfaces/IAccountant.sol";
-import {ICrvSwapper} from "../interfaces/ICrvSwapper.sol";
-import {ICurveStableSwap} from "../interfaces/ICurveStableSwap.sol";
-import {ICurveStableSwapNG} from "../interfaces/ICurveStableSwapNG.sol";
-import {IERC20} from "../interfaces/IERC20.sol";
-import {IStakeDaoRewardVault} from "../interfaces/IStakeDaoRewardVault.sol";
-import {SafeTransferLib} from "../libraries/SafeTransferLib.sol";
-import {CurveUsdtSwapLib} from "../libraries/CurveUsdtSwapLib.sol";
-import {TimelockLib} from "../libraries/TimelockLib.sol";
+import { BaseCurveRewardVaultStrategy } from "./BaseCurveRewardVaultStrategy.sol";
+import { IYieldStrategy } from "../interfaces/IYieldStrategy.sol";
+import { IChainlinkOracle } from "../interfaces/IChainlinkOracle.sol";
+import { IAccountant } from "../interfaces/IAccountant.sol";
+import { ICrvSwapper } from "../interfaces/ICrvSwapper.sol";
+import { ICurveStableSwap } from "../interfaces/ICurveStableSwap.sol";
+import { ICurveStableSwapNG } from "../interfaces/ICurveStableSwapNG.sol";
+import { IERC20 } from "../interfaces/IERC20.sol";
+import { IStakeDaoRewardVault } from "../interfaces/IStakeDaoRewardVault.sol";
+import { SafeTransferLib } from "../libraries/SafeTransferLib.sol";
+import { CurveUsdtSwapLib } from "../libraries/CurveUsdtSwapLib.sol";
+import { TimelockLib } from "../libraries/TimelockLib.sol";
 
 /// @title PmUsdCrvUsdStrategy
 /// @notice USDT -> crvUSD -> pmUSD/crvUSD LP -> Stake DAO RewardVault
@@ -115,7 +115,9 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         if (_usdtCrvUsdPool == address(0) || _lpPool == address(0)) revert InvalidAddress();
         if (_crvSwapper == address(0)) revert InvalidAddress();
         if (_gauge == address(0)) revert InvalidAddress();
-        if (_crvUsdOracle == address(0) || _usdtOracle == address(0) || _crvOracle == address(0)) revert InvalidAddress();
+        if (_crvUsdOracle == address(0) || _usdtOracle == address(0) || _crvOracle == address(0)) {
+            revert InvalidAddress();
+        }
 
         crvUSD = IERC20(_crvUsd);
         crv = IERC20(_crv);
@@ -222,20 +224,27 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
     /// @inheritdoc IYieldStrategy
     function pendingRewards() external view override returns (uint256) {
         address accountant = rewardVault.ACCOUNTANT();
-        try IAccountant(accountant).getPendingRewards(address(rewardVault), address(this)) returns (uint256 pendingCrv)
-        {
+        try IAccountant(accountant).getPendingRewards(address(rewardVault), address(this)) returns (
+            uint256 pendingCrv
+        ) {
             if (pendingCrv < 1) return 0;
 
             // CRV (18 dec) -> USDT (6 dec) using CRV/USD and USDT/USD Chainlink oracles
             (uint80 crvRoundId, int256 crvPrice,, uint256 crvUpdatedAt, uint80 crvAnswered) =
                 crvOracle.latestRoundData();
-            if (crvPrice <= 0 || crvAnswered < crvRoundId || block.timestamp - crvUpdatedAt > MAX_ORACLE_STALENESS) {
+            if (
+                crvPrice <= 0 || crvAnswered < crvRoundId
+                    || block.timestamp - crvUpdatedAt > MAX_ORACLE_STALENESS
+            ) {
                 return crvSwapper.quote(pendingCrv) / 1e12; // fallback: LP price, crvUSD≈USDT 1:1
             }
 
             (uint80 usdtRoundId, int256 usdtPrice,, uint256 usdtUpdatedAt, uint80 usdtAnswered) =
                 usdtOracle.latestRoundData();
-            if (usdtPrice <= 0 || usdtAnswered < usdtRoundId || block.timestamp - usdtUpdatedAt > MAX_ORACLE_STALENESS) {
+            if (
+                usdtPrice <= 0 || usdtAnswered < usdtRoundId
+                    || block.timestamp - usdtUpdatedAt > MAX_ORACLE_STALENESS
+            ) {
                 return crvSwapper.quote(pendingCrv) / 1e12; // fallback: LP price, crvUSD≈USDT 1:1
             }
 
@@ -355,7 +364,7 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         bytes[] memory harvestData = new bytes[](1);
         harvestData[0] = bytes("");
         // NoPendingRewards is expected when nothing has accrued yet
-        try IAccountant(accountant).claim(gauges, harvestData, address(this)) {} catch {}
+        try IAccountant(accountant).claim(gauges, harvestData, address(this)) { } catch { }
     }
 
     function _emergencyWithdraw() internal override returns (uint256 usdtReceived) {
@@ -420,7 +429,8 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         // Both crvUSD and pmUSD are stablecoins (~$1 each, 18 decimals)
         uint256 safeVP = _getSafeVirtualPrice();
         uint256 totalValue = crvUsdAmount + pmUsdAmount;
-        uint256 oracleMinLp = (totalValue * PRECISION * (PRECISION - LP_SLIPPAGE)) / (safeVP * PRECISION);
+        uint256 oracleMinLp =
+            (totalValue * PRECISION * (PRECISION - LP_SLIPPAGE)) / (safeVP * PRECISION);
         if (oracleMinLp > minLp) minLp = oracleMinLp;
 
         lpReceived = lpPool.add_liquidity(amounts, minLp);
@@ -428,13 +438,17 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
     }
 
     /// @notice Remove single-sided crvUSD liquidity from pmUSD/crvUSD pool
-    function _removeLiquidity(uint256 lpAmount, uint256 slippage) internal returns (uint256 crvUsdReceived) {
+    function _removeLiquidity(uint256 lpAmount, uint256 slippage)
+        internal
+        returns (uint256 crvUsdReceived)
+    {
         uint256 expectedOut = lpPool.calc_withdraw_one_coin(lpAmount, lpCrvUsdIndex);
         uint256 minOut = (expectedOut * (PRECISION - slippage)) / PRECISION;
 
         // Oracle floor using cached VP (immune to same-block manipulation)
         uint256 safeVP = _getSafeVirtualPrice();
-        uint256 oracleMinOut = (lpAmount * safeVP * (PRECISION - slippage)) / (PRECISION * PRECISION);
+        uint256 oracleMinOut =
+            (lpAmount * safeVP * (PRECISION - slippage)) / (PRECISION * PRECISION);
         if (oracleMinOut > minOut) minOut = oracleMinOut;
 
         _ensureApprove(address(lpToken), address(lpPool), lpAmount);
@@ -444,18 +458,38 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
 
     // ============ Internal: USDT/crvUSD Swaps ============
 
-    function _swapUsdtToCrvUsd(uint256 usdtAmount, uint256 slippage) internal returns (uint256 crvUsdReceived) {
+    function _swapUsdtToCrvUsd(uint256 usdtAmount, uint256 slippage)
+        internal
+        returns (uint256 crvUsdReceived)
+    {
         _ensureApprove(address(debtAsset), address(usdtCrvUsdPool), usdtAmount);
         crvUsdReceived = CurveUsdtSwapLib.swapUsdtToCrvUsd(
-            usdtCrvUsdPool, usdtIndex, crvUsdIndex, usdtAmount, slippage, usdtOracle, crvUsdOracle, MAX_ORACLE_STALENESS
+            usdtCrvUsdPool,
+            usdtIndex,
+            crvUsdIndex,
+            usdtAmount,
+            slippage,
+            usdtOracle,
+            crvUsdOracle,
+            MAX_ORACLE_STALENESS
         );
         emit SwappedUsdtToCrvUsd(usdtAmount, crvUsdReceived);
     }
 
-    function _swapCrvUsdToUsdt(uint256 crvUsdAmount, uint256 slippage) internal returns (uint256 usdtReceived) {
+    function _swapCrvUsdToUsdt(uint256 crvUsdAmount, uint256 slippage)
+        internal
+        returns (uint256 usdtReceived)
+    {
         _ensureApprove(address(crvUSD), address(usdtCrvUsdPool), crvUsdAmount);
         usdtReceived = CurveUsdtSwapLib.swapCrvUsdToUsdt(
-            usdtCrvUsdPool, crvUsdIndex, usdtIndex, crvUsdAmount, slippage, crvUsdOracle, usdtOracle, MAX_ORACLE_STALENESS
+            usdtCrvUsdPool,
+            crvUsdIndex,
+            usdtIndex,
+            crvUsdAmount,
+            slippage,
+            crvUsdOracle,
+            usdtOracle,
+            MAX_ORACLE_STALENESS
         );
         emit SwappedCrvUsdToUsdt(crvUsdAmount, usdtReceived);
     }

@@ -4,13 +4,13 @@ pragma solidity ^0.8.33;
 import "forge-std/Script.sol";
 import "forge-std/console2.sol";
 
-import {ZenjiViewHelper} from "../src/ZenjiViewHelper.sol";
-import {VaultTracker} from "../src/VaultTracker.sol";
+import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
+import { VaultTracker } from "../src/VaultTracker.sol";
 // import {ZenjiRebalanceKeeper} from "../src/keepers/ZenjiRebalanceKeeper.sol";
-import {CbBtcWbtcUsdtSwapper} from "../src/swappers/base/CbBtcWbtcUsdtSwapper.sol";
-import {AaveLoanManager} from "../src/lenders/AaveLoanManager.sol";
-import {UsdtIporYieldStrategy} from "../src/strategies/UsdtIporYieldStrategy.sol";
-import {ZenjiCbBtc} from "../src/implementations/ZenjiCbBtc.sol";
+import { CbBtcWbtcUsdtSwapper } from "../src/swappers/base/CbBtcWbtcUsdtSwapper.sol";
+import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
+import { UsdtIporYieldStrategy } from "../src/strategies/UsdtIporYieldStrategy.sol";
+import { ZenjiCbBtc } from "../src/implementations/ZenjiCbBtc.sol";
 
 contract DeployCbBtc is Script {
     // Assets
@@ -63,7 +63,7 @@ contract DeployCbBtc is Script {
             TRICRYPTO_POOL,
             TRICRYPTO_WBTC_INDEX,
             TRICRYPTO_USDT_INDEX,
-            BTC_USD_ORACLE,  // cbBTC tracks BTC
+            BTC_USD_ORACLE, // cbBTC tracks BTC
             USDT_USD_ORACLE
         );
 
@@ -76,7 +76,7 @@ contract DeployCbBtc is Script {
             BTC_USD_ORACLE,
             USDT_USD_ORACLE,
             address(swapper),
-            7300,           
+            7300,
             7800,
             address(0)
         );
@@ -94,11 +94,7 @@ contract DeployCbBtc is Script {
         );
 
         ZenjiCbBtc vault = new ZenjiCbBtc(
-            address(loanManager),
-            address(strategy),
-            address(swapper),
-            owner,
-            address(viewHelper)
+            address(loanManager), address(strategy), address(swapper), owner, address(viewHelper)
         );
 
         VaultTracker vaultTracker = new VaultTracker(address(vault));
@@ -120,7 +116,11 @@ contract DeployCbBtc is Script {
         // console2.log("RebalanceKeeper", address(rebalanceKeeper));
     }
 
-    function _envOrAddress(string memory key, address defaultValue) internal view returns (address) {
+    function _envOrAddress(string memory key, address defaultValue)
+        internal
+        view
+        returns (address)
+    {
         try vm.envAddress(key) returns (address val) {
             if (val != address(0)) return val;
             return defaultValue;

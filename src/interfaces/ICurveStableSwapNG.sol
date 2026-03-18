@@ -9,7 +9,9 @@ interface ICurveStableSwapNG {
     /// @param amounts Array of token amounts to deposit [coin0, coin1]
     /// @param min_mint_amount Minimum LP tokens to mint
     /// @return LP tokens minted
-    function add_liquidity(uint256[] calldata amounts, uint256 min_mint_amount) external returns (uint256);
+    function add_liquidity(uint256[] calldata amounts, uint256 min_mint_amount)
+        external
+        returns (uint256);
 
     /// @notice Remove liquidity in a single coin
     /// @param burn_amount Amount of LP tokens to burn
@@ -24,7 +26,10 @@ interface ICurveStableSwapNG {
     /// @param amounts Array of token amounts [coin0, coin1]
     /// @param is_deposit True for deposit, false for withdrawal
     /// @return Expected LP token amount
-    function calc_token_amount(uint256[] calldata amounts, bool is_deposit) external view returns (uint256);
+    function calc_token_amount(uint256[] calldata amounts, bool is_deposit)
+        external
+        view
+        returns (uint256);
 
     /// @notice Calculate expected output from removing liquidity in one coin
     /// @param burn_amount Amount of LP tokens to burn

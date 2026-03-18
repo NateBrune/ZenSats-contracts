@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import {BaseYieldStrategy} from "./BaseYieldStrategy.sol";
-import {IStakeDaoRewardVault} from "../interfaces/IStakeDaoRewardVault.sol";
-import {IERC20} from "../interfaces/IERC20.sol";
+import { BaseYieldStrategy } from "./BaseYieldStrategy.sol";
+import { IStakeDaoRewardVault } from "../interfaces/IStakeDaoRewardVault.sol";
+import { IERC20 } from "../interfaces/IERC20.sol";
 
 /// @title BaseCurveRewardVaultStrategy
 /// @notice Abstract base for strategies that stake Curve LP tokens in ERC4626 reward vaults

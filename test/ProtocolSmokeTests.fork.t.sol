@@ -351,8 +351,9 @@ contract ProtocolSmokeTests is Test {
         address expectedVaultAddress = computeCreateAddress(address(this), startNonce + 3);
 
         // Deploy minimal vault for governance testing
-        CurveTwoCryptoSwapper swapper =
-            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE);
+        CurveTwoCryptoSwapper swapper = new CurveTwoCryptoSwapper(
+            owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE
+        );
 
         IporYieldStrategy strategy =
             new IporYieldStrategy(CRVUSD, expectedVaultAddress, IPOR_PLASMA_VAULT);
@@ -409,8 +410,9 @@ contract ProtocolSmokeTests is Test {
         address expectedVaultAddress = computeCreateAddress(address(this), startNonce + 3);
 
         // Deploy vault
-        CurveTwoCryptoSwapper swapper =
-            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE);
+        CurveTwoCryptoSwapper swapper = new CurveTwoCryptoSwapper(
+            owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE
+        );
 
         IporYieldStrategy strategy =
             new IporYieldStrategy(CRVUSD, expectedVaultAddress, IPOR_PLASMA_VAULT);
@@ -464,8 +466,9 @@ contract ProtocolSmokeTests is Test {
     function test_swapper_slippage_management() public {
         console.log("=== Testing Swapper Slippage Management ===");
 
-        CurveTwoCryptoSwapper swapper =
-            new CurveTwoCryptoSwapper(owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE);
+        CurveTwoCryptoSwapper swapper = new CurveTwoCryptoSwapper(
+            owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE
+        );
 
         // Test slippage proposal and execution
         vm.prank(owner);

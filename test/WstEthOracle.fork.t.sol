@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import {Test, console} from "forge-std/Test.sol";
-import {WstEthOracle} from "../src/WstEthOracle.sol";
-import {AaveLoanManager} from "../src/lenders/AaveLoanManager.sol";
-import {IERC20} from "../src/interfaces/IERC20.sol";
-import {IChainlinkOracle} from "../src/interfaces/IChainlinkOracle.sol";
+import { Test, console } from "forge-std/Test.sol";
+import { WstEthOracle } from "../src/WstEthOracle.sol";
+import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
+import { IERC20 } from "../src/interfaces/IERC20.sol";
+import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
 
 /// @title WstEthOracle Fork Integration Test
 /// @notice Tests WstEthOracle with real Chainlink feeds — no mocked timestamps.
@@ -94,7 +94,8 @@ contract WstEthOracleForkTest is Test {
     /// @notice Oracle roundId/answeredInRound track ETH/USD feed
     function test_roundMetadataTracksEthUsdFeed() public view {
         (uint80 oracleRoundId,,,, uint80 oracleAnsweredInRound) = oracle.latestRoundData();
-        (uint80 ethRoundId,,,, uint80 ethAnsweredInRound) = IChainlinkOracle(ETH_USD_ORACLE).latestRoundData();
+        (uint80 ethRoundId,,,, uint80 ethAnsweredInRound) =
+            IChainlinkOracle(ETH_USD_ORACLE).latestRoundData();
         assertEq(oracleRoundId, ethRoundId, "roundId should match ETH/USD");
         assertEq(oracleAnsweredInRound, ethAnsweredInRound, "answeredInRound should match ETH/USD");
     }
@@ -124,8 +125,9 @@ contract WstEthOracleForkTest is Test {
         // May revert if the fork block already had a nearly-stale ETH/USD feed,
         // but this tests the typical case
         try loanManager.checkOracleFreshness() {
-            // success
-        } catch {
+        // success
+        }
+        catch {
             // Acceptable if ETH/USD was already ~30min stale at fork block
             (,,, uint256 ethUsdUpdatedAt,) = IChainlinkOracle(ETH_USD_ORACLE).latestRoundData();
             uint256 age = block.timestamp - ethUsdUpdatedAt;

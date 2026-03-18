@@ -82,7 +82,9 @@ contract CrvToCrvUsdSwapper is BaseSwapper {
     /// @param crvAmount Amount of CRV to swap
     /// @return crvUsdReceived Amount of crvUSD received
     function swap(uint256 crvAmount) external returns (uint256 crvUsdReceived) {
-        if (authorizedCaller != address(0) && msg.sender != authorizedCaller) revert Unauthorized();
+        if (authorizedCaller != address(0) && msg.sender != authorizedCaller) {
+            revert Unauthorized();
+        }
         if (crvAmount == 0) return 0;
 
         uint256 expectedOut = triCryptoPool.get_dy(CRV_INDEX, CRVUSD_INDEX, crvAmount);
@@ -90,7 +92,13 @@ contract CrvToCrvUsdSwapper is BaseSwapper {
 
         // Oracle floor: CRV and crvUSD are both 18-decimal ERC20 tokens
         uint256 oracleExpected = OracleLib.getCollateralValue(
-            crvAmount, crvOracle, MAX_CRV_ORACLE_STALENESS, crvUsdOracle, MAX_CRVUSD_ORACLE_STALENESS, crv, crvUSD
+            crvAmount,
+            crvOracle,
+            MAX_CRV_ORACLE_STALENESS,
+            crvUsdOracle,
+            MAX_CRVUSD_ORACLE_STALENESS,
+            crv,
+            crvUSD
         );
         uint256 oracleMinOut = (oracleExpected * (PRECISION - slippage)) / PRECISION;
         if (oracleMinOut > minOut) minOut = oracleMinOut;

@@ -4,15 +4,15 @@ pragma solidity ^0.8.33;
 import "forge-std/Script.sol";
 import "forge-std/console2.sol";
 
-import {ZenjiViewHelper} from "../src/ZenjiViewHelper.sol";
-import {VaultTracker} from "../src/VaultTracker.sol";
-import {ZenjiRebalanceKeeper} from "../src/keepers/ZenjiRebalanceKeeper.sol";
-import {CurveThreeCryptoSwapper} from "../src/swappers/base/CurveThreeCryptoSwapper.sol";
-import {CrvToCrvUsdSwapper} from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
-import {AaveLoanManager} from "../src/lenders/AaveLoanManager.sol";
-import {PmUsdCrvUsdStrategy} from "../src/strategies/PmUsdCrvUsdStrategy.sol";
-import {ICurveStableSwapNG} from "../src/interfaces/ICurveStableSwapNG.sol";
-import {ZenjiWbtcPmUsd} from "../src/implementations/ZenjiWbtcPmUsd.sol";
+import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
+import { VaultTracker } from "../src/VaultTracker.sol";
+import { ZenjiRebalanceKeeper } from "../src/keepers/ZenjiRebalanceKeeper.sol";
+import { CurveThreeCryptoSwapper } from "../src/swappers/base/CurveThreeCryptoSwapper.sol";
+import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
+import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
+import { PmUsdCrvUsdStrategy } from "../src/strategies/PmUsdCrvUsdStrategy.sol";
+import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
+import { ZenjiWbtcPmUsd } from "../src/implementations/ZenjiWbtcPmUsd.sol";
 
 /// @notice Deploys WBTC/USDT vault with pmUSD/crvUSD Stake DAO strategy on Aave
 contract DeployPmUsdWbtc is Script {
@@ -57,12 +57,7 @@ contract DeployPmUsdWbtc is Script {
         ZenjiViewHelper viewHelper = new ZenjiViewHelper();
 
         CrvToCrvUsdSwapper crvSwapper = new CrvToCrvUsdSwapper(
-            gov,
-            CRV,
-            CRVUSD,
-            CRV_CRVUSD_TRICRYPTO,
-            CRV_USD_ORACLE,
-            CRVUSD_USD_ORACLE
+            gov, CRV, CRVUSD, CRV_CRVUSD_TRICRYPTO, CRV_USD_ORACLE, CRVUSD_USD_ORACLE
         );
 
         CurveThreeCryptoSwapper swapper = new CurveThreeCryptoSwapper(
@@ -112,11 +107,7 @@ contract DeployPmUsdWbtc is Script {
         );
 
         ZenjiWbtcPmUsd vault = new ZenjiWbtcPmUsd(
-            address(loanManager),
-            address(strategy),
-            address(swapper),
-            owner,
-            address(viewHelper)
+            address(loanManager), address(strategy), address(swapper), owner, address(viewHelper)
         );
 
         //VaultTracker vaultTracker = new VaultTracker(address(vault));
@@ -146,7 +137,11 @@ contract DeployPmUsdWbtc is Script {
         revert("crvUSD not in pmUSD pool");
     }
 
-    function _envOrAddress(string memory key, address defaultValue) internal view returns (address) {
+    function _envOrAddress(string memory key, address defaultValue)
+        internal
+        view
+        returns (address)
+    {
         try vm.envAddress(key) returns (address val) {
             if (val != address(0)) return val;
             return defaultValue;

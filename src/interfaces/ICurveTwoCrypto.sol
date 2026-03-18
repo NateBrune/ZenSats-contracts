@@ -22,9 +22,7 @@ interface ICurveTwoCrypto {
     /// @param dx Amount of input coin
     /// @param min_dy Minimum amount of output coin
     /// @return Amount of output coin received
-    function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy)
-        external
-        returns (uint256);
+    function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) external returns (uint256);
 
     /// @notice Get expected output amount
     /// @param i Index of input coin

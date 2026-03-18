@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import {IERC20} from "../interfaces/IERC20.sol";
-import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
-import {ILoanManager} from "../interfaces/ILoanManager.sol";
-import {ISwapper} from "../interfaces/ISwapper.sol";
-import {SafeTransferLib} from "./SafeTransferLib.sol";
+import { IERC20 } from "../interfaces/IERC20.sol";
+import { IYieldStrategy } from "../interfaces/IYieldStrategy.sol";
+import { ILoanManager } from "../interfaces/ILoanManager.sol";
+import { ISwapper } from "../interfaces/ISwapper.sol";
+import { SafeTransferLib } from "./SafeTransferLib.sol";
 
 /// @title ZenjiCoreLib
 /// @notice External library for Zenji admin and emergency operations
@@ -17,21 +17,11 @@ library ZenjiCoreLib {
     error InvalidAddress();
 
     event EmergencyYieldRedeemed(uint256 debtAssetReceived);
-    event EmergencyLoanUnwound(
-        uint256 collateralRecovered,
-        uint256 debtRecovered
-    );
-    event LiquidationComplete(
-        uint256 collateralRecovered,
-        uint256 flashloanAmount
-    );
+    event EmergencyLoanUnwound(uint256 collateralRecovered, uint256 debtRecovered);
+    event LiquidationComplete(uint256 collateralRecovered, uint256 flashloanAmount);
     event EmergencyCollateralTransferred(uint256 amount);
     event EmergencyDebtTransferred(uint256 amount);
-    event AssetsRescued(
-        address indexed token,
-        address indexed recipient,
-        uint256 amount
-    );
+    event AssetsRescued(address indexed token, address indexed recipient, uint256 amount);
     event FeesWithdrawn(address indexed recipient, uint256 amount);
     event RebalanceBountyPaid(address indexed keeper, uint256 amount);
 
@@ -67,7 +57,7 @@ library ZenjiCoreLib {
                 } catch {
                     try yieldStrategy.emergencyWithdraw() returns (uint256 r) {
                         withdrawn = r;
-                    } catch {}
+                    } catch { }
                 }
             }
             newLastStrategyBalance = 0;
@@ -77,10 +67,7 @@ library ZenjiCoreLib {
             if (!loanManager.loanExists()) {
                 _recoverLoanManagerFunds(loanManager);
                 _swapRemainingDebtToCollateral(debtAsset, swapper);
-                emit EmergencyLoanUnwound(
-                    collateralAsset.balanceOf(address(this)),
-                    0
-                );
+                emit EmergencyLoanUnwound(collateralAsset.balanceOf(address(this)), 0);
                 return (newLastStrategyBalance, newAccumulatedFees, false);
             }
             uint256 totalDebt = loanManager.getCurrentDebt();
@@ -101,16 +88,10 @@ library ZenjiCoreLib {
             }
             _recoverLoanManagerFunds(loanManager);
             _swapRemainingDebtToCollateral(debtAsset, swapper);
-            emit EmergencyLoanUnwound(
-                collateralAsset.balanceOf(address(this)),
-                0
-            );
+            emit EmergencyLoanUnwound(collateralAsset.balanceOf(address(this)), 0);
         } else {
             setLiquidationComplete = true;
-            emit LiquidationComplete(
-                collateralAsset.balanceOf(address(this)),
-                0
-            );
+            emit LiquidationComplete(collateralAsset.balanceOf(address(this)), 0);
         }
     }
 
@@ -168,10 +149,7 @@ library ZenjiCoreLib {
         IYieldStrategy yieldStrategy,
         IERC20 debtAsset,
         uint256 accumulatedFees
-    )
-        external
-        returns (uint256 newAccumulatedFees, uint256 newLastStrategyBalance)
-    {
+    ) external returns (uint256 newAccumulatedFees, uint256 newLastStrategyBalance) {
         uint256 fees = accumulatedFees;
         if (fees == 0) return (0, yieldStrategy.balanceOf());
 
@@ -180,9 +158,7 @@ library ZenjiCoreLib {
         uint256 strategyBalance = yieldStrategy.balanceOf();
         uint256 debtBefore = debtAsset.balanceOf(address(this));
         if (strategyBalance > 0 && fees > 0) {
-            uint256 toWithdraw = fees > strategyBalance
-                ? strategyBalance
-                : fees;
+            uint256 toWithdraw = fees > strategyBalance ? strategyBalance : fees;
             if (toWithdraw > 0) {
                 uint256 received = yieldStrategy.withdraw(toWithdraw);
                 debtBefore += received;
@@ -251,10 +227,7 @@ library ZenjiCoreLib {
         if (lmDebt > 0) loanManager.transferDebt(address(this), lmDebt);
     }
 
-    function _swapRemainingDebtToCollateral(
-        IERC20 debtAsset,
-        ISwapper swapper
-    ) private {
+    function _swapRemainingDebtToCollateral(IERC20 debtAsset, ISwapper swapper) private {
         uint256 debtBal = debtAsset.balanceOf(address(this));
         if (debtBal > 10 ** debtAsset.decimals() && address(swapper) != address(0)) {
             debtAsset.safeTransfer(address(swapper), debtBal);

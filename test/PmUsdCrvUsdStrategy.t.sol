@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import {Test} from "forge-std/Test.sol";
-import {Zenji} from "../src/Zenji.sol";
-import {ZenjiViewHelper} from "../src/ZenjiViewHelper.sol";
-import {AaveLoanManager} from "../src/lenders/AaveLoanManager.sol";
-import {PmUsdCrvUsdStrategy} from "../src/strategies/PmUsdCrvUsdStrategy.sol";
-import {IYieldStrategy} from "../src/interfaces/IYieldStrategy.sol";
-import {IAavePool} from "../src/interfaces/IAavePool.sol";
-import {IFlashLoanSimpleReceiver} from "../src/interfaces/IFlashLoanSimpleReceiver.sol";
-import {IERC20} from "../src/interfaces/IERC20.sol";
-import {CurveUsdtSwapLib} from "../src/libraries/CurveUsdtSwapLib.sol";
-import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {IERC20 as OZ_IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { Test } from "forge-std/Test.sol";
+import { Zenji } from "../src/Zenji.sol";
+import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
+import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
+import { PmUsdCrvUsdStrategy } from "../src/strategies/PmUsdCrvUsdStrategy.sol";
+import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
+import { IAavePool } from "../src/interfaces/IAavePool.sol";
+import { IFlashLoanSimpleReceiver } from "../src/interfaces/IFlashLoanSimpleReceiver.sol";
+import { IERC20 } from "../src/interfaces/IERC20.sol";
+import { CurveUsdtSwapLib } from "../src/libraries/CurveUsdtSwapLib.sol";
+import { ERC4626 } from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
+import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import { IERC20 as OZ_IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 // ============ Mock Contracts ============
 
@@ -139,14 +139,19 @@ contract MockCurveStableSwapNG {
         uint256 crvUsdAmount = amounts[uint256(uint128(crvUsdIdx))];
         uint256 pmUsdAmount = amounts[pmUsdIdx];
         if (crvUsdAmount > 0) crvUSD.transferFrom(msg.sender, address(this), crvUsdAmount);
-        if (pmUsdAmount > 0 && address(pmUSD) != address(0)) pmUSD.transferFrom(msg.sender, address(this), pmUsdAmount);
+        if (pmUsdAmount > 0 && address(pmUSD) != address(0)) {
+            pmUSD.transferFrom(msg.sender, address(this), pmUsdAmount);
+        }
         // 1:1 LP minting for simplicity
         uint256 totalMinted = crvUsdAmount + pmUsdAmount;
         if (totalMinted > 0) lpToken.mint(msg.sender, totalMinted);
         return totalMinted;
     }
 
-    function remove_liquidity_one_coin(uint256 burn_amount, int128, uint256) external returns (uint256) {
+    function remove_liquidity_one_coin(uint256 burn_amount, int128, uint256)
+        external
+        returns (uint256)
+    {
         lpToken.transferFrom(msg.sender, address(this), burn_amount);
         // 1:1 LP burning for simplicity
         crvUSD.mint(msg.sender, burn_amount);
@@ -320,7 +325,10 @@ contract MockAavePool is IAavePool {
         variableDebtToken.mint(onBehalfOf, amount);
     }
 
-    function repay(address asset, uint256 amount, uint256, address onBehalfOf) external returns (uint256) {
+    function repay(address asset, uint256 amount, uint256, address onBehalfOf)
+        external
+        returns (uint256)
+    {
         IERC20(asset).transferFrom(msg.sender, address(this), amount);
         variableDebtToken.burnFrom(onBehalfOf, amount);
         return amount;
@@ -335,11 +343,16 @@ contract MockAavePool is IAavePool {
         return burnAmount;
     }
 
-    function flashLoanSimple(address receiverAddress, address asset, uint256 amount, bytes calldata params, uint16)
-        external
-    {
+    function flashLoanSimple(
+        address receiverAddress,
+        address asset,
+        uint256 amount,
+        bytes calldata params,
+        uint16
+    ) external {
         MockERC20(asset).mint(receiverAddress, amount);
-        IFlashLoanSimpleReceiver(receiverAddress).executeOperation(asset, amount, 0, receiverAddress, params);
+        IFlashLoanSimpleReceiver(receiverAddress)
+            .executeOperation(asset, amount, 0, receiverAddress, params);
         IERC20(asset).transferFrom(receiverAddress, address(this), amount);
     }
 }
@@ -388,7 +401,8 @@ contract PmUsdCrvUsdStrategyTest is Test {
         debtToken = new MockERC20("vUSDT", "vUSDT", 6);
 
         // Deploy mocks
-        aavePool = new MockAavePool(address(wbtc), address(usdt), address(aToken), address(debtToken));
+        aavePool =
+            new MockAavePool(address(wbtc), address(usdt), address(aToken), address(debtToken));
         collateralOracle = new MockOracle(8, 1e8); // $1 for simplicity
         debtOracle = new MockOracle(8, 1e8);
         crvUsdOracle = new MockOracle(8, 1e8); // crvUSD $1.00

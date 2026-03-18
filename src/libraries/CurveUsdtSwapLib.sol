@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import {ICurveStableSwap} from "../interfaces/ICurveStableSwap.sol";
-import {ICurveStableSwapWithReceiver} from "../interfaces/ICurveStableSwapWithReceiver.sol";
-import {IChainlinkOracle} from "../interfaces/IChainlinkOracle.sol";
+import { ICurveStableSwap } from "../interfaces/ICurveStableSwap.sol";
+import { ICurveStableSwapWithReceiver } from "../interfaces/ICurveStableSwapWithReceiver.sol";
+import { IChainlinkOracle } from "../interfaces/IChainlinkOracle.sol";
 
 /// @title CurveUsdtSwapLib
 /// @notice Shared USDT/crvUSD swap + oracle conversion logic
@@ -36,7 +36,8 @@ library CurveUsdtSwapLib {
         uint256 minOut = (expectedOut * (PRECISION - slippage)) / PRECISION;
 
         // Oracle floor: USDT (6 dec) -> crvUSD (18 dec)
-        uint256 oracleMinOut = _oracleFloor6to18(usdtAmount, slippage, usdtOracle, crvUsdOracle, maxOracleStaleness);
+        uint256 oracleMinOut =
+            _oracleFloor6to18(usdtAmount, slippage, usdtOracle, crvUsdOracle, maxOracleStaleness);
         if (oracleMinOut > minOut) minOut = oracleMinOut;
 
         crvUsdReceived = exchange(pool, usdtIndex, crvUsdIndex, usdtAmount, minOut);
@@ -57,7 +58,8 @@ library CurveUsdtSwapLib {
         uint256 minOut = (expectedOut * (PRECISION - slippage)) / PRECISION;
 
         // Oracle floor: crvUSD (18 dec) -> USDT (6 dec)
-        uint256 oracleMinOut = _oracleFloor18to6(crvUsdAmount, slippage, crvUsdOracle, usdtOracle, maxOracleStaleness);
+        uint256 oracleMinOut =
+            _oracleFloor18to6(crvUsdAmount, slippage, crvUsdOracle, usdtOracle, maxOracleStaleness);
         if (oracleMinOut > minOut) minOut = oracleMinOut;
 
         usdtReceived = exchange(pool, crvUsdIndex, usdtIndex, crvUsdAmount, minOut);
@@ -94,8 +96,10 @@ library CurveUsdtSwapLib {
         internal
         returns (uint256 amountOut)
     {
-        try ICurveStableSwapWithReceiver(address(pool)).exchange(i, j, dx, minOut, address(this))
-        returns (uint256 outWithReceiver) {
+        try ICurveStableSwapWithReceiver(address(pool))
+            .exchange(i, j, dx, minOut, address(this)) returns (
+            uint256 outWithReceiver
+        ) {
             amountOut = outWithReceiver;
         } catch {
             try pool.exchange(i, j, dx, minOut) returns (uint256 outStandard) {
@@ -169,16 +173,20 @@ library CurveUsdtSwapLib {
         return (oracleExpected * (PRECISION - slippage)) / PRECISION;
     }
 
-    function _getOraclePrices(IChainlinkOracle oracleA, IChainlinkOracle oracleB, uint256 maxStaleness)
-        private
-        view
-        returns (uint256 priceA, uint256 priceB)
-    {
+    function _getOraclePrices(
+        IChainlinkOracle oracleA,
+        IChainlinkOracle oracleB,
+        uint256 maxStaleness
+    ) private view returns (uint256 priceA, uint256 priceB) {
         (uint80 rA, int256 pA,, uint256 uA, uint80 aA) = oracleA.latestRoundData();
-        if (pA <= 0 || aA < rA || block.timestamp - uA > maxStaleness) revert StaleOrInvalidOracle();
+        if (pA <= 0 || aA < rA || block.timestamp - uA > maxStaleness) {
+            revert StaleOrInvalidOracle();
+        }
 
         (uint80 rB, int256 pB,, uint256 uB, uint80 aB) = oracleB.latestRoundData();
-        if (pB <= 0 || aB < rB || block.timestamp - uB > maxStaleness) revert StaleOrInvalidOracle();
+        if (pB <= 0 || aB < rB || block.timestamp - uB > maxStaleness) {
+            revert StaleOrInvalidOracle();
+        }
 
         priceA = uint256(pA);
         priceB = uint256(pB);

@@ -38,8 +38,8 @@ contract UniswapV3TwoHopSwapper is BaseSwapper, ISwapper {
         address _debtOracle
     ) BaseSwapper(_gov) {
         if (
-            _collateralToken == address(0) || _debtToken == address(0)
-                || _weth == address(0) || _swapRouter == address(0) || _collateralOracle == address(0)
+            _collateralToken == address(0) || _debtToken == address(0) || _weth == address(0)
+                || _swapRouter == address(0) || _collateralOracle == address(0)
                 || _debtOracle == address(0)
         ) {
             revert InvalidAddress();
@@ -72,7 +72,10 @@ contract UniswapV3TwoHopSwapper is BaseSwapper, ISwapper {
     }
 
     /// @inheritdoc ISwapper
-    function swapCollateralForDebt(uint256 collateralAmount) external returns (uint256 debtReceived) {
+    function swapCollateralForDebt(uint256 collateralAmount)
+        external
+        returns (uint256 debtReceived)
+    {
         if (collateralAmount == 0) return 0;
 
         // Get oracle-based expected output for slippage calculation
@@ -88,9 +91,8 @@ contract UniswapV3TwoHopSwapper is BaseSwapper, ISwapper {
         uint256 minOut = (expectedOut * (PRECISION - slippage)) / PRECISION;
 
         // Encode path: collateral -> WETH -> debt
-        bytes memory path = abi.encodePacked(
-            address(collateralToken), fee1, weth, fee2, address(debtToken)
-        );
+        bytes memory path =
+            abi.encodePacked(address(collateralToken), fee1, weth, fee2, address(debtToken));
 
         collateralToken.ensureApproval(address(swapRouter), collateralAmount);
 
@@ -111,7 +113,10 @@ contract UniswapV3TwoHopSwapper is BaseSwapper, ISwapper {
     }
 
     /// @inheritdoc ISwapper
-    function swapDebtForCollateral(uint256 debtAmount) external returns (uint256 collateralReceived) {
+    function swapDebtForCollateral(uint256 debtAmount)
+        external
+        returns (uint256 collateralReceived)
+    {
         if (debtAmount == 0) return 0;
 
         // Get oracle-based expected output for slippage calculation
@@ -127,19 +132,15 @@ contract UniswapV3TwoHopSwapper is BaseSwapper, ISwapper {
         uint256 minOut = (expectedOut * (PRECISION - slippage)) / PRECISION;
 
         // Encode path: debt -> WETH -> collateral
-        bytes memory path = abi.encodePacked(
-            address(debtToken), fee2, weth, fee1, address(collateralToken)
-        );
+        bytes memory path =
+            abi.encodePacked(address(debtToken), fee2, weth, fee1, address(collateralToken));
 
         debtToken.ensureApproval(address(swapRouter), debtAmount);
 
         uint256 balanceBefore = collateralToken.balanceOf(address(this));
         swapRouter.exactInput(
             ISwapRouter.ExactInputParams({
-                path: path,
-                recipient: address(this),
-                amountIn: debtAmount,
-                amountOutMinimum: minOut
+                path: path, recipient: address(this), amountIn: debtAmount, amountOutMinimum: minOut
             })
         );
         collateralReceived = collateralToken.balanceOf(address(this)) - balanceBefore;

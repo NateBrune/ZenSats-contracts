@@ -2,6 +2,7 @@
 pragma solidity ^0.8.33;
 
 import { Test } from "forge-std/Test.sol";
+import { LoanManagerTestBase, MockERC20 } from "./base/LoanManagerTestBase.sol";
 import { LlamaLoanManager } from "../src/lenders/LlamaLoanManager.sol";
 import { ILoanManager } from "../src/interfaces/ILoanManager.sol";
 import { ILlamaLendController } from "../src/interfaces/ILlamaLendController.sol";
@@ -9,25 +10,8 @@ import { ICurveTwoCrypto } from "../src/interfaces/ICurveTwoCrypto.sol";
 import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
 import { ISwapper } from "../src/interfaces/ISwapper.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
-import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
-contract MockERC20 is ERC20 {
-    uint8 private _decimals;
-
-    constructor(string memory name_, string memory symbol_, uint8 decimals_)
-        ERC20(name_, symbol_)
-    {
-        _decimals = decimals_;
-    }
-
-    function decimals() public view override returns (uint8) {
-        return _decimals;
-    }
-
-    function mint(address to, uint256 amount) external {
-        _mint(to, amount);
-    }
-}
+// ============ Llama-Specific Mocks ============
 
 contract MockOracle is IChainlinkOracle {
     uint8 public immutable decimals;
@@ -88,12 +72,8 @@ contract MockTwoCrypto is ICurveTwoCrypto {
     }
 
     function get_dy(uint256 i, uint256 j, uint256 dx) external view returns (uint256) {
-        if (i == 1 && j == 0) {
-            return (dx * rateCrvUsdPerWbtc) / 1e8;
-        }
-        if (i == 0 && j == 1) {
-            return (dx * 1e8) / rateCrvUsdPerWbtc;
-        }
+        if (i == 1 && j == 0) return (dx * rateCrvUsdPerWbtc) / 1e8;
+        if (i == 0 && j == 1) return (dx * 1e8) / rateCrvUsdPerWbtc;
         return 0;
     }
 
@@ -137,27 +117,27 @@ contract MockLlamaLendController is ILlamaLendController {
 
     mapping(address => Position) public positions;
 
-    function create_loan(uint256 collateral, uint256 debtAmount, uint256) external payable {
-        positions[msg.sender].collateral += collateral;
+    function create_loan(uint256 coll, uint256 debtAmount, uint256) external payable {
+        positions[msg.sender].collateral += coll;
         positions[msg.sender].debt += debtAmount;
     }
 
-    function add_collateral(uint256 collateral) external payable {
-        positions[msg.sender].collateral += collateral;
+    function add_collateral(uint256 coll) external payable {
+        positions[msg.sender].collateral += coll;
     }
 
-    function add_collateral(uint256 collateral, address _for) external payable {
-        positions[_for].collateral += collateral;
+    function add_collateral(uint256 coll, address _for) external payable {
+        positions[_for].collateral += coll;
     }
 
-    function remove_collateral(uint256 collateral) external {
+    function remove_collateral(uint256 coll) external {
         Position storage pos = positions[msg.sender];
-        require(pos.collateral >= collateral, "Insufficient collateral");
-        pos.collateral -= collateral;
+        require(pos.collateral >= coll, "Insufficient collateral");
+        pos.collateral -= coll;
     }
 
-    function borrow_more(uint256 collateral, uint256 debtAmount) external payable {
-        positions[msg.sender].collateral += collateral;
+    function borrow_more(uint256 coll, uint256 debtAmount) external payable {
+        positions[msg.sender].collateral += coll;
         positions[msg.sender].debt += debtAmount;
     }
 
@@ -260,7 +240,6 @@ contract MockSwapper is ISwapper {
 
     function swapCollateralForDebt(uint256 collateralAmount) external returns (uint256) {
         if (collateralAmount == 0) return 0;
-        // Tokens are already transferred to this contract by the caller
         collateralToken.approve(address(pool), collateralAmount);
         uint256 received = pool.exchange(1, 0, collateralAmount, 0);
         debtToken.transfer(msg.sender, received);
@@ -269,7 +248,6 @@ contract MockSwapper is ISwapper {
 
     function swapDebtForCollateral(uint256 debtAmount) external returns (uint256) {
         if (debtAmount == 0) return 0;
-        // Tokens are already transferred to this contract by the caller
         debtToken.approve(address(pool), debtAmount);
         uint256 received = pool.exchange(0, 1, debtAmount, 0);
         collateralToken.transfer(msg.sender, received);
@@ -277,7 +255,9 @@ contract MockSwapper is ISwapper {
     }
 }
 
-contract LlamaLoanManagerTest is Test {
+// ============ Test Contract ============
+
+contract LlamaLoanManagerTest is LoanManagerTestBase {
     MockERC20 wbtc;
     MockERC20 crvUSD;
     MockOracle oracle;
@@ -285,22 +265,19 @@ contract LlamaLoanManagerTest is Test {
     MockTwoCrypto pool;
     MockLlamaLendController llamaLend;
     MockSwapper swapper;
-    LlamaLoanManager manager;
+    LlamaLoanManager llamaManager;
 
-    address vault = address(this);
-    address nonVault = makeAddr("nonVault");
-
-    function setUp() public {
-        vm.warp(block.timestamp + 1 days); // Ensure block.timestamp is large enough for oracle tests
+    function _deployManager() internal override {
+        vm.warp(block.timestamp + 1 days);
         wbtc = new MockERC20("WBTC", "WBTC", 8);
         crvUSD = new MockERC20("crvUSD", "crvUSD", 18);
         oracle = new MockOracle(8, 20_000e8);
-        crvUsdOracle = new MockOracle(8, 1e8); // crvUSD at $1.00
+        crvUsdOracle = new MockOracle(8, 1e8);
         pool = new MockTwoCrypto(address(wbtc), address(crvUSD), 20_000e18);
         llamaLend = new MockLlamaLendController();
         swapper = new MockSwapper(address(wbtc), address(crvUSD), address(pool));
 
-        manager = new LlamaLoanManager(
+        llamaManager = new LlamaLoanManager(
             address(wbtc),
             address(crvUSD),
             address(llamaLend),
@@ -310,7 +287,54 @@ contract LlamaLoanManagerTest is Test {
             address(swapper),
             vault
         );
+        manager = ILoanManager(address(llamaManager));
+        collateral = wbtc;
+        debt = crvUSD;
     }
+
+    function _deployDeferredManager() internal override returns (ILoanManager) {
+        LlamaLoanManager deferred = new LlamaLoanManager(
+            address(wbtc),
+            address(crvUSD),
+            address(llamaLend),
+            address(pool),
+            address(oracle),
+            address(crvUsdOracle),
+            address(swapper),
+            address(0)
+        );
+        return ILoanManager(address(deferred));
+    }
+
+    function _makeOracleStale() internal override {
+        oracle.setUpdatedAt(block.timestamp - 2 hours);
+    }
+
+    function _makeOracleInvalidPrice() internal override {
+        oracle.setPrice(0);
+    }
+
+    function _makeOracleStaleAnsweredInRound() internal override {
+        oracle.setAnsweredInRound(0);
+    }
+
+    function _defaultCollateral() internal pure override returns (uint256) {
+        return 1e8;
+    }
+
+    function _defaultDebt() internal pure override returns (uint256) {
+        return 10_000e18;
+    }
+
+    function _defaultBands() internal pure override returns (uint256) {
+        return 4;
+    }
+
+    function _newMockSwapper() internal override returns (address) {
+        return address(new MockSwapper(address(wbtc), address(crvUSD), address(pool)));
+    }
+
+    // ============ Llama-Specific Tests ============
 
     function test_createLoan_borrow_repay_and_removeCollateral() public {
         manager.createLoan(1e8, 10_000e18, 4);
@@ -331,19 +355,13 @@ contract LlamaLoanManagerTest is Test {
         assertEq(manager.getCurrentCollateral(), 1e8);
     }
 
-    function test_calculateBorrowAmount() public view {
-        uint256 borrow = manager.calculateBorrowAmount(1e8, 7e17);
-        assertGt(borrow, 0);
-    }
+    function test_minCollateral_and_positionValues() public view {
+        uint256 minCol = manager.minCollateral(1000, 4);
+        assertEq(minCol, 250);
 
-    function test_getNetCollateralValue() public {
-        manager.createLoan(2e8, 10_000e18, 4);
-        uint256 net = manager.getNetCollateralValue();
-        assertGt(net, 0);
-    }
-
-    function test_getNetCollateralValue_returnsZeroWhenNoLoan() public view {
-        assertEq(manager.getNetCollateralValue(), 0);
+        (uint256 c, uint256 d) = manager.getPositionValues();
+        assertEq(c, 0);
+        assertEq(d, 0);
     }
 
     function test_unwindPosition_fullClose() public {
@@ -352,72 +370,6 @@ contract LlamaLoanManagerTest is Test {
 
         manager.unwindPosition(type(uint256).max);
         assertEq(manager.getCurrentCollateral(), 0);
-    }
-
-    function test_getCurrentLTV_and_health() public {
-        manager.createLoan(1e8, 10_000e18, 4);
-        uint256 ltv = manager.getCurrentLTV();
-        assertGt(ltv, 0);
-        assertEq(manager.getHealth(), 2e18);
-    }
-
-    function test_minCollateral_and_positionValues() public view {
-        uint256 minCol = manager.minCollateral(1000, 4);
-        assertEq(minCol, 250);
-
-        (uint256 collateral, uint256 debt) = manager.getPositionValues();
-        assertEq(collateral, 0);
-        assertEq(debt, 0);
-    }
-
-    function test_checkOracleFreshness_revertsOnStale() public {
-        oracle.setUpdatedAt(block.timestamp - 2 hours);
-        vm.expectRevert(ILoanManager.StaleOracle.selector);
-        manager.checkOracleFreshness();
-    }
-
-    function test_checkOracleFreshness_revertsOnInvalidPrice() public {
-        oracle.setPrice(0);
-        vm.expectRevert(ILoanManager.InvalidPrice.selector);
-        manager.checkOracleFreshness();
-    }
-
-    function test_checkOracleFreshness_revertsOnAnsweredInRound() public {
-        oracle.setAnsweredInRound(0);
-        vm.expectRevert(ILoanManager.StaleOracle.selector);
-        manager.checkOracleFreshness();
-    }
-
-    function test_transfer_revertsOnNonVault() public {
-        wbtc.mint(address(manager), 1e8);
-        vm.prank(nonVault);
-        vm.expectRevert(ILoanManager.Unauthorized.selector);
-        manager.transferCollateral(nonVault, 1e8);
-    }
-
-    function test_transferCollateral_and_transferDebt_success() public {
-        wbtc.mint(address(manager), 1e8);
-        crvUSD.mint(address(manager), 1e18);
-
-        manager.transferCollateral(vault, 1e8);
-        manager.transferDebt(vault, 1e18);
-
-        assertEq(wbtc.balanceOf(vault), 1e8);
-        assertEq(crvUSD.balanceOf(vault), 1e18);
-    }
-
-    function test_getBalances() public {
-        wbtc.mint(address(manager), 1e8);
-        crvUSD.mint(address(manager), 2e18);
-
-        assertEq(manager.getCollateralBalance(), 1e8);
-        assertEq(manager.getDebtBalance(), 2e18);
-    }
-
-    function test_transferDebt_revertsOnZeroAddress() public {
-        crvUSD.mint(address(manager), 1e18);
-        vm.expectRevert(ILoanManager.InvalidAddress.selector);
-        manager.transferDebt(address(0), 1e18);
     }
 
     function test_createLoan_revertsOnStaleOracle() public {
@@ -448,155 +400,101 @@ contract LlamaLoanManagerTest is Test {
         manager.repayDebt(100e18);
     }
 
-    // ============ Coverage Boost Tests ============
-
-    function test_addCollateral_zero() public {
-        vm.expectRevert(ILoanManager.ZeroAmount.selector);
-        manager.addCollateral(0);
-    }
-
-    function test_removeCollateral_zero() public {
-        vm.expectRevert(ILoanManager.ZeroAmount.selector);
-        manager.removeCollateral(0);
-    }
-
-    function test_repayDebt_zero() public {
-        vm.expectRevert(ILoanManager.ZeroAmount.selector);
-        manager.repayDebt(0);
-    }
-
-    function test_borrowMore_zero() public {
-        vm.expectRevert(ILoanManager.ZeroAmount.selector);
-        manager.borrowMore(0, 0);
+    function test_transfer_revertsOnNonVault() public {
+        wbtc.mint(address(manager), 1e8);
+        vm.prank(nonVault);
+        vm.expectRevert(ILoanManager.Unauthorized.selector);
+        manager.transferCollateral(nonVault, 1e8);
     }
 
     function test_unwindPosition_partial_noFlashloan() public {
         manager.createLoan(1e8, 10_000e18, 4);
 
-        // Repay almost everything so debt < 1000
-        uint256 debt = llamaLend.debt(address(manager));
-        crvUSD.mint(address(manager), debt - 500);
-        manager.repayDebt(debt - 500);
+        uint256 d = llamaLend.debt(address(manager));
+        crvUSD.mint(address(manager), d - 500);
+        manager.repayDebt(d - 500);
 
-        // Unwind should not use flashloan
         manager.unwindPosition(0.5e8);
     }
 
     function test_onFlashLoan_repayPartial() public {
         manager.createLoan(1e8, 10_000e18, 4);
-
-        // Fund manager to cover repayment + fee
         crvUSD.mint(address(manager), 1010e18);
 
-        // Manually trigger flashloan callback
-        vm.startPrank(0x26dE7861e213A5351F6ED767d00e0839930e9eE1); // actual flash lender
-        bytes memory data = abi.encode(0.5e8, false); // wbtcNeeded=0.5e8, fullyClose=false
-        manager.onFlashLoan(address(manager), address(crvUSD), 1000e18, 5e18, data);
+        vm.startPrank(0x26dE7861e213A5351F6ED767d00e0839930e9eE1);
+        bytes memory data = abi.encode(0.5e8, false);
+        llamaManager.onFlashLoan(address(llamaManager), address(crvUSD), 1000e18, 5e18, data);
         vm.stopPrank();
     }
 
     function test_onFlashLoan_unauthorizedInitiator() public {
         vm.startPrank(0x26dE7861e213A5351F6ED767d00e0839930e9eE1);
         vm.expectRevert(ILoanManager.Unauthorized.selector);
-        manager.onFlashLoan(address(0xbad), address(crvUSD), 1000e18, 5e18, "");
+        llamaManager.onFlashLoan(address(0xbad), address(crvUSD), 1000e18, 5e18, "");
     }
 
     function test_onFlashLoan_invalidToken() public {
         vm.startPrank(0x26dE7861e213A5351F6ED767d00e0839930e9eE1);
         vm.expectRevert(ILoanManager.InvalidAddress.selector);
-        manager.onFlashLoan(address(manager), address(0xbad), 1000e18, 5e18, "");
+        llamaManager.onFlashLoan(address(llamaManager), address(0xbad), 1000e18, 5e18, "");
     }
 
-    // ============ Branch Coverage: unwindPosition no-loan early return ============
+    function test_onFlashLoan_unauthorizedCaller() public {
+        vm.prank(address(0xbad));
+        vm.expectRevert(ILoanManager.Unauthorized.selector);
+        llamaManager.onFlashLoan(address(llamaManager), address(crvUSD), 1000e18, 0, "");
+    }
 
     function test_unwindPosition_noLoan_transfersWbtc() public {
-        // No loan exists, but manager has some WBTC
         wbtc.mint(address(manager), 1e8);
-
         uint256 vaultBefore = wbtc.balanceOf(vault);
         manager.unwindPosition(5e7);
-        uint256 vaultAfter = wbtc.balanceOf(vault);
-
-        assertEq(vaultAfter - vaultBefore, 1e8, "Should transfer all WBTC to vault");
+        assertEq(wbtc.balanceOf(vault) - vaultBefore, 1e8, "Should transfer all WBTC");
     }
 
     function test_unwindPosition_noLoan_noWbtc() public {
-        // No loan, no WBTC — should return silently
         manager.unwindPosition(5e7);
     }
 
     function test_unwindPosition_noLoan_fullClose() public {
         wbtc.mint(address(manager), 2e8);
-
         uint256 vaultBefore = wbtc.balanceOf(vault);
         manager.unwindPosition(type(uint256).max);
-        uint256 vaultAfter = wbtc.balanceOf(vault);
-
-        assertEq(vaultAfter - vaultBefore, 2e8, "Should transfer all WBTC on full close");
+        assertEq(wbtc.balanceOf(vault) - vaultBefore, 2e8);
     }
 
-    // ============ Branch Coverage: Partial unwind with dust debt (no flashloan) ============
-
     function test_unwindPosition_dustDebt_noFlashloan() public {
-        // Create loan with small debt at dust threshold
-        manager.createLoan(2e8, 1e18, 4); // 1 crvUSD debt (= DUST_THRESHOLD)
-
-        // Fund manager with enough crvUSD to partially repay
-        crvUSD.mint(address(manager), 5e17); // 0.5 crvUSD
-
-        // Partial unwind — remaining debt should be at dust level, no flashloan
+        manager.createLoan(2e8, 1e18, 4);
+        crvUSD.mint(address(manager), 5e17);
         manager.unwindPosition(1e8);
-
-        // Manager should still function (no revert)
-        uint256 vaultWbtc = wbtc.balanceOf(vault);
-        assertGt(vaultWbtc, 0, "Vault should have received some WBTC");
+        assertGt(wbtc.balanceOf(vault), 0);
     }
 
     function test_unwindPosition_dustDebt_fullRepayWithDust() public {
-        // Create loan with dust-level debt
-        manager.createLoan(2e8, 5e17, 4); // 0.5 crvUSD debt (below DUST_THRESHOLD)
-
-        // Fund manager with enough to cover dust
+        manager.createLoan(2e8, 5e17, 4);
         crvUSD.mint(address(manager), 1e18);
-
-        // Partial unwind — dust debt should be repaid directly
         manager.unwindPosition(1e8);
     }
 
-    // ============ Branch Coverage: _isDustDebt boundary ============
-
     function test_isDustDebt_exactThreshold() public {
-        // Create loan at exactly DUST_THRESHOLD (1e18)
         manager.createLoan(2e8, 1e18, 4);
-
-        // Fund enough to partially repay to leave exactly dust
-        // Then unwind — should take the no-flashloan path
         manager.unwindPosition(1e8);
     }
 
     function test_isDustDebt_aboveThreshold() public {
-        // Create loan above DUST_THRESHOLD
-        manager.createLoan(2e8, 2e18, 4); // 2 crvUSD > threshold
-
-        // Don't fund any crvUSD — remaining debt > DUST_THRESHOLD
-        // Flashloan should be triggered (but will fail without proper setup)
-        // We test by checking the path is reached — use mock flash lender
-        // For unit test: just verify the loan is created
-        assertTrue(llamaLend.loan_exists(address(manager)), "Loan should exist");
+        manager.createLoan(2e8, 2e18, 4);
+        assertTrue(llamaLend.loan_exists(address(manager)));
     }
 
-    // ============ Branch Coverage: crvUSD oracle staleness (7-hour boundary) ============
+    // ============ crvUSD Oracle Staleness ============
 
     function test_crvUsdOracle_stale_reverts() public {
-        // crvUSD oracle has 7-hour staleness window (25200 seconds)
         crvUsdOracle.setUpdatedAt(block.timestamp - 25201);
         vm.expectRevert(ILoanManager.StaleOracle.selector);
         manager.checkOracleFreshness();
     }
 
     function test_crvUsdOracle_justFresh_succeeds() public view {
-        // At exactly MAX_CRVUSD_ORACLE_STALENESS, should pass
-        // Oracle was set at block.timestamp in setUp, so it's fresh
         manager.checkOracleFreshness();
     }
 
@@ -618,245 +516,109 @@ contract LlamaLoanManagerTest is Test {
         manager.checkOracleFreshness();
     }
 
-    // ============ Branch Coverage: onFlashLoan residual debt path ============
+    // ============ onFlashLoan Edge Cases ============
 
     function test_onFlashLoan_residualDebt() public {
-        // Create loan with debt that requires two rounds of repayment
         manager.createLoan(2e8, 10_000e18, 4);
-
-        // Fund manager with enough for initial + residual repayment + fee
         crvUSD.mint(address(manager), 11_000e18);
 
         vm.startPrank(0x26dE7861e213A5351F6ED767d00e0839930e9eE1);
         bytes memory data = abi.encode(1e8, false);
-        manager.onFlashLoan(address(manager), address(crvUSD), 1000e18, 5e18, data);
+        llamaManager.onFlashLoan(address(llamaManager), address(crvUSD), 1000e18, 5e18, data);
         vm.stopPrank();
     }
 
     function test_onFlashLoan_fullyClose() public {
         manager.createLoan(2e8, 10_000e18, 4);
-
-        // Fund to cover repayment
         crvUSD.mint(address(manager), 11_000e18);
 
         vm.startPrank(0x26dE7861e213A5351F6ED767d00e0839930e9eE1);
         bytes memory data = abi.encode(type(uint256).max, true);
-        manager.onFlashLoan(address(manager), address(crvUSD), 1000e18, 5e18, data);
+        llamaManager.onFlashLoan(address(llamaManager), address(crvUSD), 1000e18, 5e18, data);
         vm.stopPrank();
     }
 
     function test_onFlashLoan_swapShortfall() public {
-        // Create a loan where after repay we still need crvUSD for flashloan repayment
         manager.createLoan(2e8, 5000e18, 4);
-
-        // Give just enough crvUSD to repay debt but NOT the flashloan
         crvUSD.mint(address(manager), 5000e18);
-        // Give WBTC for swap
         wbtc.mint(address(manager), 1e8);
 
         vm.startPrank(0x26dE7861e213A5351F6ED767d00e0839930e9eE1);
         bytes memory data = abi.encode(1e8, false);
-        // Flash loan amount larger than what we have after repay
-        manager.onFlashLoan(address(manager), address(crvUSD), 6000e18, 30e18, data);
+        llamaManager.onFlashLoan(address(llamaManager), address(crvUSD), 6000e18, 30e18, data);
         vm.stopPrank();
     }
 
-    // ============ Branch Coverage: onFlashLoan unauthorized caller ============
-
-    function test_onFlashLoan_unauthorizedCaller() public {
-        vm.prank(address(0xbad));
-        vm.expectRevert(ILoanManager.Unauthorized.selector);
-        manager.onFlashLoan(address(manager), address(crvUSD), 1000e18, 0, "");
-    }
-
-    // ============ Branch Coverage: transferCollateral zero address ============
-
-    function test_transferCollateral_revertsOnZeroAddress() public {
-        wbtc.mint(address(manager), 1e8);
-        vm.expectRevert(ILoanManager.InvalidAddress.selector);
-        manager.transferCollateral(address(0), 1e8);
-    }
-
-    // ============ Branch Coverage: onlyVault modifier ============
-
-    function test_createLoan_revertsFromNonVault() public {
-        vm.prank(nonVault);
-        vm.expectRevert(ILoanManager.Unauthorized.selector);
-        manager.createLoan(1e8, 10_000e18, 4);
-    }
-
-    function test_unwindPosition_revertsFromNonVault() public {
-        vm.prank(nonVault);
-        vm.expectRevert(ILoanManager.Unauthorized.selector);
-        manager.unwindPosition(1e8);
-    }
-
-    // ============ Branch Coverage: getCollateralValue/getDebtValue zero ============
-
-    function test_getCollateralValue_zero() public view {
-        assertEq(manager.getCollateralValue(0), 0, "Zero WBTC should return 0 value");
-    }
-
-    function test_getDebtValue_zero() public view {
-        assertEq(manager.getDebtValue(0), 0, "Zero crvUSD should return 0 value");
-    }
-
-    // ============ Branch Coverage: getCurrentLTV no loan ============
-
-    function test_getCurrentLTV_noLoan() public view {
-        assertEq(manager.getCurrentLTV(), 0, "No loan should return 0 LTV");
-    }
-
-    function test_getCurrentCollateral_noLoan() public view {
-        assertEq(manager.getCurrentCollateral(), 0, "No loan should return 0 collateral");
-    }
-
-    function test_getCurrentDebt_noLoan() public view {
-        assertEq(manager.getCurrentDebt(), 0, "No loan should return 0 debt");
-    }
-
-    function test_getHealth_noLoan() public view {
-        assertEq(manager.getHealth(), type(int256).max, "No loan should return max health");
-    }
-
-    // ============ Branch Coverage Tests ============
+    // ============ healthCalculator ============
 
     function test_healthCalculator_withDeltas() public {
         manager.createLoan(1e8, 10_000e18, 4);
 
-        // Verifies the function forwards to llamaLend.health_calculator and doesn't revert
         int256 healthBase = manager.healthCalculator(0, 0);
         int256 healthMoreColl = manager.healthCalculator(int256(uint256(1e8)), 0);
         int256 healthLessDebt = manager.healthCalculator(0, -int256(5000e18));
 
-        assertGt(healthBase, 0, "Health should be positive");
-        assertGt(healthMoreColl, 0, "Health with more collateral should be positive");
-        assertGt(healthLessDebt, 0, "Health with less debt should be positive");
+        assertGt(healthBase, 0);
+        assertGt(healthMoreColl, 0);
+        assertGt(healthLessDebt, 0);
     }
 
-    function test_proposeSwapper_and_execute() public {
-        MockSwapper newSwapper = new MockSwapper(address(wbtc), address(crvUSD), address(pool));
-        manager.proposeSwapper(address(newSwapper));
-
-        vm.warp(block.timestamp + 1 weeks + 1);
-
-        manager.executeSwapper();
+    function test_borrowMore_collateralOnly() public {
+        manager.createLoan(1e8, 10_000e18, 4);
+        manager.borrowMore(5e7, 0);
+        assertEq(manager.getCurrentCollateral(), 1.5e8);
+        assertEq(manager.getCurrentDebt(), 10_000e18);
     }
 
-    function test_cancelSwapper() public {
-        MockSwapper newSwapper = new MockSwapper(address(wbtc), address(crvUSD), address(pool));
-        manager.proposeSwapper(address(newSwapper));
-
-        manager.cancelSwapper();
-
-        vm.expectRevert();
-        manager.executeSwapper();
+    function test_getCurrentCollateral_noLoan() public view {
+        assertEq(manager.getCurrentCollateral(), 0);
     }
 
-    function test_proposeSwapper_zeroAddress_reverts() public {
-        vm.expectRevert(ILoanManager.InvalidAddress.selector);
-        manager.proposeSwapper(address(0));
+    function test_getCurrentDebt_noLoan() public view {
+        assertEq(manager.getCurrentDebt(), 0);
     }
 
-    // ============ Branch Coverage: initializeVault ============
-
-    function test_initializeVault_success() public {
-        LlamaLoanManager deferred = new LlamaLoanManager(
-            address(wbtc),
-            address(crvUSD),
-            address(llamaLend),
-            address(pool),
-            address(oracle),
-            address(crvUsdOracle),
-            address(swapper),
-            address(0) // deferred vault init
-        );
-        assertEq(deferred.vault(), address(0));
-
-        deferred.initializeVault(vault);
-        assertEq(deferred.vault(), vault, "Vault should be set");
-    }
-
-    function test_initializeVault_alreadySet_reverts() public {
-        // manager already has vault set
-        vm.expectRevert(ILoanManager.InvalidAddress.selector);
-        manager.initializeVault(vault);
-    }
-
-    function test_initializeVault_zeroAddress_reverts() public {
-        LlamaLoanManager deferred = new LlamaLoanManager(
-            address(wbtc),
-            address(crvUSD),
-            address(llamaLend),
-            address(pool),
-            address(oracle),
-            address(crvUsdOracle),
-            address(swapper),
-            address(0)
-        );
-        vm.expectRevert(ILoanManager.InvalidAddress.selector);
-        deferred.initializeVault(address(0));
-    }
-
-    function test_initializeVault_wrongSender_reverts() public {
-        LlamaLoanManager deferred = new LlamaLoanManager(
-            address(wbtc),
-            address(crvUSD),
-            address(llamaLend),
-            address(pool),
-            address(oracle),
-            address(crvUsdOracle),
-            address(swapper),
-            address(0)
-        );
-        vm.prank(nonVault);
-        vm.expectRevert(ILoanManager.Unauthorized.selector);
-        deferred.initializeVault(vault);
-    }
-
-    // ============ Branch Coverage: constructor zero-address checks ============
+    // ============ Constructor Zero-Address Checks ============
 
     function test_constructor_zeroCollateral_reverts() public {
         vm.expectRevert(ILoanManager.InvalidAddress.selector);
         new LlamaLoanManager(
-            address(0), address(crvUSD), address(llamaLend), address(pool),
-            address(oracle), address(crvUsdOracle), address(swapper), vault
+            address(0),
+            address(crvUSD),
+            address(llamaLend),
+            address(pool),
+            address(oracle),
+            address(crvUsdOracle),
+            address(swapper),
+            vault
         );
     }
 
     function test_constructor_zeroDebt_reverts() public {
         vm.expectRevert(ILoanManager.InvalidAddress.selector);
         new LlamaLoanManager(
-            address(wbtc), address(0), address(llamaLend), address(pool),
-            address(oracle), address(crvUsdOracle), address(swapper), vault
+            address(wbtc),
+            address(0),
+            address(llamaLend),
+            address(pool),
+            address(oracle),
+            address(crvUsdOracle),
+            address(swapper),
+            vault
         );
     }
 
     function test_constructor_zeroLlamaLend_reverts() public {
         vm.expectRevert(ILoanManager.InvalidAddress.selector);
         new LlamaLoanManager(
-            address(wbtc), address(crvUSD), address(0), address(pool),
-            address(oracle), address(crvUsdOracle), address(swapper), vault
+            address(wbtc),
+            address(crvUSD),
+            address(0),
+            address(pool),
+            address(oracle),
+            address(crvUsdOracle),
+            address(swapper),
+            vault
         );
-    }
-
-    // ============ Branch Coverage: loanExists view ============
-
-    function test_loanExists_false() public view {
-        assertFalse(manager.loanExists(), "No loan should exist");
-    }
-
-    function test_loanExists_true() public {
-        manager.createLoan(1e8, 10_000e18, 4);
-        assertTrue(manager.loanExists(), "Loan should exist");
-    }
-
-    // ============ Branch Coverage: borrowMore with collateral only ============
-
-    function test_borrowMore_collateralOnly() public {
-        manager.createLoan(1e8, 10_000e18, 4);
-        manager.borrowMore(5e7, 0);
-        assertEq(manager.getCurrentCollateral(), 1.5e8, "Collateral should increase");
-        assertEq(manager.getCurrentDebt(), 10_000e18, "Debt should not change");
     }
 }
