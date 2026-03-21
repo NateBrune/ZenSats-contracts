@@ -15,6 +15,9 @@ library ZenjiCoreLib {
     using SafeTransferLib for IERC20;
 
     error InvalidAddress();
+    error InsufficientWithdrawal();
+    error InsufficientDeposit();
+    error StrategyDebtCoverageTooLow(uint256 actual, uint256 minimum);
 
     event EmergencyYieldRedeemed(uint256 debtAssetReceived);
     event EmergencyLoanUnwound(uint256 collateralRecovered, uint256 debtRecovered);
@@ -24,6 +27,7 @@ library ZenjiCoreLib {
     event AssetsRescued(address indexed token, address indexed recipient, uint256 amount);
     event FeesWithdrawn(address indexed recipient, uint256 amount);
     event RebalanceBountyPaid(address indexed keeper, uint256 amount);
+    event StrategyDeposit(address indexed strategy, uint256 debtAmount, uint256 depositedAmount);
 
     /// @notice Execute emergency step: 0=withdrawYield, 1=unwindLoan, 2=completeLiquidation
     /// @return newLastStrategyBalance Updated lastStrategyBalance value
@@ -96,6 +100,7 @@ library ZenjiCoreLib {
     }
 
     /// @notice Emergency rescue: 0=transferCollateral, 1=transferDebt, 2=redeemYield
+    /// @return newAccumulatedFees Updated accumulatedFees value
     /// @return newLastStrategyBalance Updated lastStrategyBalance value
     function executeEmergencyRescue(
         uint8 action,
@@ -104,8 +109,10 @@ library ZenjiCoreLib {
         ILoanManager loanManager,
         IYieldStrategy yieldStrategy,
         ISwapper swapper,
+        uint256 accumulatedFees,
         uint256 lastStrategyBalance
-    ) external returns (uint256 newLastStrategyBalance) {
+    ) external returns (uint256 newAccumulatedFees, uint256 newLastStrategyBalance) {
+        newAccumulatedFees = accumulatedFees;
         newLastStrategyBalance = lastStrategyBalance;
         if (action == 0) {
             uint256 amount = collateralAsset.balanceOf(address(loanManager));
@@ -117,6 +124,7 @@ library ZenjiCoreLib {
             emit EmergencyDebtTransferred(amount);
         } else {
             uint256 withdrawn = yieldStrategy.emergencyWithdraw();
+            newAccumulatedFees = 0;
             newLastStrategyBalance = 0;
             _swapRemainingDebtToCollateral(debtAsset, swapper);
             emit EmergencyYieldRedeemed(withdrawn);
@@ -214,6 +222,187 @@ library ZenjiCoreLib {
         }
 
         newLastStrategyBalance = yieldStrategy.balanceOf();
+    }
+
+    /// @notice Increase strategy/debt coverage when strategy assets fall below debt.
+    /// @dev Withdraws from strategy, repays debt, then does a simplified partial unwind
+    ///      (triggering the loan manager flashloan path) if a deficit still remains.
+    ///      NOTE: _accrueYieldFees is intentionally skipped — rebalance() already called it.
+    /// @return newLastStrategyBalance Updated strategy balance for vault to store.
+    function rebalanceCoverageUp(
+        ILoanManager loanManager,
+        IYieldStrategy yieldStrategy,
+        IERC20 debtAsset,
+        uint256 maxSlippage,
+        uint256 precision
+    ) external returns (uint256 newLastStrategyBalance) {
+        uint256 debt = loanManager.getCurrentDebt();
+        if (debt == 0) return yieldStrategy.balanceOf();
+
+        uint256 strategyBalance = yieldStrategy.balanceOf();
+        if (strategyBalance >= debt) return strategyBalance;
+
+        uint256 deficit = debt - strategyBalance;
+
+        // Step 1: withdraw from strategy toward the deficit
+        if (strategyBalance > 0) {
+            uint256 toWithdraw = deficit > strategyBalance ? strategyBalance : deficit;
+            uint256 minReceived = (toWithdraw * (precision - maxSlippage)) / precision;
+            uint256 received = yieldStrategy.withdraw(toWithdraw);
+            if (received < minReceived) revert InsufficientWithdrawal();
+        }
+
+        // Step 2: repay as much debt as possible
+        uint256 debtBalance = debtAsset.balanceOf(address(this));
+        uint256 repayAmount = debtBalance < deficit ? debtBalance : deficit;
+        if (repayAmount > 0) {
+            debtAsset.safeTransfer(address(loanManager), repayAmount);
+            loanManager.repayDebt(repayAmount);
+        }
+
+        // Step 3: simplified partial unwind if deficit remains
+        uint256 remainingDeficit = deficit > repayAmount ? deficit - repayAmount : 0;
+        if (remainingDeficit > 0 && loanManager.loanExists()) {
+            (uint256 positionCollateral, uint256 positionDebt) = loanManager.getPositionValues();
+            if (positionCollateral > 0 && positionDebt > 0) {
+                uint256 collateralNeeded =
+                    (positionCollateral * remainingDeficit + positionDebt - 1) / positionDebt;
+                if (collateralNeeded > positionCollateral) collateralNeeded = positionCollateral;
+
+                debtBalance = debtAsset.balanceOf(address(this));
+                if (debtBalance > 0) debtAsset.safeTransfer(address(loanManager), debtBalance);
+                loanManager.unwindPosition(collateralNeeded);
+
+                uint256 lmDebt = loanManager.getDebtBalance();
+                if (lmDebt > 0) loanManager.transferDebt(address(this), lmDebt);
+            }
+        }
+
+        return yieldStrategy.balanceOf();
+    }
+
+    /// @notice Decrease strategy/debt coverage when strategy assets are too far above debt.
+    /// @dev Borrows additional debt bounded by LTV upper deadband and deploys to strategy.
+    ///      NOTE: _accrueYieldFees is intentionally skipped — rebalance() already called it.
+    /// @return newLastStrategyBalance Updated strategy balance for vault to store.
+    function rebalanceCoverageDown(
+        ILoanManager loanManager,
+        IYieldStrategy yieldStrategy,
+        IERC20 debtAsset,
+        uint256 maxStrategyToDebtRatioForBorrow,
+        uint256 maxLtvTarget,
+        uint256 maxSlippage,
+        uint256 precision
+    ) external returns (uint256 newLastStrategyBalance) {
+        uint256 debt = loanManager.getCurrentDebt();
+        if (debt == 0) return yieldStrategy.balanceOf();
+
+        uint256 strategyBalance = yieldStrategy.balanceOf();
+        if (strategyBalance <= debt) return strategyBalance;
+
+        uint256 targetDebtAtMaxRatio = (strategyBalance * precision) / maxStrategyToDebtRatioForBorrow;
+        if (targetDebtAtMaxRatio <= debt) return strategyBalance;
+
+        (uint256 collateral,) = loanManager.getPositionValues();
+        uint256 collateralValue = loanManager.getCollateralValue(collateral);
+        uint256 maxDebtByLtv = (collateralValue * maxLtvTarget) / precision;
+        if (maxDebtByLtv <= debt) return strategyBalance;
+
+        uint256 requiredBorrow = targetDebtAtMaxRatio - debt;
+        uint256 ltvRoom = maxDebtByLtv - debt;
+        uint256 borrowAmount = requiredBorrow < ltvRoom ? requiredBorrow : ltvRoom;
+        if (borrowAmount == 0) return strategyBalance;
+
+        loanManager.borrowMore(0, borrowAmount);
+        uint256 debtBalance = loanManager.getDebtBalance();
+        if (debtBalance == 0) return yieldStrategy.balanceOf();
+
+        loanManager.transferDebt(address(this), debtBalance);
+
+        // Inline _deployDebtToYield without re-accruing fees
+        debtAsset.ensureApproval(address(yieldStrategy), debtBalance);
+        uint256 balBefore = yieldStrategy.balanceOf();
+        yieldStrategy.deposit(debtBalance);
+        uint256 balAfter = yieldStrategy.balanceOf();
+        uint256 deposited = balAfter > balBefore ? balAfter - balBefore : 0;
+        if (deposited < (debtBalance * (precision - maxSlippage)) / precision) {
+            revert InsufficientDeposit();
+        }
+
+        return balAfter;
+    }
+
+    /// @notice Adjust LTV toward target by borrowing more or repaying debt.
+    /// @dev Inlines the strategy deposit/withdraw logic without re-accruing fees because
+    ///      `rebalance()` already accrued them before calling into the library.
+    function adjustLtv(
+        ILoanManager loanManager,
+        IYieldStrategy yieldStrategy,
+        IERC20 debtAsset,
+        uint256 targetLtv,
+        uint256 minStrategyToDebtRatioForBorrow,
+        uint256 maxSlippage,
+        uint256 precision,
+        bool increase,
+        bool enforceCoverageAfterIncrease
+    ) external returns (uint256 newLastStrategyBalance) {
+        (uint256 collateral, uint256 currentDebt) = loanManager.getPositionValues();
+        uint256 collateralValue = loanManager.getCollateralValue(collateral);
+        uint256 targetDebt = (collateralValue * targetLtv) / precision;
+
+        if (increase) {
+            if (targetDebt <= currentDebt) return yieldStrategy.balanceOf();
+
+            uint256 additionalBorrow = targetDebt - currentDebt;
+            loanManager.borrowMore(0, additionalBorrow);
+            uint256 debtBalance = loanManager.getDebtBalance();
+            if (debtBalance == 0) return yieldStrategy.balanceOf();
+
+            loanManager.transferDebt(address(this), debtBalance);
+            debtAsset.ensureApproval(address(yieldStrategy), debtBalance);
+
+            uint256 balBefore = yieldStrategy.balanceOf();
+            yieldStrategy.deposit(debtBalance);
+            uint256 balAfter = yieldStrategy.balanceOf();
+            uint256 deposited = balAfter > balBefore ? balAfter - balBefore : 0;
+            if (deposited < (debtBalance * (precision - maxSlippage)) / precision) {
+                revert InsufficientDeposit();
+            }
+            emit StrategyDeposit(address(yieldStrategy), debtBalance, deposited);
+
+            if (enforceCoverageAfterIncrease) {
+                uint256 debt = loanManager.getCurrentDebt();
+                if (debt > 0) {
+                    uint256 ratio = (balAfter * precision) / debt;
+                    if (ratio < minStrategyToDebtRatioForBorrow) {
+                        revert StrategyDebtCoverageTooLow(ratio, minStrategyToDebtRatioForBorrow);
+                    }
+                }
+            }
+
+            return balAfter;
+        }
+
+        if (targetDebt >= currentDebt) return yieldStrategy.balanceOf();
+
+        uint256 toRepay = currentDebt - targetDebt;
+        uint256 strategyBalance = yieldStrategy.balanceOf();
+        if (strategyBalance > 0) {
+            uint256 toWithdraw = toRepay > strategyBalance ? strategyBalance : toRepay;
+            if (toWithdraw > 0) {
+                uint256 received = yieldStrategy.withdraw(toWithdraw);
+                uint256 minReceived = (toWithdraw * (precision - maxSlippage)) / precision;
+                if (received < minReceived) revert InsufficientWithdrawal();
+            }
+        }
+
+        newLastStrategyBalance = yieldStrategy.balanceOf();
+        uint256 availableDebtBalance = debtAsset.balanceOf(address(this));
+        uint256 repayAmount = toRepay < availableDebtBalance ? toRepay : availableDebtBalance;
+        if (repayAmount > 0) {
+            debtAsset.safeTransfer(address(loanManager), repayAmount);
+            loanManager.repayDebt(repayAmount);
+        }
     }
 
     // ============ Internal Helpers ============

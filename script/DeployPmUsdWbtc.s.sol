@@ -7,7 +7,7 @@ import "forge-std/console2.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { VaultTracker } from "../src/VaultTracker.sol";
 import { ZenjiRebalanceKeeper } from "../src/keepers/ZenjiRebalanceKeeper.sol";
-import { CurveThreeCryptoSwapper } from "../src/swappers/base/CurveThreeCryptoSwapper.sol";
+import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { PmUsdCrvUsdStrategy } from "../src/strategies/PmUsdCrvUsdStrategy.sol";
@@ -34,10 +34,11 @@ contract DeployPmUsdWbtc is Script {
     address constant AAVE_A_WBTC = 0x5Ee5bf7ae06D1Be5997A1A72006FE6C607eC6DE8;
     address constant AAVE_VAR_DEBT_USDT = 0x6df1C1E379bC5a00a7b4C6e67A203333772f45A8;
 
-    // Curve / Stake DAO
-    address constant TRICRYPTO_POOL = 0xf5f5B97624542D72A9E06f04804Bf81baA15e2B4; // WBTC/USDT
-    uint256 constant TRICRYPTO_WBTC_INDEX = 1;
-    uint256 constant TRICRYPTO_USDT_INDEX = 0;
+    // Uniswap Universal Router + v3 fee tier
+    address constant UNIVERSAL_ROUTER = 0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af;
+    uint24 constant WBTC_USDT_V3_FEE = 3000;
+
+    // Stake DAO
     address constant USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
     address constant PMUSD_CRVUSD_POOL = 0xEcb0F0d68C19BdAaDAEbE24f6752A4Db34e2c2cb;
     address constant PMUSD_CRVUSD_GAUGE = 0xF3c43E7D722963b9569d1E39873dF9E2dFE8C087;
@@ -60,13 +61,12 @@ contract DeployPmUsdWbtc is Script {
             gov, CRV, CRVUSD, CRV_CRVUSD_TRICRYPTO, CRV_USD_ORACLE, CRVUSD_USD_ORACLE
         );
 
-        CurveThreeCryptoSwapper swapper = new CurveThreeCryptoSwapper(
+        UniversalRouterV3SingleHopSwapper swapper = new UniversalRouterV3SingleHopSwapper(
             gov,
             WBTC,
             USDT,
-            TRICRYPTO_POOL,
-            TRICRYPTO_WBTC_INDEX,
-            TRICRYPTO_USDT_INDEX,
+            UNIVERSAL_ROUTER,
+            WBTC_USDT_V3_FEE,
             BTC_USD_ORACLE,
             USDT_USD_ORACLE
         );
@@ -121,7 +121,7 @@ contract DeployPmUsdWbtc is Script {
 
         console2.log("ViewHelper", address(viewHelper));
         console2.log("CrvToCrvUsdSwapper", address(crvSwapper));
-        console2.log("TriCryptoSwapper", address(swapper));
+        console2.log("UniversalRouterV3Swapper", address(swapper));
         console2.log("LoanManager", address(loanManager));
         console2.log("Strategy", address(strategy));
         console2.log("Vault", address(vault));

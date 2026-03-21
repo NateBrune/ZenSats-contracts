@@ -11,13 +11,11 @@ interface IYieldStrategy {
     event Withdrawn(uint256 debtAssetAmount, uint256 debtAssetReceived);
     event Harvested(uint256 rewardsValue);
     event EmergencyWithdrawn(uint256 debtAssetReceived);
-    event StrategyPauseToggled(bool paused, uint256 debtAssetReceived);
 
     // ============ Errors ============
 
     error Unauthorized();
     error ZeroAmount();
-    error StrategyPaused();
     error SlippageExceeded();
     error TransferFailed();
     error InvalidAddress();
@@ -46,11 +44,6 @@ interface IYieldStrategy {
     /// @return debtAssetReceived Total debt asset received
     function emergencyWithdraw() external returns (uint256 debtAssetReceived);
 
-    /// @notice Toggle pause state for the strategy
-    /// @dev When pausing, should unwind all deployed assets back to the vault
-    /// @return debtAssetReceived Total debt asset received if unwound (0 when unpausing)
-    function pauseStrategy() external returns (uint256 debtAssetReceived);
-
     // ============ View Functions ============
 
     /// @notice Returns the asset accepted by the strategy (debt asset)
@@ -70,9 +63,6 @@ interface IYieldStrategy {
 
     /// @notice Returns pending rewards value in debt asset terms
     function pendingRewards() external view returns (uint256);
-
-    /// @notice Returns whether the strategy is paused
-    function paused() external view returns (bool);
 
     /// @notice Returns the strategy name
     function name() external view returns (string memory);

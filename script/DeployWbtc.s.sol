@@ -7,7 +7,7 @@ import "forge-std/console2.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { VaultTracker } from "../src/VaultTracker.sol";
 // import {ZenjiRebalanceKeeper} from "../src/keepers/ZenjiRebalanceKeeper.sol";
-import { CurveThreeCryptoSwapper } from "../src/swappers/base/CurveThreeCryptoSwapper.sol";
+import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UsdtIporYieldStrategy } from "../src/strategies/UsdtIporYieldStrategy.sol";
 import { ZenjiWbtc } from "../src/implementations/ZenjiWbtc.sol";
@@ -28,10 +28,9 @@ contract DeployWbtc is Script {
     address constant AAVE_A_WBTC = 0x5Ee5bf7ae06D1Be5997A1A72006FE6C607eC6DE8;
     address constant AAVE_VAR_DEBT_USDT = 0x6df1C1E379bC5a00a7b4C6e67A203333772f45A8;
 
-    // Curve TriCrypto
-    address constant TRICRYPTO_POOL = 0xf5f5B97624542D72A9E06f04804Bf81baA15e2B4;
-    uint256 constant TRICRYPTO_WBTC_INDEX = 1;
-    uint256 constant TRICRYPTO_USDT_INDEX = 0;
+    // Uniswap V3 WBTC/USDT 0.3% pool via Universal Router
+    address constant UNIVERSAL_ROUTER = 0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af;
+    uint24 constant WBTC_USDT_V3_FEE = 3000;
 
     // IPOR / Curve
     address constant IPOR_PLASMA_VAULT = 0xbfA9d6EC0E04B6691fCAE5F8b48838C3918eC117;
@@ -48,13 +47,12 @@ contract DeployWbtc is Script {
 
         ZenjiViewHelper viewHelper = new ZenjiViewHelper();
 
-        CurveThreeCryptoSwapper swapper = new CurveThreeCryptoSwapper(
+        UniversalRouterV3SingleHopSwapper swapper = new UniversalRouterV3SingleHopSwapper(
             gov,
             WBTC,
             USDT,
-            TRICRYPTO_POOL,
-            TRICRYPTO_WBTC_INDEX,
-            TRICRYPTO_USDT_INDEX,
+            UNIVERSAL_ROUTER,
+            WBTC_USDT_V3_FEE,
             BTC_USD_ORACLE,
             USDT_USD_ORACLE
         );

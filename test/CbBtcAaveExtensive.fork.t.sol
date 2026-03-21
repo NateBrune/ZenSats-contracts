@@ -4,7 +4,7 @@ pragma solidity ^0.8.33;
 import { ZenjiForkTestBase } from "./base/ZenjiForkTestBase.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { CbBtcWbtcUsdtSwapper } from "../src/swappers/base/CbBtcWbtcUsdtSwapper.sol";
+import { CbBtcUniswapV3TwoHopSwapper } from "../src/swappers/base/CbBtcUniswapV3TwoHopSwapper.sol";
 import { UsdtIporYieldStrategy } from "../src/strategies/UsdtIporYieldStrategy.sol";
 import { TimelockLib } from "../src/libraries/TimelockLib.sol";
 import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
@@ -23,18 +23,16 @@ contract CbBtcAaveExtensive is ZenjiForkTestBase {
     address constant IPOR_PLASMA_VAULT = 0xbfA9d6EC0E04B6691fCAE5F8b48838C3918eC117;
     address constant USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
 
-    address constant CBBTC_WBTC_POOL = 0x839d6bDeDFF886404A6d7a788ef241e4e28F4802;
-    uint256 constant CBBTC_INDEX = 0;
-    uint256 constant WBTC_INDEX = 1;
-    address constant TRICRYPTO_POOL = 0xf5f5B97624542D72A9E06f04804Bf81baA15e2B4;
-    uint256 constant TRICRYPTO_WBTC_INDEX = 1;
-    uint256 constant TRICRYPTO_USDT_INDEX = 0;
+    // Uniswap V3: cbBTC/WBTC 0.01% pool, WBTC/USDT 0.3% pool
+    address constant UNISWAP_ROUTER = 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45;
+    uint24 constant CBBTC_WBTC_FEE = 100;    // 0.01%
+    uint24 constant WBTC_USDT_FEE = 3000;    // 0.3%
 
     address constant CBBTC_USD_ORACLE = 0x2665701293fCbEB223D11A08D826563EDcCE423A;
     address constant USDT_USD_ORACLE = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
     address constant CRVUSD_USD_ORACLE = 0xEEf0C605546958c1f899b6fB336C20671f9cD49F;
 
-    CbBtcWbtcUsdtSwapper public swapper;
+    CbBtcUniswapV3TwoHopSwapper public swapper;
 
     // ============ Abstract implementations ============
 
@@ -44,6 +42,10 @@ contract CbBtcAaveExtensive is ZenjiForkTestBase {
 
     function _unit() internal pure override returns (uint256) {
         return 1e8;
+    }
+
+    function _tinyDeposit() internal pure override returns (uint256) {
+        return 1e7; // 0.1 cbBTC
     }
 
     function _oracleList() internal pure override returns (address[] memory) {
@@ -62,17 +64,14 @@ contract CbBtcAaveExtensive is ZenjiForkTestBase {
         uint256 startNonce = vm.getNonce(address(this));
         address expectedVaultAddress = computeCreateAddress(address(this), startNonce + 3);
 
-        swapper = new CbBtcWbtcUsdtSwapper(
+        swapper = new CbBtcUniswapV3TwoHopSwapper(
             owner,
             CBBTC,
             USDT,
             WBTC,
-            CBBTC_WBTC_POOL,
-            CBBTC_INDEX,
-            WBTC_INDEX,
-            TRICRYPTO_POOL,
-            TRICRYPTO_WBTC_INDEX,
-            TRICRYPTO_USDT_INDEX,
+            UNISWAP_ROUTER,
+            CBBTC_WBTC_FEE,
+            WBTC_USDT_FEE,
             CBBTC_USD_ORACLE,
             USDT_USD_ORACLE
         );
@@ -118,7 +117,7 @@ contract CbBtcAaveExtensive is ZenjiForkTestBase {
     }
 
     function _postDeploySetup() internal override {
-        // Increase swapper slippage for fork (1% default may be too tight for cbBTC two-hop swaps)
+        // cbBTC can trade at a persistent basis vs BTC oracle; relax floor for fork realism
         vm.store(address(swapper), bytes32(uint256(0)), bytes32(uint256(5e16)));
     }
 
@@ -128,17 +127,14 @@ contract CbBtcAaveExtensive is ZenjiForkTestBase {
         _deployVault();
         _depositAs(user1, _unit());
 
-        CbBtcWbtcUsdtSwapper newSwapper = new CbBtcWbtcUsdtSwapper(
+        CbBtcUniswapV3TwoHopSwapper newSwapper = new CbBtcUniswapV3TwoHopSwapper(
             owner,
             CBBTC,
             USDT,
             WBTC,
-            CBBTC_WBTC_POOL,
-            CBBTC_INDEX,
-            WBTC_INDEX,
-            TRICRYPTO_POOL,
-            TRICRYPTO_WBTC_INDEX,
-            TRICRYPTO_USDT_INDEX,
+            UNISWAP_ROUTER,
+            CBBTC_WBTC_FEE,
+            WBTC_USDT_FEE,
             CBBTC_USD_ORACLE,
             USDT_USD_ORACLE
         );
@@ -157,17 +153,14 @@ contract CbBtcAaveExtensive is ZenjiForkTestBase {
         vault.executeSwapper();
         assertEq(address(vault.swapper()), address(newSwapper), "Swapper should be updated");
 
-        CbBtcWbtcUsdtSwapper anotherSwapper = new CbBtcWbtcUsdtSwapper(
+        CbBtcUniswapV3TwoHopSwapper anotherSwapper = new CbBtcUniswapV3TwoHopSwapper(
             owner,
             CBBTC,
             USDT,
             WBTC,
-            CBBTC_WBTC_POOL,
-            CBBTC_INDEX,
-            WBTC_INDEX,
-            TRICRYPTO_POOL,
-            TRICRYPTO_WBTC_INDEX,
-            TRICRYPTO_USDT_INDEX,
+            UNISWAP_ROUTER,
+            CBBTC_WBTC_FEE,
+            WBTC_USDT_FEE,
             CBBTC_USD_ORACLE,
             USDT_USD_ORACLE
         );
@@ -200,5 +193,124 @@ contract CbBtcAaveExtensive is ZenjiForkTestBase {
         vm.prank(owner);
         swapper.executeSlippage();
         assertEq(swapper.slippage(), 10e16, "Slippage should be 10%");
+    }
+
+    function runOnePercentScenario(uint256 amount) external {
+        _runOnePercentScenario(amount);
+    }
+
+    function test_cbbtcLiquiditySweep_bySize_atOnePercent() public {
+        _deployVault();
+
+        // Force 1% slippage for this capacity test
+        vm.store(address(swapper), bytes32(uint256(0)), bytes32(uint256(1e16)));
+        assertEq(swapper.slippage(), 1e16, "Sweep slippage must be 1%");
+
+        uint256 baseline = vm.snapshot();
+        uint256 lastPass;
+        uint256 firstFail;
+
+        // Sweep 1..100 cbBTC in 1 cbBTC steps
+        for (uint256 c = 1; c <= 100; c++) {
+            uint256 amount = c * 1e8;
+            vm.revertTo(baseline);
+            baseline = vm.snapshot();
+
+            try this.runOnePercentScenario(amount) {
+                lastPass = amount;
+            } catch {
+                if (firstFail == 0) firstFail = amount;
+                break;
+            }
+        }
+
+        emit log_named_uint("cbBTC lastPass @1% (sats)", lastPass);
+        emit log_named_uint("cbBTC firstFail @1% (sats)", firstFail);
+        if (lastPass > 0) emit log_named_uint("cbBTC lastPass @1% (whole)", lastPass / 1e8);
+        if (firstFail > 0) emit log_named_uint("cbBTC firstFail @1% (whole)", firstFail / 1e8);
+
+        // Diagnostic sweep: no-pass outcome is allowed and indicates 1% is too strict.
+        assertGt(firstFail, 0, "Sweep did not execute any size checks");
+    }
+
+    function test_cbbtcLiquiditySweep_bySize_slippageLadder() public {
+        _deployVault();
+
+        uint256[] memory slippages = new uint256[](4);
+        slippages[0] = 2e16; // 2%
+        slippages[1] = 3e16; // 3%
+        slippages[2] = 4e16; // 4%
+        slippages[3] = 5e16; // 5%
+
+        for (uint256 s = 0; s < slippages.length; s++) {
+            uint256 targetSlippage = slippages[s];
+            vm.store(address(swapper), bytes32(uint256(0)), bytes32(targetSlippage));
+            assertEq(swapper.slippage(), targetSlippage, "Sweep slippage mismatch");
+
+            uint256 baseline = vm.snapshot();
+            uint256 lastPass;
+            uint256 firstFail;
+
+            // Sweep 1..100 cbBTC in 1 cbBTC steps
+            for (uint256 c = 1; c <= 100; c++) {
+                uint256 amount = c * 1e8;
+                vm.revertTo(baseline);
+                baseline = vm.snapshot();
+
+                try this.runOnePercentScenario(amount) {
+                    lastPass = amount;
+                } catch {
+                    if (firstFail == 0) firstFail = amount;
+                    break;
+                }
+            }
+
+            emit log_named_uint("slippage (1e18)", targetSlippage);
+            emit log_named_uint("lastPass (sats)", lastPass);
+            emit log_named_uint("firstFail (sats)", firstFail);
+            if (lastPass > 0) emit log_named_uint("lastPass (whole cbBTC)", lastPass / 1e8);
+            if (firstFail > 0) emit log_named_uint("firstFail (whole cbBTC)", firstFail / 1e8);
+        }
+    }
+
+    function _runOnePercentScenario(uint256 amount) internal {
+        _syncAndMockOracles();
+
+        deal(CBBTC, user1, amount);
+        _depositAs(user1, amount);
+        _refreshOracles();
+        uint256 withdrawn = _redeemAllAs(user1);
+        assertGt(withdrawn, 0, "Should redeem > 0");
+    }
+
+    function test_liveOracleStaleness_withoutRemocking() public {
+        _deployVault();
+
+        // Remove setUp/remock overrides and read live feed timestamps from the forked chain.
+        vm.clearMockedCalls();
+
+        (,,, uint256 collateralUpdatedAt,) = IChainlinkOracle(CBBTC_USD_ORACLE).latestRoundData();
+        uint256 collateralAge = block.timestamp > collateralUpdatedAt
+            ? block.timestamp - collateralUpdatedAt
+            : 0;
+
+        emit log_named_uint("cbBTC oracle updatedAt", collateralUpdatedAt);
+        emit log_named_uint("cbBTC oracle age (sec)", collateralAge);
+        emit log_named_uint(
+            "MAX_COLLATERAL_ORACLE_STALENESS", swapper.MAX_COLLATERAL_ORACLE_STALENESS()
+        );
+
+        // If feed is currently fresh on this fork block, report and skip revert assertion.
+        if (collateralAge <= swapper.MAX_COLLATERAL_ORACLE_STALENESS()) {
+            emit log("Live cbBTC feed is fresh at this fork block; stale-path not asserted");
+            return;
+        }
+
+        deal(CBBTC, user1, _tinyDeposit());
+        vm.startPrank(user1);
+        collateralToken.approve(address(vault), _tinyDeposit());
+        vm.expectRevert();
+        vault.deposit(_tinyDeposit(), user1);
+        vm.stopPrank();
     }
 }

@@ -29,7 +29,6 @@ contract MockYieldStrategy is IYieldStrategy {
     address public override vault;
     address public initializer;
     uint256 private _costBasis;
-    bool private _paused;
 
     constructor(address _crvUSD, address _vault, address _yieldVault) {
         crvUSD = IERC20(_crvUSD);
@@ -97,14 +96,6 @@ contract MockYieldStrategy is IYieldStrategy {
         return _withdrawAllInternal();
     }
 
-    function pauseStrategy() external onlyVault returns (uint256) {
-        _paused = !_paused;
-        if (_paused) {
-            return _withdrawAllInternal();
-        }
-        return 0;
-    }
-
     function asset() external view returns (address) {
         return address(crvUSD);
     }
@@ -129,10 +120,6 @@ contract MockYieldStrategy is IYieldStrategy {
 
     function pendingRewards() external pure returns (uint256) {
         return 0;
-    }
-
-    function paused() external view returns (bool) {
-        return _paused;
     }
 
     function name() external pure returns (string memory) {
@@ -168,10 +155,6 @@ contract MockYieldStrategy is IYieldStrategy {
             return 0;
         }
 
-        function pauseStrategy() external pure returns (uint256) {
-            return 0;
-        }
-
         function asset() external view returns (address) {
             return badAsset;
         }
@@ -194,10 +177,6 @@ contract MockYieldStrategy is IYieldStrategy {
 
         function pendingRewards() external pure returns (uint256) {
             return 0;
-        }
-
-        function paused() external pure returns (bool) {
-            return false;
         }
 
         function name() external pure returns (string memory) {
@@ -325,10 +304,6 @@ contract MockYieldStrategy is IYieldStrategy {
             return bal;
         }
 
-        function pauseStrategy() external view onlyVault returns (uint256) {
-            return 0;
-        }
-
         function asset() external view returns (address) {
             return address(crvUSD);
         }
@@ -352,10 +327,6 @@ contract MockYieldStrategy is IYieldStrategy {
 
         function pendingRewards() external pure returns (uint256) {
             return 0;
-        }
-
-        function paused() external pure returns (bool) {
-            return false;
         }
 
         function name() external pure returns (string memory) {
@@ -775,6 +746,100 @@ contract MockYieldStrategy is IYieldStrategy {
                 vault.rebalance();
             }
 
+            function test_strategyDebtRebalanceNeeded_view() public {
+                vm.prank(user1);
+                vault.deposit(1e8, user1);
+
+                // Reduce strategy balance by 4% so ratio falls below PRECISION - DEADBAND_SPREAD (97%)
+                uint256 mockYieldBal = crvUSD.balanceOf(address(mockYield));
+                deal(CRVUSD, address(mockYield), (mockYieldBal * 96) / 100);
+
+                assertTrue(
+                    vault.strategyDebtRebalanceNeeded(),
+                    "Coverage ratio below threshold should be rebalance-needed"
+                );
+            }
+
+            function test_strategyDebtRebalanceNeeded_view_ratioTooHigh() public {
+                vm.prank(user1);
+                vault.deposit(1e8, user1);
+
+                // Inflate strategy balance by 4% so ratio exceeds PRECISION + DEADBAND_SPREAD (103%)
+                uint256 mockYieldBal = crvUSD.balanceOf(address(mockYield));
+                deal(CRVUSD, address(mockYield), (mockYieldBal * 104) / 100); // +4%
+
+                assertTrue(
+                    vault.strategyDebtRebalanceNeeded(),
+                    "Coverage ratio above upper threshold should be rebalance-needed"
+                );
+            }
+
+            function test_rebalance_ratioDrift_withinDeadband() public {
+                vm.prank(user1);
+                vault.deposit(1e8, user1);
+
+                // Keep current LTV inside deadband around target to ensure this test
+                // takes the ratio-drift branch (not normal LTV rebalance).
+                vm.prank(owner);
+                vault.setParam(1, 65e16); // upper deadband at 68%
+
+                // Simulate strategy loss exceeding deadband: reduce by 4% so ratio < 97%
+                uint256 mockYieldBal = crvUSD.balanceOf(address(mockYield));
+                deal(CRVUSD, address(mockYield), (mockYieldBal * 96) / 100); // -4%
+
+                uint256 ltvBefore = ILoanManager(address(vault.loanManager())).getCurrentLTV();
+                uint256 debtBefore = ILoanManager(address(vault.loanManager())).getCurrentDebt();
+                assertTrue(vault.strategyDebtRebalanceNeeded(), "Ratio drift should trigger rebalance");
+
+                vault.rebalance();
+
+                uint256 ltvAfter = ILoanManager(address(vault.loanManager())).getCurrentLTV();
+                uint256 debtAfter = ILoanManager(address(vault.loanManager())).getCurrentDebt();
+                assertLt(ltvAfter, ltvBefore, "Ratio drift rebalance should repay debt");
+                assertLt(debtAfter, debtBefore, "Ratio drift rebalance should reduce debt");
+            }
+
+            function test_rebalance_ratioHigh_withinDeadband_borrowsMore() public {
+                vm.prank(user1);
+                vault.deposit(1e8, user1);
+
+                vm.prank(owner);
+                vault.setParam(1, 65e16); // upper deadband at 68%
+
+                uint256 mockYieldBal = crvUSD.balanceOf(address(mockYield));
+                deal(CRVUSD, address(mockYield), (mockYieldBal * 104) / 100); // +4%, exceeds 103% upper bound
+
+                uint256 ltvBefore = ILoanManager(address(vault.loanManager())).getCurrentLTV();
+                uint256 debtBefore = ILoanManager(address(vault.loanManager())).getCurrentDebt();
+                assertTrue(vault.strategyDebtRebalanceNeeded(), "High ratio should trigger rebalance");
+
+                vault.rebalance();
+
+                uint256 ltvAfter = ILoanManager(address(vault.loanManager())).getCurrentLTV();
+                uint256 debtAfter = ILoanManager(address(vault.loanManager())).getCurrentDebt();
+                assertGt(ltvAfter, ltvBefore, "High ratio rebalance should increase debt deployment");
+                assertGt(debtAfter, debtBefore, "High ratio rebalance should increase debt");
+            }
+
+            function test_rebalance_increase_revertsWhenStrategyDebtCoverageLow() public {
+                vm.prank(owner);
+                vault.setParam(1, 20e16); // 20%
+
+                vm.prank(user1);
+                vault.deposit(1e8, user1);
+
+                // Slash strategy balance by 10% so that even after borrowing more for the
+                // 20%→30% LTV increase the post-deposit ratio stays below 97% (PRECISION - DEADBAND_SPREAD)
+                uint256 mockYieldBal = crvUSD.balanceOf(address(mockYield));
+                deal(CRVUSD, address(mockYield), (mockYieldBal * 90) / 100); // -10%
+
+                vm.prank(owner);
+                vault.setParam(1, 30e16); // move target up to force increase branch
+
+                vm.expectPartialRevert(Zenji.StrategyDebtCoverageTooLow.selector);
+                vault.rebalance();
+            }
+
             // ============ Admin Tests ============
 
             function test_setIdle_enterExit() public {
@@ -1031,6 +1096,22 @@ contract MockYieldStrategy is IYieldStrategy {
                 vm.expectRevert(Zenji.InvalidTargetLtv.selector);
                 vault.setParam(1, 0);
                 vm.stopPrank();
+            }
+
+            function test_strategyDebtRatios_visible() public {
+                assertEq(
+                    vault.strategyToDebtRatio(),
+                    type(uint256).max,
+                    "No debt should report max strategy/debt ratio"
+                );
+
+                vm.prank(user1);
+                vault.deposit(1e8, user1);
+
+                uint256 strategyToDebt = vault.strategyToDebtRatio();
+
+                assertGe(strategyToDebt, 97e16, "Strategy/debt ratio should be within deadband");
+                assertLe(strategyToDebt, 103e16, "Strategy/debt ratio should be within deadband");
             }
 
             // ============ Emergency Mode Tests ============

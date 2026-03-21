@@ -6,7 +6,7 @@ import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UsdtIporYieldStrategy } from "../src/strategies/UsdtIporYieldStrategy.sol";
-import { CurveThreeCryptoSwapper } from "../src/swappers/base/CurveThreeCryptoSwapper.sol";
+import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { IYieldVault } from "../src/interfaces/IYieldVault.sol";
 
@@ -44,10 +44,9 @@ contract UsdtIporAaveStrategyForkTest is Test {
     int128 constant USDT_INDEX = 0;
     int128 constant CRVUSD_INDEX = 1;
 
-    // Curve TriCrypto pool (USDT/WBTC/WETH) for loan-manager swapper
-    address constant TRICRYPTO_POOL = 0xf5f5B97624542D72A9E06f04804Bf81baA15e2B4;
-    uint256 constant TRICRYPTO_USDT_INDEX = 0;
-    uint256 constant TRICRYPTO_WBTC_INDEX = 1;
+    // Uniswap V3 WBTC/USDT swapper
+    address constant UNIVERSAL_ROUTER = 0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af;
+    uint24 constant WBTC_USDT_V3_FEE = 3000;
 
     address constant WBTC_WHALE = 0x5Ee5bf7ae06D1Be5997A1A72006FE6C607eC6DE8;
 
@@ -55,7 +54,7 @@ contract UsdtIporAaveStrategyForkTest is Test {
     ZenjiViewHelper viewHelper;
     AaveLoanManager loanManager;
     UsdtIporYieldStrategy strategy;
-    CurveThreeCryptoSwapper swapper;
+    UniversalRouterV3SingleHopSwapper swapper;
 
     IERC20 wbtc;
     IERC20 usdt;
@@ -84,13 +83,12 @@ contract UsdtIporAaveStrategyForkTest is Test {
         iporVault = IYieldVault(IPOR_PLASMA_VAULT);
 
         viewHelper = new ZenjiViewHelper();
-        swapper = new CurveThreeCryptoSwapper(
+        swapper = new UniversalRouterV3SingleHopSwapper(
             owner,
             WBTC,
             USDT,
-            TRICRYPTO_POOL,
-            TRICRYPTO_WBTC_INDEX,
-            TRICRYPTO_USDT_INDEX,
+            UNIVERSAL_ROUTER,
+            WBTC_USDT_V3_FEE,
             BTC_USD_ORACLE,
             USDT_USD_ORACLE
         );

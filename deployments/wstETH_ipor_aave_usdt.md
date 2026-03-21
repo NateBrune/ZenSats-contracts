@@ -63,7 +63,7 @@ Save as `WSTETH_ORACLE`.
 
 3) **Deploy UniswapV3TwoHopSwapper** (wstETH→WETH→USDT)
 ```bash
-forge create src/UniswapV3TwoHopSwapper.sol:UniswapV3TwoHopSwapper \
+forge create src/swappers/base/UniswapV3TwoHopSwapper.sol:UniswapV3TwoHopSwapper \
   --rpc-url $MAINNET_RPC_URL \
   --private-key $PRIVATE_KEY \
   --constructor-args \
@@ -94,7 +94,7 @@ forge create src/AaveLoanManager.sol:AaveLoanManager \
     <WSTETH_ORACLE> \
     0x3E7d1eAB13ad0104d2750B8863b489D65364e32D \
     <SWAPPER> \
-    7850 \
+    7800 \
     8100 \
     0x0000000000000000000000000000000000000000 \
   --verify
@@ -120,14 +120,12 @@ forge create src/strategies/UsdtIporYieldStrategy.sol:UsdtIporYieldStrategy \
 ```
 Save as `STRATEGY`.
 
-6) **Deploy Vault (Zenji or ZenjiWstEth implementation)**
+6) **Deploy Vault (ZenjiWstEth)**
 ```bash
-forge create src/Zenji.sol:Zenji \
+forge create src/implementations/ZenjiWstEth.sol:ZenjiWstEth \
   --rpc-url $MAINNET_RPC_URL \
   --private-key $PRIVATE_KEY \
   --constructor-args \
-    0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0 \
-    0xdAC17F958D2ee523a2206206994597C13D831ec7 \
     <LOAN_MANAGER> \
     <STRATEGY> \
     <SWAPPER> \
@@ -135,7 +133,6 @@ forge create src/Zenji.sol:Zenji \
     <VIEW_HELPER> \
   --verify
 ```
-Optional implementation: `src/implementations/ZenjiWstEth.sol:ZenjiWstEth` with the same non-asset arguments.
 Save as `VAULT`.
 
 7) **Initialize references**

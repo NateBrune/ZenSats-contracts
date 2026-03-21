@@ -29,6 +29,11 @@ abstract contract SwapperTestBase is Test {
     /// @notice The BaseSwapper instance under test
     function _swapper() internal view virtual returns (BaseSwapper);
 
+    /// @notice Expected initial slippage. Override in subclass if the swapper sets a non-standard default.
+    function _expectedInitialSlippage() internal pure virtual returns (uint256) {
+        return 1e16;
+    }
+
     /// @notice Whether this swapper implements ISwapper (false for reward swappers like CrvToCrvUsd)
     function _implementsISwapper() internal pure virtual returns (bool) {
         return true;
@@ -45,7 +50,7 @@ abstract contract SwapperTestBase is Test {
         BaseSwapper s = _swapper();
 
         assertEq(s.gov(), owner, "Initial gov should be owner");
-        assertEq(s.slippage(), 1e16, "Initial slippage should be 1%");
+        assertEq(s.slippage(), _expectedInitialSlippage(), "Initial slippage should match default");
 
         // Unauthorized access
         vm.prank(nonGov);

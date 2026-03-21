@@ -48,6 +48,9 @@ contract CurveThreeCryptoSwapper is BaseSwapper, ISwapper {
         debtIndex = _debtIndex;
         collateralOracle = IChainlinkOracle(_collateralOracle);
         debtOracle = IChainlinkOracle(_debtOracle);
+        // TriCrypto dynamic fees typically run ~0.74%, leaving very little margin under 1%.
+        // 1.5% gives adequate clearance while still protecting against oracle manipulation.
+        slippage = 15e15;
     }
 
     /// @inheritdoc ISwapper

@@ -44,7 +44,6 @@ contract FzYieldStrategy is IYieldStrategy {
     address public override vault;
     address public initializer;
     uint256 private _costBasis;
-    bool private _paused;
 
     constructor(address _crvUSD, address _yieldVault) {
         crvUSD = IERC20(_crvUSD);
@@ -104,12 +103,6 @@ contract FzYieldStrategy is IYieldStrategy {
         return _withdrawAllInternal();
     }
 
-    function pauseStrategy() external onlyVault returns (uint256) {
-        _paused = !_paused;
-        if (_paused) return _withdrawAllInternal();
-        return 0;
-    }
-
     function asset() external view returns (address) {
         return address(crvUSD);
     }
@@ -134,10 +127,6 @@ contract FzYieldStrategy is IYieldStrategy {
 
     function pendingRewards() external pure returns (uint256) {
         return 0;
-    }
-
-    function paused() external view returns (bool) {
-        return _paused;
     }
 
     function name() external pure returns (string memory) {

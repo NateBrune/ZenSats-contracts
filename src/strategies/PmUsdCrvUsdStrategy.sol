@@ -173,6 +173,9 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         ownerTimelockReady = 0;
     }
 
+    /// @notice Updates strategy slippage tolerance.
+    /// @dev Callable by vault (normal operations) or owner (manual recovery/ops).
+    /// @param newSlippage New slippage in 1e18 precision.
     function setSlippage(uint256 newSlippage) external {
         if (msg.sender != vault && msg.sender != owner) revert Unauthorized();
         if (newSlippage > MAX_SLIPPAGE) revert SlippageExceeded();
@@ -189,7 +192,7 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         if (to == address(0)) revert InvalidAddress();
         if (
             token == address(debtAsset) || token == address(lpToken) || token == address(crvUSD)
-                || token == address(pmUSD)
+                || token == address(pmUSD) || token == address(crv)
         ) revert InvalidAddress();
         IERC20(token).safeTransfer(to, amount);
         emit TokenRescued(token, to, amount);

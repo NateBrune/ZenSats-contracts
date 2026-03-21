@@ -676,6 +676,14 @@ contract PmUsdCrvUsdStrategyTest is Test {
         strategy.harvest();
     }
 
+    function test_rescueERC20_reverts_for_crv_rewards() public {
+        crv.mint(address(strategy), 1e18);
+
+        vm.prank(address(this));
+        vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
+        strategy.rescueERC20(address(crv), user, 1e18);
+    }
+
     function test_emergencyWithdraw_reverts_non_vault() public {
         vm.prank(user);
         vm.expectRevert(IYieldStrategy.Unauthorized.selector);
@@ -751,6 +759,29 @@ contract PmUsdCrvUsdStrategyTest is Test {
         vm.prank(owner);
         vm.expectRevert(PmUsdCrvUsdStrategy.SwapFailed.selector);
         vault.harvestYield();
+    }
+
+    function test_emergencyRescue2_clears_accumulatedFees() public {
+        vm.prank(owner);
+        vault.setParam(0, 1e17); // 10% fee rate
+
+        vm.prank(user);
+        vault.deposit(1e8, user);
+
+        rewardVault.addRewards(address(strategy), 1e18);
+
+        vm.prank(owner);
+        vault.harvestYield();
+
+        assertGt(vault.accumulatedFees(), 0, "Harvest should accrue fees before emergency rescue");
+
+        vm.startPrank(owner);
+        vault.enterEmergencyMode();
+        vault.emergencyRescue(2);
+        vm.stopPrank();
+
+        assertEq(vault.accumulatedFees(), 0, "Emergency rescue step 2 should clear accumulated fees");
+        assertEq(vault.lastStrategyBalance(), 0, "Emergency rescue step 2 should clear strategy checkpoint");
     }
 
     // ============ More Branch Coverage ============

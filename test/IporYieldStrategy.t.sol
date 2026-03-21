@@ -107,36 +107,6 @@ contract IporYieldStrategyTest is Test {
         assertEq(strategy.name(), "IPOR PlasmaVault Strategy");
     }
 
-    function test_pauseStrategy_blocksDeposit() public {
-        vm.prank(vault);
-        uint256 received = strategy.pauseStrategy();
-        assertEq(received, 0);
-        assertTrue(strategy.paused());
-
-        vm.prank(vault);
-        vm.expectRevert(IYieldStrategy.StrategyPaused.selector);
-        strategy.deposit(1e18);
-    }
-
-    function test_pauseStrategy_unwindsOnPause() public {
-        vm.prank(vault);
-        strategy.deposit(1000e18);
-
-        vm.prank(vault);
-        uint256 received = strategy.pauseStrategy();
-
-        assertTrue(strategy.paused());
-        assertGt(received, 0);
-        assertEq(strategy.balanceOf(), 0);
-        assertEq(strategy.costBasis(), 0);
-    }
-
-    function test_pauseStrategy_revertsFromNonVault() public {
-        vm.prank(user);
-        vm.expectRevert(IYieldStrategy.Unauthorized.selector);
-        strategy.pauseStrategy();
-    }
-
     // ============ Branch Coverage: BaseYieldStrategy ============
 
     function test_deposit_zeroAmount_reverts() public {
@@ -179,30 +149,6 @@ contract IporYieldStrategyTest is Test {
         vm.prank(user);
         vm.expectRevert(IYieldStrategy.Unauthorized.selector);
         strategy.emergencyWithdraw();
-    }
-
-    function test_harvest_revertsWhenPaused() public {
-        // Pause first
-        vm.prank(vault);
-        strategy.pauseStrategy();
-        assertTrue(strategy.paused());
-
-        vm.prank(vault);
-        vm.expectRevert(IYieldStrategy.StrategyPaused.selector);
-        strategy.harvest();
-    }
-
-    function test_pauseStrategy_unpauseToggle() public {
-        // Pause
-        vm.prank(vault);
-        strategy.pauseStrategy();
-        assertTrue(strategy.paused(), "Should be paused");
-
-        // Unpause
-        vm.prank(vault);
-        uint256 received = strategy.pauseStrategy();
-        assertFalse(strategy.paused(), "Should be unpaused");
-        assertEq(received, 0, "Unpause should return 0");
     }
 
     function test_withdraw_moreThanBalance_caps() public {

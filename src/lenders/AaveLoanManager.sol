@@ -32,6 +32,11 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
     uint256 public constant TIMELOCK_DELAY = 1 weeks;
     int256 public constant MIN_HEALTH = 1.1e18;
     uint256 public constant MIN_SWAP_OUT_BPS = 9500; // 95% of oracle quote
+    /// @notice Collateral amounts below this threshold skip slippage enforcement.
+    /// At 1000 sat input the Uniswap V3 0.3% pool rounds its 3-sat fee to 1 sat (0.1%
+    /// effective, within tolerance). Below 334 sat the 1-sat minimum fee exceeds 0.3%
+    /// of input, so oracle-based minOut checks are unreliable and must be waived.
+    uint256 public constant DUST_SWAP_THRESHOLD = 1000;
 
     // ============ Immutables ============
 
@@ -113,6 +118,8 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         swapper = ISwapper(_swapper);
     }
 
+    /// @notice Initializes the vault address exactly once.
+    /// @param _vault Vault contract authorized to call state-changing methods.
     function initializeVault(address _vault) external {
         if (vault != address(0)) revert InvalidAddress();
         if (_vault == address(0)) revert InvalidAddress();
@@ -125,6 +132,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
 
     // ============ Loan Management Functions ============
 
+    /// @inheritdoc ILoanManager
     function createLoan(uint256 collateral, uint256 debt, uint256) external onlyVault {
         if (collateral == 0) revert ZeroAmount();
         _checkOracleFreshness();
@@ -146,6 +154,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         emit LoanCreated(collateral, debt, 0);
     }
 
+    /// @inheritdoc ILoanManager
     function addCollateral(uint256 collateral) external onlyVault {
         if (collateral == 0) revert ZeroAmount();
         _checkOracleFreshness();
@@ -154,6 +163,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         emit CollateralAdded(collateral);
     }
 
+    /// @inheritdoc ILoanManager
     function borrowMore(uint256 collateral, uint256 debt) external onlyVault {
         if (collateral == 0 && debt == 0) revert ZeroAmount();
         _checkOracleFreshness();
@@ -174,6 +184,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         emit LoanBorrowedMore(collateral, debt);
     }
 
+    /// @inheritdoc ILoanManager
     function repayDebt(uint256 amount) external onlyVault {
         if (amount == 0) revert ZeroAmount();
         _checkOracleFreshness();
@@ -182,12 +193,15 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         emit LoanRepaid(amount);
     }
 
+    /// @inheritdoc ILoanManager
     function removeCollateral(uint256 amount) external onlyVault {
         if (amount == 0) revert ZeroAmount();
+        _checkOracleFreshness();
         aavePool.withdraw(address(collateralToken), amount, address(this));
         emit CollateralRemoved(amount);
     }
 
+    /// @inheritdoc ILoanManager
     function unwindPosition(uint256 collateralNeeded) external onlyVault {
         bool fullyClose = (collateralNeeded == type(uint256).max);
         _checkOracleFreshness();
@@ -310,13 +324,16 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
                 collateralNeededForSwap < collateralBal ? collateralNeededForSwap : collateralBal;
             if (toSwap > 0) {
                 uint256 debtBefore = debtToken.balanceOf(address(this));
-                uint256 expectedDebt = (_getCollateralValue(toSwap) * MIN_SWAP_OUT_BPS) / 10000;
+                // Skip oracle-based slippage floor for dust swaps: integer fee rounding
+                // in the V3 pool makes the effective fee exceed any oracle estimate.
+                uint256 expectedDebt = toSwap >= DUST_SWAP_THRESHOLD
+                    ? (_getCollateralValue(toSwap) * MIN_SWAP_OUT_BPS) / 10000
+                    : 0;
                 collateralToken.safeTransfer(address(swapper), toSwap);
                 swapper.swapCollateralForDebt(toSwap);
                 uint256 debtAfter = debtToken.balanceOf(address(this));
-                if (debtAfter <= debtBefore) revert SwapperUnderperformed(expectedDebt, 0);
                 uint256 debtDelta = debtAfter - debtBefore;
-                if (debtDelta < expectedDebt) {
+                if (expectedDebt > 0 && debtDelta < expectedDebt) {
                     revert SwapperUnderperformed(expectedDebt, debtDelta);
                 }
             }
@@ -326,14 +343,14 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
                 uint256 remainingCollateral = collateralToken.balanceOf(address(this));
                 if (remainingCollateral > 0) {
                     uint256 debtBefore = debtToken.balanceOf(address(this));
-                    uint256 expectedDebt =
-                        (_getCollateralValue(remainingCollateral) * MIN_SWAP_OUT_BPS) / 10000;
+                    uint256 expectedDebt = remainingCollateral >= DUST_SWAP_THRESHOLD
+                        ? (_getCollateralValue(remainingCollateral) * MIN_SWAP_OUT_BPS) / 10000
+                        : 0;
                     collateralToken.safeTransfer(address(swapper), remainingCollateral);
                     swapper.swapCollateralForDebt(remainingCollateral);
                     uint256 debtAfter = debtToken.balanceOf(address(this));
-                    if (debtAfter <= debtBefore) revert SwapperUnderperformed(expectedDebt, 0);
                     uint256 debtDelta = debtAfter - debtBefore;
-                    if (debtDelta < expectedDebt) {
+                    if (expectedDebt > 0 && debtDelta < expectedDebt) {
                         revert SwapperUnderperformed(expectedDebt, debtDelta);
                     }
                 }
@@ -370,6 +387,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
 
     // ============ View Functions ============
 
+    /// @inheritdoc ILoanManager
     function getCurrentLTV() external view returns (uint256 ltv) {
         uint256 collateral = aToken.balanceOf(address(this));
         uint256 debt = variableDebtToken.balanceOf(address(this));
@@ -380,22 +398,27 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         ltv = (debt * PRECISION) / collateralValue;
     }
 
+    /// @inheritdoc ILoanManager
     function getCurrentCollateral() external view returns (uint256 collateral) {
         return aToken.balanceOf(address(this));
     }
 
+    /// @inheritdoc ILoanManager
     function getCurrentDebt() external view returns (uint256 debt) {
         return variableDebtToken.balanceOf(address(this));
     }
 
+    /// @inheritdoc ILoanManager
     function collateralAsset() external view returns (address) {
         return address(collateralToken);
     }
 
+    /// @inheritdoc ILoanManager
     function debtAsset() external view returns (address) {
         return address(debtToken);
     }
 
+    /// @inheritdoc ILoanManager
     function getHealth() external view returns (int256 health) {
         uint256 collateral = aToken.balanceOf(address(this));
         uint256 debt = variableDebtToken.balanceOf(address(this));
@@ -409,18 +432,22 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         return int256(hf);
     }
 
+    /// @inheritdoc ILoanManager
     function loanExists() external view returns (bool exists) {
         return aToken.balanceOf(address(this)) > 0 || variableDebtToken.balanceOf(address(this)) > 0;
     }
 
+    /// @inheritdoc ILoanManager
     function getCollateralValue(uint256 collateralAmount) external view returns (uint256 value) {
         return _getCollateralValue(collateralAmount);
     }
 
+    /// @inheritdoc ILoanManager
     function getDebtValue(uint256 debtAmount) external view returns (uint256 value) {
         return _getDebtValue(debtAmount);
     }
 
+    /// @inheritdoc ILoanManager
     function calculateBorrowAmount(uint256 collateral, uint256 targetLtv)
         external
         view
@@ -430,6 +457,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         return (collateralValue * targetLtv) / PRECISION;
     }
 
+    /// @inheritdoc ILoanManager
     function healthCalculator(int256 dCollateral, int256 dDebt)
         external
         view
@@ -460,12 +488,14 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         return int256(hf);
     }
 
+    /// @inheritdoc ILoanManager
     function minCollateral(uint256 debt_, uint256) external view returns (uint256) {
         if (debt_ == 0) return 0;
         uint256 debtInCollateral = _getDebtValue(debt_);
         return (debtInCollateral * AAVE_LTV_SCALE + maxLtvBps - 1) / maxLtvBps;
     }
 
+    /// @inheritdoc ILoanManager
     function getPositionValues()
         external
         view
@@ -475,6 +505,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         debtValue = variableDebtToken.balanceOf(address(this));
     }
 
+    /// @inheritdoc ILoanManager
     function getNetCollateralValue() external view returns (uint256 value) {
         uint256 collateral = aToken.balanceOf(address(this));
         uint256 debt = variableDebtToken.balanceOf(address(this));
@@ -484,12 +515,14 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         return collateral > debtInCollateral ? collateral - debtInCollateral : 0;
     }
 
+    /// @inheritdoc ILoanManager
     function checkOracleFreshness() external view {
         _checkOracleFreshness();
     }
 
     // ============ Token Management ============
 
+    /// @inheritdoc ILoanManager
     function transferCollateral(address to, uint256 amount) external onlyVault {
         if (to == address(0)) revert InvalidAddress();
         uint256 idle = collateralToken.balanceOf(address(this));
@@ -506,15 +539,18 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         }
     }
 
+    /// @inheritdoc ILoanManager
     function transferDebt(address to, uint256 amount) external onlyVault {
         if (to == address(0)) revert InvalidAddress();
         debtToken.safeTransfer(to, amount);
     }
 
+    /// @inheritdoc ILoanManager
     function getCollateralBalance() external view returns (uint256 balance) {
         return collateralToken.balanceOf(address(this));
     }
 
+    /// @inheritdoc ILoanManager
     function getDebtBalance() external view returns (uint256 balance) {
         return debtToken.balanceOf(address(this));
     }

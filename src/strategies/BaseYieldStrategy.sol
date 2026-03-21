@@ -31,9 +31,6 @@ abstract contract BaseYieldStrategy is IYieldStrategy {
     /// @notice Total debt asset deposited (cost basis for profit calculation)
     uint256 internal _costBasis;
 
-    /// @notice Whether the strategy is paused
-    bool public override paused;
-
     /// @notice Reentrancy guard
     uint256 private _status;
     uint256 private constant _NOT_ENTERED = 1;
@@ -47,11 +44,6 @@ abstract contract BaseYieldStrategy is IYieldStrategy {
 
     modifier onlyVault() {
         if (msg.sender != vault) revert Unauthorized();
-        _;
-    }
-
-    modifier whenNotPaused() {
-        if (paused) revert StrategyPaused();
         _;
     }
 
@@ -98,7 +90,6 @@ abstract contract BaseYieldStrategy is IYieldStrategy {
         external
         override
         onlyVault
-        whenNotPaused
         nonReentrant
         returns (uint256 underlyingDeposited)
     {
@@ -153,7 +144,6 @@ abstract contract BaseYieldStrategy is IYieldStrategy {
         external
         override
         onlyVault
-        whenNotPaused
         nonReentrant
         returns (uint256 rewardsValue)
     {
@@ -178,23 +168,6 @@ abstract contract BaseYieldStrategy is IYieldStrategy {
         }
 
         emit EmergencyWithdrawn(received);
-    }
-
-    /// @inheritdoc IYieldStrategy
-    function pauseStrategy() external override onlyVault nonReentrant returns (uint256 received) {
-        paused = !paused;
-
-        if (paused) {
-            received = _withdrawAll();
-            _costBasis = 0;
-
-            uint256 balance = debtAsset.balanceOf(address(this));
-            if (balance > 0) {
-                debtAsset.safeTransfer(vault, balance);
-            }
-        }
-
-        emit StrategyPauseToggled(paused, received);
     }
 
     // ============ View Functions ============

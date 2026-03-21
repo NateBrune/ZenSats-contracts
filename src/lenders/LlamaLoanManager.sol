@@ -233,6 +233,7 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     /// @inheritdoc ILoanManager
     function removeCollateral(uint256 amount) external onlyVault {
         if (amount == 0) revert ZeroAmount();
+        _checkOracleFreshness();
         llamaLend.remove_collateral(amount);
         emit CollateralRemoved(amount);
     }

@@ -10,6 +10,7 @@ interface IZenjiKeeperTarget {
     function loanManager() external view returns (ILoanManager);
     function targetLtv() external view returns (uint256);
     function DEADBAND_SPREAD() external view returns (uint256);
+    function strategyDebtRebalanceNeeded() external view returns (bool);
     function idle() external view returns (bool);
     function emergencyMode() external view returns (bool);
     function rebalance() external;
@@ -86,20 +87,26 @@ contract ZenjiRebalanceKeeper is AutomationCompatibleInterface {
         ILoanManager loanManager_ = vault.loanManager();
         if (!loanManager_.loanExists()) return (false, bytes(""));
 
+        bool ratioNeeded = vault.strategyDebtRebalanceNeeded();
+
+        uint256 currentLtv = 0;
+        uint256 target = vault.targetLtv();
+        uint256 spread = vault.DEADBAND_SPREAD();
+        uint256 lowerBand = target > spread ? target - spread : 0;
+        uint256 upperBand = target + spread;
+        bool ltvNeeded = false;
+
         try loanManager_.checkOracleFreshness() {
-            uint256 currentLtv = loanManager_.getCurrentLTV();
-            uint256 target = vault.targetLtv();
-            uint256 spread = vault.DEADBAND_SPREAD();
-
-            uint256 lowerBand = target > spread ? target - spread : 0;
-            uint256 upperBand = target + spread;
-
-            if (currentLtv < lowerBand || currentLtv > upperBand) {
-                return (true, abi.encode(currentLtv, lowerBand, upperBand));
-            }
-            return (false, bytes(""));
+            currentLtv = loanManager_.getCurrentLTV();
+            ltvNeeded = currentLtv < lowerBand || currentLtv > upperBand;
         } catch {
-            return (false, bytes(""));
+            ltvNeeded = false;
         }
+
+        if (ltvNeeded || ratioNeeded) {
+            return (true, abi.encode(currentLtv, lowerBand, upperBand));
+        }
+
+        return (false, bytes(""));
     }
 }

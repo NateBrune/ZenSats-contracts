@@ -158,6 +158,7 @@ contract Zenji is ERC20, IERC4626 {
     error EmergencyStepsIncomplete();
     error InvalidEmergencyStep();
     error InvalidSlippage();
+    error StrategyDebtCoverageTooLow(uint256 currentRatio, uint256 minRatio);
     error ActionDelayActive();
 
     // ============ Modifiers ============
@@ -208,9 +209,9 @@ contract Zenji is ERC20, IERC4626 {
 
         collateralAsset = IERC20(_collateralAsset);
         debtAsset = IERC20(_debtAsset);
-        viewHelper = ZenjiViewHelper(_viewHelper);
         loanManager = ILoanManager(_loanManager);
         swapper = ISwapper(_swapper);
+        viewHelper = ZenjiViewHelper(_viewHelper);
 
         // Validate loan manager assets match vault assets
         if (
@@ -437,17 +438,28 @@ contract Zenji is ERC20, IERC4626 {
         emit CapitalDeployed(idleCollateral, borrowAmount);
     }
 
-    /// @notice Rebalance LTV if outside deadband
+    /// @notice Rebalance LTV and/or strategy-debt coverage
     function rebalance() external nonReentrant {
         if (!loanManager.loanExists()) revert RebalanceNotNeeded();
 
-        loanManager.checkOracleFreshness();
-
-        uint256 currentLtv = loanManager.getCurrentLTV();
+        uint256 currentLtv = 0;
         uint256 lowerBand = targetLtv - DEADBAND_SPREAD;
         uint256 upperBand = targetLtv + DEADBAND_SPREAD;
+        uint256 strategyDebtRatio = strategyToDebtRatio();
+        uint256 minStrategyRatio = PRECISION - DEADBAND_SPREAD;
+        uint256 maxStrategyRatio = PRECISION + DEADBAND_SPREAD;
+        bool ratioTooLow =
+            strategyDebtRatio != type(uint256).max
+            && strategyDebtRatio < minStrategyRatio;
+        bool ratioTooHigh =
+            strategyDebtRatio != type(uint256).max
+            && strategyDebtRatio > maxStrategyRatio;
 
-        if (currentLtv >= lowerBand && currentLtv <= upperBand) {
+        loanManager.checkOracleFreshness();
+        currentLtv = loanManager.getCurrentLTV();
+        bool ltvOutOfBand = currentLtv < lowerBand || currentLtv > upperBand;
+
+        if (!ltvOutOfBand && !ratioTooLow && !ratioTooHigh) {
             revert RebalanceNotNeeded();
         }
 
@@ -472,13 +484,31 @@ contract Zenji is ERC20, IERC4626 {
         uint256 newLtv = 0;
         bool increased = false;
 
-        if (currentLtv < lowerBand) {
+        if (ltvOutOfBand && currentLtv < lowerBand) {
             increased = true;
-            _adjustLtv(targetLtv, true);
+            _adjustLtv(targetLtv, true, true);
             newLtv = loanManager.getCurrentLTV();
-        } else if (currentLtv > upperBand) {
+        } else if (ltvOutOfBand && currentLtv > upperBand) {
             increased = false;
-            _adjustLtv(targetLtv, false);
+            _adjustLtv(targetLtv, false, true);
+            newLtv = loanManager.getCurrentLTV();
+        } else if (ratioTooLow) {
+            increased = false;
+            lastStrategyBalance = ZenjiCoreLib.rebalanceCoverageUp(
+                loanManager, yieldStrategy, debtAsset, maxSlippage, PRECISION
+            );
+            newLtv = loanManager.getCurrentLTV();
+        } else if (ratioTooHigh) {
+            increased = true;
+            lastStrategyBalance = ZenjiCoreLib.rebalanceCoverageDown(
+                loanManager,
+                yieldStrategy,
+                debtAsset,
+                maxStrategyRatio,
+                upperBand,
+                maxSlippage,
+                PRECISION
+            );
             newLtv = loanManager.getCurrentLTV();
         }
 
@@ -498,7 +528,7 @@ contract Zenji is ERC20, IERC4626 {
         if (address(yieldStrategy) == address(0)) revert InvalidStrategy();
         _accrueYieldFees();
         uint256 harvested = yieldStrategy.harvest();
-        lastStrategyBalance = yieldStrategy.balanceOf();
+        _accrueYieldFees();
         emit YieldHarvested(msg.sender, harvested);
     }
 
@@ -679,18 +709,20 @@ contract Zenji is ERC20, IERC4626 {
     /// @dev Guardian-only fallback when standard emergency steps fail.
     function emergencyRescue(uint8 action) external nonReentrant onlyGuardian {
         if (!emergencyMode) revert EmergencyModeNotActive();
-        lastStrategyBalance = ZenjiCoreLib.executeEmergencyRescue(
+        (accumulatedFees, lastStrategyBalance) = ZenjiCoreLib.executeEmergencyRescue(
             action,
             collateralAsset,
             debtAsset,
             loanManager,
             yieldStrategy,
             swapper,
+            accumulatedFees,
             lastStrategyBalance
         );
     }
 
-    /// @notice Set vault parameter: 0=feeRate, 1=targetLtv, 2=depositCap, 3=bountyRate, 4=maxSlippage
+    /// @notice Set vault parameter:
+    /// 0=feeRate, 1=targetLtv, 2=depositCap, 3=bountyRate, 4=maxSlippage
     /// @dev Gov-only. All parameter changes take effect immediately.
     function setParam(uint8 p, uint256 v) external onlyGov {
         if (p == 0) {
@@ -731,6 +763,22 @@ contract Zenji is ERC20, IERC4626 {
             return collateralAsset.balanceOf(address(this));
         }
         return viewHelper.getTotalCollateralValue(address(this));
+    }
+
+    /// @notice Strategy balance to loan debt ratio in debt-asset terms (1e18 = 1.0)
+    /// @dev Returns max uint when debt is zero.
+    function strategyToDebtRatio() public view returns (uint256 ratio) {
+        uint256 debt = loanManager.getCurrentDebt();
+        if (debt == 0) return type(uint256).max;
+        uint256 strategyBalance = yieldStrategy.balanceOf();
+        return (strategyBalance * PRECISION) / debt;
+    }
+
+    /// @notice True when strategy/debt coverage deviates beyond the LTV deadband from 100%
+    function strategyDebtRebalanceNeeded() public view returns (bool) {
+        uint256 ratio = strategyToDebtRatio();
+        return ratio != type(uint256).max
+            && (ratio < PRECISION - DEADBAND_SPREAD || ratio > PRECISION + DEADBAND_SPREAD);
     }
 
     // ============ Internal Functions ============
@@ -1038,31 +1086,20 @@ contract Zenji is ERC20, IERC4626 {
     }
 
     /// @notice Adjust LTV toward target by borrowing more or repaying debt
-    function _adjustLtv(uint256 _targetLtv, bool increase) internal {
-        (uint256 collateral, uint256 currentDebt) = loanManager.getPositionValues();
-        uint256 collateralValue = loanManager.getCollateralValue(collateral);
-        uint256 targetDebt = (collateralValue * _targetLtv) / PRECISION;
-
-        if (increase) {
-            if (targetDebt <= currentDebt) return;
-            uint256 additionalBorrow = targetDebt - currentDebt;
-            loanManager.borrowMore(0, additionalBorrow);
-            uint256 debtBalance = loanManager.getDebtBalance();
-            if (debtBalance > 0) {
-                loanManager.transferDebt(address(this), debtBalance);
-                _deployDebtToYield(debtBalance);
-            }
-        } else {
-            if (targetDebt >= currentDebt) return;
-            uint256 toRepay = currentDebt - targetDebt;
-            _withdrawFromYieldStrategy(toRepay);
-            uint256 debtBalance = debtAsset.balanceOf(address(this));
-            uint256 repayAmount = toRepay < debtBalance ? toRepay : debtBalance;
-            if (repayAmount > 0) {
-                debtAsset.safeTransfer(address(loanManager), repayAmount);
-                loanManager.repayDebt(repayAmount);
-            }
-        }
+    function _adjustLtv(uint256 _targetLtv, bool increase, bool enforceCoverageAfterIncrease)
+        internal
+    {
+        lastStrategyBalance = ZenjiCoreLib.adjustLtv(
+            loanManager,
+            yieldStrategy,
+            debtAsset,
+            _targetLtv,
+            PRECISION - DEADBAND_SPREAD,
+            maxSlippage,
+            PRECISION,
+            increase,
+            enforceCoverageAfterIncrease
+        );
     }
 
     // Cooldown is enforced at transfer time to block same-block transfer->redeem bypasses.

@@ -53,6 +53,8 @@ contract UsdtIporYieldStrategy is BaseIporStrategy {
         crvUsdIndex = _crvUsdIndex;
     }
 
+    /// @notice Updates strategy slippage tolerance (vault-controlled).
+    /// @param newSlippage New slippage in 1e18 precision.
     function setSlippage(uint256 newSlippage) external onlyVault {
         if (newSlippage > MAX_SLIPPAGE) revert SlippageExceeded();
         uint256 oldSlippage = slippageTolerance;

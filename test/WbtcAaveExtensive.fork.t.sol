@@ -4,7 +4,7 @@ pragma solidity ^0.8.33;
 import { ZenjiForkTestBase } from "./base/ZenjiForkTestBase.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { CurveThreeCryptoSwapper } from "../src/swappers/base/CurveThreeCryptoSwapper.sol";
+import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { UsdtIporYieldStrategy } from "../src/strategies/UsdtIporYieldStrategy.sol";
 import { TimelockLib } from "../src/libraries/TimelockLib.sol";
 import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
@@ -21,13 +21,15 @@ contract WbtcAaveExtensive is ZenjiForkTestBase {
 
     address constant IPOR_PLASMA_VAULT = 0xbfA9d6EC0E04B6691fCAE5F8b48838C3918eC117;
     address constant USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
-    address constant TRICRYPTO_POOL = 0xf5f5B97624542D72A9E06f04804Bf81baA15e2B4;
+
+    address constant UNIVERSAL_ROUTER = 0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af;
+    uint24 constant WBTC_USDT_V3_FEE = 3000;
 
     address constant BTC_USD_ORACLE = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
     address constant USDT_USD_ORACLE = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
     address constant CRVUSD_USD_ORACLE = 0xEEf0C605546958c1f899b6fB336C20671f9cD49F;
 
-    CurveThreeCryptoSwapper public swapper;
+    UniversalRouterV3SingleHopSwapper public swapper;
 
     // ============ Abstract implementations ============
 
@@ -37,6 +39,10 @@ contract WbtcAaveExtensive is ZenjiForkTestBase {
 
     function _unit() internal pure override returns (uint256) {
         return 1e8;
+    }
+
+    function _tinyDeposit() internal pure override returns (uint256) {
+        return 1e6; // 0.01 WBTC
     }
 
     function _oracleList() internal pure override returns (address[] memory) {
@@ -55,8 +61,8 @@ contract WbtcAaveExtensive is ZenjiForkTestBase {
         uint256 startNonce = vm.getNonce(address(this));
         address expectedVaultAddress = computeCreateAddress(address(this), startNonce + 3);
 
-        swapper = new CurveThreeCryptoSwapper(
-            owner, WBTC, USDT, TRICRYPTO_POOL, 1, 0, BTC_USD_ORACLE, USDT_USD_ORACLE
+        swapper = new UniversalRouterV3SingleHopSwapper(
+            owner, WBTC, USDT, UNIVERSAL_ROUTER, WBTC_USDT_V3_FEE, BTC_USD_ORACLE, USDT_USD_ORACLE
         );
 
         UsdtIporYieldStrategy strategy = new UsdtIporYieldStrategy(
@@ -117,8 +123,8 @@ contract WbtcAaveExtensive is ZenjiForkTestBase {
         _deployVault();
         _depositAs(user1, _unit());
 
-        CurveThreeCryptoSwapper newSwapper = new CurveThreeCryptoSwapper(
-            owner, WBTC, USDT, TRICRYPTO_POOL, 1, 0, BTC_USD_ORACLE, USDT_USD_ORACLE
+        UniversalRouterV3SingleHopSwapper newSwapper = new UniversalRouterV3SingleHopSwapper(
+            owner, WBTC, USDT, UNIVERSAL_ROUTER, WBTC_USDT_V3_FEE, BTC_USD_ORACLE, USDT_USD_ORACLE
         );
 
         vm.prank(vault.gov());
@@ -135,8 +141,8 @@ contract WbtcAaveExtensive is ZenjiForkTestBase {
         vault.executeSwapper();
         assertEq(address(vault.swapper()), address(newSwapper), "Swapper should be updated");
 
-        CurveThreeCryptoSwapper anotherSwapper = new CurveThreeCryptoSwapper(
-            owner, WBTC, USDT, TRICRYPTO_POOL, 1, 0, BTC_USD_ORACLE, USDT_USD_ORACLE
+        UniversalRouterV3SingleHopSwapper anotherSwapper = new UniversalRouterV3SingleHopSwapper(
+            owner, WBTC, USDT, UNIVERSAL_ROUTER, WBTC_USDT_V3_FEE, BTC_USD_ORACLE, USDT_USD_ORACLE
         );
         vm.prank(vault.gov());
         vault.proposeSwapper(address(anotherSwapper));

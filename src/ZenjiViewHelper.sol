@@ -21,6 +21,7 @@ interface IZenjiView {
     function lastStrategyBalance() external view returns (uint256);
     function yieldStrategy() external view returns (IYieldStrategy);
     function VIRTUAL_SHARE_OFFSET() external view returns (uint256);
+    function strategyDebtRebalanceNeeded() external view returns (bool);
 }
 
 /// @title ZenjiViewHelper
@@ -44,11 +45,13 @@ contract ZenjiViewHelper {
     }
 
     function isRebalanceNeeded(address vault) external view returns (bool needed) {
-        ILoanManager lm = IZenjiView(vault).loanManager();
+        IZenjiView v = IZenjiView(vault);
+        if (v.strategyDebtRebalanceNeeded()) return true;
+        ILoanManager lm = v.loanManager();
         if (!lm.loanExists()) return false;
         uint256 ltv = lm.getCurrentLTV();
-        uint256 target = IZenjiView(vault).targetLtv();
-        uint256 deadband = IZenjiView(vault).DEADBAND_SPREAD();
+        uint256 target = v.targetLtv();
+        uint256 deadband = v.DEADBAND_SPREAD();
         return ltv < (target - deadband) || ltv > (target + deadband);
     }
 

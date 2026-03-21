@@ -29,10 +29,9 @@ address constant CURVE_USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb99
 int128  constant USDT_INDEX   = 0;
 int128  constant CRVUSD_INDEX = 1;
 
-// Curve TriCrypto (WBTC<->USDT swapper)
-address constant TRICRYPTO_POOL       = 0xf5f5B97624542D72A9E06f04804Bf81baA15e2B4;
-uint256 constant TRICRYPTO_WBTC_INDEX = 1;
-uint256 constant TRICRYPTO_USDT_INDEX = 0;
+// Uniswap V3 (WBTC<->USDT single-hop via Universal Router)
+address constant UNIVERSAL_ROUTER    = 0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af;
+uint24  constant WBTC_USDT_V3_FEE    = 3000;  // 0.30%
 ```
 
 ## Deployment Steps
@@ -46,18 +45,19 @@ forge create src/ZenjiViewHelper.sol:ZenjiViewHelper \
 ```
 Save as `VIEW_HELPER`.
 
-2) **Deploy CurveThreeCryptoSwapper** (WBTC<->USDT)
+2) **Deploy UniversalRouterV3SingleHopSwapper** (WBTC→USDT via Uniswap V3 0.3%)
 ```bash
-forge create src/CurveThreeCryptoSwapper.sol:CurveThreeCryptoSwapper \
+forge create src/swappers/base/UniversalRouterV3SingleHopSwapper.sol:UniversalRouterV3SingleHopSwapper \
   --rpc-url $MAINNET_RPC_URL \
   --private-key $PRIVATE_KEY \
   --constructor-args \
     <GOVERNANCE_ADDRESS> \
     0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599 \
     0xdAC17F958D2ee523a2206206994597C13D831ec7 \
-    0xf5f5B97624542D72A9E06f04804Bf81baA15e2B4 \
-    1 \
-    0 \
+    0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af \
+    3000 \
+    0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c \
+    0x3E7d1eAB13ad0104d2750B8863b489D65364e32D \
   --verify
 ```
 Save as `SWAPPER`.
@@ -102,14 +102,12 @@ forge create src/strategies/UsdtIporYieldStrategy.sol:UsdtIporYieldStrategy \
 ```
 Save as `STRATEGY`.
 
-5) **Deploy Vault (Zenji or ZenjiWbtc)**
+5) **Deploy Vault (ZenjiWbtc)**
 ```bash
-forge create src/Zenji.sol:Zenji \
+forge create src/implementations/ZenjiWbtc.sol:ZenjiWbtc \
   --rpc-url $MAINNET_RPC_URL \
   --private-key $PRIVATE_KEY \
   --constructor-args \
-    0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599 \
-    0xdAC17F958D2ee523a2206206994597C13D831ec7 \
     <LOAN_MANAGER> \
     <STRATEGY> \
     <SWAPPER> \
@@ -117,7 +115,6 @@ forge create src/Zenji.sol:Zenji \
     <VIEW_HELPER> \
   --verify
 ```
-Optional implementation: `src/implementations/ZenjiWbtc.sol:ZenjiWbtc` with the same arguments (omitting the asset addresses that are baked in).
 Save as `VAULT`.
 
 6) **Initialize references**

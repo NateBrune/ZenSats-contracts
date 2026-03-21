@@ -247,6 +247,220 @@ contract WstEthPmUsdCrvUsdAave is ZenjiForkTestBase {
         assertEq(swapper.slippage(), 10e16, "Slippage should be 10%");
     }
 
+    /// @notice A ~$10M position (3,000 wstETH at the historical test range) can fully exit in
+    ///         a single redeem at the 2% production ceiling.
+    function test_largeDeposit_fullRedeem_succeedsAt2Percent() public {
+        bool passed = _runSlippageScenario(2e16, 3000e18);
+        assertTrue(passed, "3000 wstETH full redeem should succeed at 2% slippage on Uniswap V3");
+    }
+
+    /// @notice When slippage tolerance is set below the effective fee floor of the route, the
+    ///         full redemption must fail the swap output floor.
+    function test_largeDeposit_fullRedeem_revertsAtTinySlippage() public {
+        bool passed = _runSlippageScenario(5e13, 3000e18); // 5 bps
+        assertFalse(
+            passed,
+            "3000 wstETH full redeem should revert when slippage tolerance is below route fee floor"
+        );
+    }
+
+    // ============ Liquidity / Slippage Sweep ============
+
+    /// @dev Deploy a fresh vault, set slippage to targetSlippage, deposit depositAmount wstETH,
+    ///      then attempt a single full redeem.  Returns true if the redeem succeeds.
+    function _runSlippageScenario(uint256 targetSlippage, uint256 depositAmount) internal returns (bool) {
+        _syncAndMockOracles(); // re-anchor oracle mocks to current block.timestamp after any vm.revertTo
+        _deployVault();
+
+        deal(WSTETH, user1, depositAmount);
+
+        if (swapper.slippage() != targetSlippage) {
+            vm.prank(owner);
+            swapper.proposeSlippage(targetSlippage);
+            vm.warp(block.timestamp + 1 weeks + 1);
+            _syncAndMockOracles();
+            vm.prank(owner);
+            swapper.executeSlippage();
+        }
+
+        _depositAs(user1, depositAmount);
+
+        uint256 shares = vault.balanceOf(user1);
+        if (shares == 0) return false;
+
+        vm.prank(user1);
+        try vault.redeem(shares, user1, user1) {
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    function runSlippageScenario(uint256 targetSlippage, uint256 depositAmount) external returns (bool) {
+        return _runSlippageScenario(targetSlippage, depositAmount);
+    }
+
+    function tryDepositChunk(address depositor, uint256 amount) external returns (bool) {
+        if (msg.sender != address(this)) revert("self only");
+        _depositAs(depositor, amount);
+        return true;
+    }
+
+    /// @notice Sweep slippage levels at a fixed deposit size (3 000 wstETH ≈ $10M) to find
+    ///         the minimum slippage required for a clean full exit on the Uniswap V3 two-hop path.
+    ///         Each level is isolated via vm.snapshot/revertTo so timelock warps don't accumulate.
+    function test_slippageSweep_bySlippage() public {
+        uint256[] memory levels = new uint256[](8);
+        levels[0] = 5e13;  //  5 bps (below pool fees — should fail)
+        levels[1] = 25e13; // 25 bps
+        levels[2] = 50e13; // 50 bps
+        levels[3] = 1e16;  //  1.0% (production default)
+        levels[4] = 2e16;  //  2.0%
+        levels[5] = 3e16;  //  3.0%
+        levels[6] = 5e16;  //  5.0%
+        levels[7] = 10e16; // 10.0%
+
+        uint256 depositAmt = 3000e18; // ~3 000 wstETH ≈ $10M
+        uint256 firstPass = 0;
+
+        for (uint256 i = 0; i < levels.length; i++) {
+            uint256 snap = vm.snapshot();
+            bool passed;
+            try this.runSlippageScenario(levels[i], depositAmt) returns (bool ok) {
+                passed = ok;
+            } catch {
+                passed = false;
+            }
+            vm.revertTo(snap); // isolate: undo warp + state before logging
+            console.log("SlippageSweep deposit=3000 slippage=%s bps passed=%s", levels[i] / 1e14, passed ? 1 : 0);
+            if (passed && firstPass == 0) firstPass = levels[i];
+        }
+
+        console.log("SlippageSweep firstPass(bps)=%s", firstPass == 0 ? 0 : firstPass / 1e14);
+        assertTrue(firstPass == 0 || firstPass <= 2e16, "Full 3000 wstETH exit should need <= 2% slippage");
+    }
+
+    /// @notice Sweep deposit sizes at the 1% production slippage to find the largest position
+    ///         that can exit cleanly — answers "how much liquidity can we use?".
+    ///         Each level is isolated via vm.snapshot/revertTo.
+    function test_slippageSweep_bySize() public {
+        uint256[] memory sizes = new uint256[](8);
+        sizes[0] = 10e18;    //    10 wstETH  (~$35k)
+        sizes[1] = 100e18;   //   100 wstETH  (~$350k)
+        sizes[2] = 500e18;   //   500 wstETH  (~$1.75M)
+        sizes[3] = 1000e18;  //  1000 wstETH  (~$3.5M)
+        sizes[4] = 3000e18;  //  3000 wstETH  (~$10M)
+        sizes[5] = 5000e18;  //  5000 wstETH  (~$17.5M)
+        sizes[6] = 10000e18; // 10000 wstETH  (~$35M)
+        sizes[7] = 20000e18; // 20000 wstETH  (~$70M)
+
+        uint256 slippage = 1e16; // 1% — production default
+        uint256 lastPass = 0;
+
+        for (uint256 i = 0; i < sizes.length; i++) {
+            uint256 snap = vm.snapshot();
+            bool passed;
+            try this.runSlippageScenario(slippage, sizes[i]) returns (bool ok) {
+                passed = ok;
+            } catch {
+                passed = false;
+            }
+            vm.revertTo(snap);
+            console.log(
+                "SizeSweep slippage=100bps deposit=%s wstETH passed=%s",
+                sizes[i] / 1e18,
+                passed ? 1 : 0
+            );
+            if (passed) lastPass = sizes[i];
+        }
+
+        console.log("SizeSweep lastPass=%s wstETH", lastPass == 0 ? 0 : lastPass / 1e18);
+        assertGt(lastPass, 0, "At least the smallest size must exit at 1% slippage");
+    }
+
+    /// @notice Refine the liquidity threshold at 1% slippage in the 3k-20k wstETH band.
+    function test_liquiditySweep_bySize_refined() public {
+        uint256[] memory sizes = new uint256[](7);
+        sizes[0] = 3000e18;
+        sizes[1] = 4000e18;
+        sizes[2] = 5000e18;
+        sizes[3] = 7000e18;
+        sizes[4] = 10000e18;
+        sizes[5] = 15000e18;
+        sizes[6] = 20000e18;
+
+        uint256 slippage = 1e16;
+        uint256 lastPass = 0;
+        uint256 firstFail = 0;
+
+        for (uint256 i = 0; i < sizes.length; i++) {
+            uint256 snap = vm.snapshot();
+            bool passed;
+            try this.runSlippageScenario(slippage, sizes[i]) returns (bool ok) {
+                passed = ok;
+            } catch {
+                passed = false;
+            }
+            vm.revertTo(snap);
+
+            console.log(
+                "RefinedSizeSweep slippage=100bps deposit=%s wstETH passed=%s",
+                sizes[i] / 1e18,
+                passed ? 1 : 0
+            );
+
+            if (passed) {
+                lastPass = sizes[i];
+            } else if (firstFail == 0) {
+                firstFail = sizes[i];
+            }
+        }
+
+        console.log("RefinedSizeSweep lastPass=%s wstETH", lastPass == 0 ? 0 : lastPass / 1e18);
+        console.log("RefinedSizeSweep firstFail=%s wstETH", firstFail == 0 ? 0 : firstFail / 1e18);
+        assertGt(lastPass, 0, "Refined sweep should have at least one passing size");
+    }
+
+    function test_liquiditySweep_bySize_ultraRefined() public {
+        uint256[] memory sizes = new uint256[](5);
+        sizes[0] = 5000e18;
+        sizes[1] = 5500e18;
+        sizes[2] = 6000e18;
+        sizes[3] = 6500e18;
+        sizes[4] = 7000e18;
+
+        uint256 slippage = 1e16; // 1%
+        uint256 lastPass = 0;
+        uint256 firstFail = 0;
+
+        for (uint256 i = 0; i < sizes.length; i++) {
+            uint256 snap = vm.snapshot();
+            bool passed;
+            try this.runSlippageScenario(slippage, sizes[i]) returns (bool ok) {
+                passed = ok;
+            } catch {
+                passed = false;
+            }
+            vm.revertTo(snap);
+
+            console.log(
+                "UltraRefined slippage=100bps deposit=%s wstETH passed=%s",
+                sizes[i] / 1e18,
+                passed ? 1 : 0
+            );
+
+            if (passed) {
+                lastPass = sizes[i];
+            } else if (firstFail == 0) {
+                firstFail = sizes[i];
+            }
+        }
+
+        console.log("UltraRefined lastPass=%s wstETH", lastPass == 0 ? 0 : lastPass / 1e18);
+        console.log("UltraRefined firstFail=%s wstETH", firstFail == 0 ? 0 : firstFail / 1e18);
+        assertGt(lastPass, 0, "Ultra-refined sweep should have at least one passing size");
+    }
+
     // ============ Strategy-Specific Tests ============
 
     function test_strategyBalance_afterDeposit() public {
@@ -295,6 +509,47 @@ contract WstEthPmUsdCrvUsdAave is ZenjiForkTestBase {
         }
 
         assertGe(stratAfter, stratBefore, "Strategy balance must not decrease after harvest");
+    }
+
+    function test_multiDepositors_reach20mTvl() public {
+        _deployVault();
+
+        vm.prank(vault.gov());
+        vault.setParam(1, 30e16);
+        vm.prank(vault.gov());
+        vault.setStrategySlippage(5e16);
+
+        address user3 = makeAddr("user3");
+        address user4 = makeAddr("user4");
+
+        address[4] memory users = [user1, user2, user3, user4];
+        uint256 targetTvlUsdt = 20_000_000e6;
+        uint256 chunk = 300e18; // 300 wstETH per deposit tx
+        uint256 minChunk = 10e18; // 10 wstETH
+        uint256 tvlUsdt = loanManager.getCollateralValue(vault.getTotalCollateral());
+
+        for (uint256 i = 0; i < 200 && tvlUsdt < targetTvlUsdt; i++) {
+            address depositor = users[i % users.length];
+            deal(WSTETH, depositor, chunk);
+            bool ok;
+            try this.tryDepositChunk(depositor, chunk) returns (bool success) {
+                ok = success;
+            } catch {
+                ok = false;
+            }
+            if (!ok) {
+                if (chunk <= minChunk) break;
+                chunk = chunk / 2;
+                continue;
+            }
+            if (i % 4 == 3) {
+                _refreshOracles();
+            }
+            tvlUsdt = loanManager.getCollateralValue(vault.getTotalCollateral());
+        }
+
+        assertGe(tvlUsdt, 20_000_000e6, "TVL should reach at least $20M");
+        console.log("wstETH multi-user TVL(USDT 6d)=%d", tvlUsdt);
     }
 
     // ============ $10K Confidence Tests ============

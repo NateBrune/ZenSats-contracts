@@ -7,6 +7,7 @@ import { CurveTwoCryptoSwapper } from "../src/swappers/base/CurveTwoCryptoSwappe
 import { CurveThreeCryptoSwapper } from "../src/swappers/base/CurveThreeCryptoSwapper.sol";
 import { CbBtcWbtcUsdtSwapper } from "../src/swappers/base/CbBtcWbtcUsdtSwapper.sol";
 import { UniswapV3TwoHopSwapper } from "../src/swappers/base/UniswapV3TwoHopSwapper.sol";
+import { CbBtcUniswapV3TwoHopSwapper } from "../src/swappers/base/CbBtcUniswapV3TwoHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 
 // ============ Mainnet Addresses ============
@@ -43,6 +44,10 @@ contract CurveTwoCryptoSwapperTest is SwapperTestBase {
 
 contract CurveThreeCryptoSwapperTest is SwapperTestBase {
     CurveThreeCryptoSwapper public swapper;
+
+    function _expectedInitialSlippage() internal pure override returns (uint256) {
+        return 15e15; // 1.5% — TriCrypto pool fees ~0.74% consume most of a 1% budget
+    }
 
     function _deploySwapper() internal override {
         swapper = new CurveThreeCryptoSwapper(
@@ -111,6 +116,37 @@ contract UniswapV3TwoHopSwapperTest is SwapperTestBase {
             FEE_WSTETH_WETH,
             FEE_WETH_USDT,
             WSTETH_USD_ORACLE,
+            USDT_USD_ORACLE
+        );
+    }
+
+    function _swapper() internal view override returns (BaseSwapper) {
+        return swapper;
+    }
+}
+
+// ============ CbBtcUniswapV3TwoHopSwapperTest ============
+
+contract CbBtcUniswapV3TwoHopSwapperTest is SwapperTestBase {
+    address constant CBBTC = 0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf;
+    // cbBTC/WBTC 0.01% pool: 0xe8f7c89C5eFa061e340f2d2F206EC78FD8f7e124
+    // WBTC/USDT  0.3%  pool: 0x9Db9e0e53058C89e5B94e29621a205198648425B
+    address constant UNISWAP_ROUTER = 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45;
+    uint24 constant CBBTC_WBTC_FEE = 100;    // 0.01%
+    uint24 constant WBTC_USDT_FEE = 3000;    // 0.3%
+
+    CbBtcUniswapV3TwoHopSwapper public swapper;
+
+    function _deploySwapper() internal override {
+        swapper = new CbBtcUniswapV3TwoHopSwapper(
+            owner,
+            CBBTC,
+            USDT,
+            WBTC,
+            UNISWAP_ROUTER,
+            CBBTC_WBTC_FEE,
+            WBTC_USDT_FEE,
+            CBBTC_USD_ORACLE,
             USDT_USD_ORACLE
         );
     }
