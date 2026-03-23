@@ -69,4 +69,10 @@ interface IYieldStrategy {
 
     /// @notice Returns the vault address
     function vault() external view returns (address);
+
+    // @notice tranfer owner with no timelock
+    function transferOwnerFromVault(address newOwner) external;
+
+    // @notice set strategy slippage
+    function setSlippage(uint256 newSlippage) external;
 }

@@ -13,9 +13,11 @@ import { SafeTransferLib } from "./libraries/SafeTransferLib.sol";
 import { ZenjiCoreLib } from "./libraries/ZenjiCoreLib.sol";
 import { ZenjiViewHelper } from "./ZenjiViewHelper.sol";
 
-interface IStrategySlippageConfig {
+/// @dev Minimal interface for propagating slippage to swappers (avoids adding setSlippage to ISwapper).
+interface ISwapperSlippageConfig {
     function setSlippage(uint256 newSlippage) external;
 }
+
 
 /// @title Zenji
 /// @notice ERC4626-compliant conservative collateral yield vault using loan managers and yield strategies
@@ -32,7 +34,6 @@ contract Zenji is ERC20, IERC4626 {
     uint256 public constant MIN_TARGET_LTV = 15e16; // 15%
     uint256 public constant MAX_TARGET_LTV = 65e16; // 65%
     uint256 internal constant DEFAULT_LOAN_BANDS = 4; // TODO: This should live in llamaloanmanager
-    uint256 internal constant MIN_DEPOSIT = 1e4;
     uint256 public constant MAX_FEE_RATE = 2e17; // 20%
     // VIRTUAL_SHARE_OFFSET is now a virtual function — see bottom of contract
     uint256 public constant COOLDOWN_BLOCKS = 1;
@@ -112,8 +113,6 @@ contract Zenji is ERC20, IERC4626 {
         address indexed currentSwapper, address indexed newSwapper, uint256 effectiveTime
     );
     event SwapperChangeCancelled(address indexed cancelledSwapper);
-    event StrategySlippageUpdated(address indexed strategy, uint256 newSlippage);
-
     // Fee/LTV change events use ParamUpdated above
 
     // Strategy events
@@ -625,6 +624,8 @@ contract Zenji is ERC20, IERC4626 {
             gov = msg.sender;
             pendingGov = address(0);
             emit GovernanceUpdated(msg.sender);
+            // Propagate to strategy if it supports vault-initiated ownership transfer
+            yieldStrategy.transferOwnerFromVault(msg.sender);
         } else {
             if (msg.sender != pendingGuardian) revert Unauthorized();
             guardian = msg.sender;
@@ -722,7 +723,7 @@ contract Zenji is ERC20, IERC4626 {
     }
 
     /// @notice Set vault parameter:
-    /// 0=feeRate, 1=targetLtv, 2=depositCap, 3=bountyRate, 4=maxSlippage
+    /// 0=feeRate, 1=targetLtv, 2=depositCap, 3=bountyRate, 4=maxSlippage (propagates to strategy and swapper)
     /// @dev Gov-only. All parameter changes take effect immediately.
     function setParam(uint8 p, uint256 v) external onlyGov {
         if (p == 0) {
@@ -746,13 +747,9 @@ contract Zenji is ERC20, IERC4626 {
             if (v == 0 || v > MAX_VAULT_SLIPPAGE) revert InvalidSlippage();
             emit ParamUpdated(p, maxSlippage, v);
             maxSlippage = v;
+            yieldStrategy.setSlippage(v);
+            if (address(swapper) != address(0)) ISwapperSlippageConfig(address(swapper)).setSlippage(v);
         }
-    }
-
-    /// @notice Forward slippage config updates to strategies that expose setSlippage(uint256)
-    function setStrategySlippage(uint256 newSlippage) external onlyGov {
-        IStrategySlippageConfig(address(yieldStrategy)).setSlippage(newSlippage);
-        emit StrategySlippageUpdated(address(yieldStrategy), newSlippage);
     }
 
     // ============ View Functions ============
@@ -835,7 +832,7 @@ contract Zenji is ERC20, IERC4626 {
 
     /// @notice Internal deposit logic shared by deposit() and mint()
     function _deposit(uint256 assets, uint256 sharesToMint, address receiver) internal {
-        if (assets < MIN_DEPOSIT) revert AmountTooSmall();
+        if (assets < MIN_DEPOSIT()) revert AmountTooSmall();
         if (sharesToMint == 0) revert AmountTooSmall();
         if (emergencyMode) revert EmergencyModeActive();
         if (depositCap > 0 && getTotalCollateral() + assets > depositCap) {
@@ -1123,11 +1120,18 @@ contract Zenji is ERC20, IERC4626 {
         return IERC20Metadata(address(collateralAsset)).decimals();
     }
 
-    // ============ Virtual share offset ============
+    // ============ Virtual share offset & deposit floor ============
 
     /// @notice Virtual share offset for ERC4626 inflation attack mitigation
     /// @dev Override in implementation contracts to customize per collateral type
     function VIRTUAL_SHARE_OFFSET() public pure virtual returns (uint256) {
         return 1e5;
+    }
+
+    /// @notice Minimum deposit in collateral base units
+    /// @dev Override in implementation contracts to tune per collateral type.
+    ///      Should be >= VIRTUAL_SHARE_OFFSET() to preserve inflation-attack economics.
+    function MIN_DEPOSIT() public pure virtual returns (uint256) {
+        return 1e4;
     }
 }

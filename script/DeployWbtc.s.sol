@@ -68,7 +68,8 @@ contract DeployWbtc is Script {
             address(swapper),
             7300,
             7800,
-            address(0)
+            address(0),
+            0 // eMode: disabled
         );
 
         UsdtIporYieldStrategy strategy = new UsdtIporYieldStrategy(
@@ -94,6 +95,7 @@ contract DeployWbtc is Script {
 
         loanManager.initializeVault(address(vault));
         strategy.initializeVault(address(vault));
+        swapper.setVault(address(vault));
 
         vm.stopBroadcast();
 

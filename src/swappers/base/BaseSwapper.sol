@@ -1,27 +1,25 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import { TimelockLib } from "../../libraries/TimelockLib.sol";
 import { ISwapper } from "../../interfaces/ISwapper.sol";
 
 /// @title BaseSwapper
-/// @notice Shared governance + timelocked slippage for all swappers
+/// @notice Shared governance + direct slippage for all swappers.
+///         Slippage can be set immediately by gov or by the registered vault.
 abstract contract BaseSwapper {
-    using TimelockLib for TimelockLib.TimelockData;
-
     uint256 public constant PRECISION = 1e18;
-    uint256 public constant TIMELOCK_DELAY = 1 weeks;
     uint256 public slippage;
 
     address public gov;
     address public pendingGov;
-    TimelockLib.TimelockData private _slippageTimelock;
+    /// @notice Vault address authorised to call setSlippage (set once via setVault)
+    address public vault;
 
     event GovernanceTransferStarted(address indexed previousGov, address indexed newGov);
     event GovernanceUpdated(address indexed newGov);
-    event SlippageProposed(uint256 newSlippage, uint256 executeAfter);
-    event SlippageExecuted(uint256 newSlippage);
-    event SlippageCancelled();
+    event GovTransferredFromVault(address indexed previousGov, address indexed newGov);
+    event SlippageUpdated(uint256 newSlippage);
+    event VaultSet(address indexed vault_);
 
     error Unauthorized();
     error InvalidSlippage();
@@ -37,25 +35,22 @@ abstract contract BaseSwapper {
         slippage = 1e16; // 1% initial slippage
     }
 
-    /// @notice Propose new slippage tolerance
-    /// @param newSlippage New slippage in 1e18 precision (e.g., 5e16 = 5%)
-    function proposeSlippage(uint256 newSlippage) external onlyGov {
+    /// @notice Register the vault that is allowed to call setSlippage
+    /// @dev Called once during deployment by gov. Only gov can call this.
+    function setVault(address vault_) external onlyGov {
+        if (vault_ == address(0)) revert ISwapper.InvalidAddress();
+        vault = vault_;
+        emit VaultSet(vault_);
+    }
+
+    /// @notice Set slippage tolerance directly
+    /// @dev Callable by gov or the registered vault (vault propagates from setParam).
+    /// @param newSlippage New slippage in 1e18 precision (e.g. 5e16 = 5%)
+    function setSlippage(uint256 newSlippage) external {
+        if (msg.sender != gov && msg.sender != vault) revert Unauthorized();
         if (newSlippage == 0 || newSlippage >= PRECISION) revert InvalidSlippage();
-        _slippageTimelock.propose(newSlippage, TIMELOCK_DELAY);
-        emit SlippageProposed(newSlippage, block.timestamp + TIMELOCK_DELAY);
-    }
-
-    /// @notice Execute slippage change after timelock
-    function executeSlippage() external onlyGov {
-        uint256 newSlippage = _slippageTimelock.execute();
         slippage = newSlippage;
-        emit SlippageExecuted(newSlippage);
-    }
-
-    /// @notice Cancel pending slippage change
-    function cancelSlippage() external onlyGov {
-        _slippageTimelock.cancel();
-        emit SlippageCancelled();
+        emit SlippageUpdated(newSlippage);
     }
 
     /// @notice Start governance transfer
@@ -71,5 +66,16 @@ abstract contract BaseSwapper {
         gov = msg.sender;
         pendingGov = address(0);
         emit GovernanceUpdated(msg.sender);
+    }
+
+    /// @notice Transfer governance directly — callable only by the registered vault.
+    /// @dev Mirrors transferOwnerFromVault in strategies. Bypasses two-step to match
+    ///      vault-initiated ownership handoffs during protocol migrations.
+    function transferGovFromVault(address newGov_) external {
+        if (msg.sender != vault) revert Unauthorized();
+        if (newGov_ == address(0)) revert ISwapper.InvalidAddress();
+        emit GovTransferredFromVault(gov, newGov_);
+        gov = newGov_;
+        pendingGov = address(0);
     }
 }

@@ -32,4 +32,10 @@ contract ZenjiWstEthPmUsd is Zenji {
     function VIRTUAL_SHARE_OFFSET() public pure override returns (uint256) {
         return 3e16;
     }
+
+    /// @notice 3e16 = 0.03 wstETH ≈ $114 at $3,800/wstETH.
+    /// Must be >= VIRTUAL_SHARE_OFFSET to preserve inflation-attack economics.
+    function MIN_DEPOSIT() public pure override returns (uint256) {
+        return 3e16;
+    }
 }

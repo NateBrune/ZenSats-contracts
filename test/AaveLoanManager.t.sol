@@ -65,6 +65,8 @@ contract MockAavePool is IAavePool {
             .executeOperation(asset, amount, 0, receiverAddress, params);
         IERC20(asset).transferFrom(receiverAddress, address(this), amount);
     }
+    function setUserEMode(uint8) external {}
+    function getUserEMode(address) external pure returns (uint256) { return 0; }
 }
 
 contract MockOracle {
@@ -161,7 +163,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             address(swapper),
             7500,
             8000,
-            vault
+            vault,
+            0 // eMode: disabled
         );
         manager = ILoanManager(address(aaveManager));
     }
@@ -178,7 +181,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             address(swapper),
             7500,
             8000,
-            address(0)
+            address(0),
+            0 // eMode: disabled
         );
         return ILoanManager(address(deferred));
     }
@@ -486,7 +490,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             address(swapper),
             7500,
             8000,
-            vault
+            vault,
+            0 // eMode: disabled
         );
     }
 
@@ -503,7 +508,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             address(swapper),
             7500,
             8000,
-            vault
+            vault,
+            0 // eMode: disabled
         );
     }
 
@@ -520,7 +526,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             address(swapper),
             7500,
             8000,
-            vault
+            vault,
+            0 // eMode: disabled
         );
     }
 
@@ -537,7 +544,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             address(swapper),
             7500,
             8000,
-            vault
+            vault,
+            0 // eMode: disabled
         );
     }
 
@@ -554,7 +562,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             address(swapper),
             7500,
             8000,
-            vault
+            vault,
+            0 // eMode: disabled
         );
     }
 
@@ -571,7 +580,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             address(swapper),
             7500,
             8000,
-            vault
+            vault,
+            0 // eMode: disabled
         );
     }
 
@@ -588,7 +598,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             address(swapper),
             7500,
             8000,
-            vault
+            vault,
+            0 // eMode: disabled
         );
     }
 
@@ -605,7 +616,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             address(swapper),
             0,
             8000,
-            vault
+            vault,
+            0 // eMode: disabled
         );
     }
 
@@ -622,7 +634,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             address(swapper),
             7500,
             0,
-            vault
+            vault,
+            0 // eMode: disabled
         );
     }
 
@@ -638,7 +651,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             address(swapper),
             7500,
             8000,
-            address(0)
+            address(0),
+            0 // eMode: disabled
         );
         assertEq(deferred.vault(), address(0));
     }

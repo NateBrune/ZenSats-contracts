@@ -92,6 +92,8 @@ contract ControlledMockStrategy is IYieldStrategy {
         return _balance > _costBasis ? _balance - _costBasis : 0;
     }
     function pendingRewards() external pure returns (uint256) { return 0; }
+    function transferOwnerFromVault(address) external pure { }
+    function setSlippage(uint256) external pure { }
     function name() external pure returns (string memory) { return "ControlledMock"; }
     function vault() external view returns (address) { return _vault; }
 }

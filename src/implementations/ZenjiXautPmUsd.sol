@@ -5,9 +5,11 @@ import { Zenji } from "../Zenji.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
-/// @notice Zenji vault implementation for WBTC/USDT using pmUSD/crvUSD strategy
-contract ZenjiWbtcPmUsd is Zenji {
-    address private constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
+/// @notice Zenji vault implementation for XAUT/USDT using pmUSD/crvUSD strategy
+/// @dev XAUT (Tether Gold) has 6 decimals. eMode category 43 ("XAUt USDC USDT GHO") on Aave V3
+///      enables 70% LTV when borrowing USDT against XAUT.
+contract ZenjiXautPmUsd is Zenji {
+    address private constant XAUT = 0x68749665FF8D2d112Fa859AA293F07A622782F38;
     address private constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
 
     constructor(
@@ -16,25 +18,25 @@ contract ZenjiWbtcPmUsd is Zenji {
         address _swapper,
         address _owner,
         address _viewHelper
-    ) Zenji(WBTC, USDT, _loanManager, _yieldStrategy, _swapper, _owner, _viewHelper) { }
+    ) Zenji(XAUT, USDT, _loanManager, _yieldStrategy, _swapper, _owner, _viewHelper) { }
 
     function name() public pure override(ERC20, IERC20Metadata) returns (string memory) {
-        return "Zen WBTC (pmUSD/crvUSD StakeDao) ";
+        return "Zen XAUT (pmUSD/crvUSD StakeDao)";
     }
 
     function symbol() public pure override(ERC20, IERC20Metadata) returns (string memory) {
-        return "zenWBTC-pmUSDcrvUSDStake";
+        return "zenXAUT-pmUSDcrvUSDStake";
     }
 
-    /// @notice 1e5 sat = 0.001 BTC ≈ $100 dead capital (at $100K/BTC).
-    /// Attack cost: ~$100. Dilution: ~10 bps at $100K TVL, ~1 bp at $1M TVL.
+    /// @notice 1e3 = 0.001 XAUT ≈ $4.50 dead capital (at $4500/oz).
+    /// Attack cost: ~$4.50. Dilution: ~1 bp at $45K TVL.
     function VIRTUAL_SHARE_OFFSET() public pure override returns (uint256) {
-        return 1e5;
+        return 1e3;
     }
 
-    /// @notice 1e5 sat = 0.001 BTC ≈ $100 at $100K/BTC.
+    /// @notice 2000 units = 0.002 XAUT ≈ $9 at $4500/oz.
     /// Must be >= VIRTUAL_SHARE_OFFSET to preserve inflation-attack economics.
     function MIN_DEPOSIT() public pure override returns (uint256) {
-        return 1e5;
+        return 2000;
     }
 }

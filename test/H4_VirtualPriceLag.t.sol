@@ -195,6 +195,7 @@ contract H4_VirtualPriceLagTest is Test {
             address(crv),
             address(pmUSD),
             vaultAddr,
+            address(this),
             address(usdtCrvUsdPool),
             address(lpPool),
             address(rewardVault),

@@ -79,6 +79,7 @@ contract DeployPmUsdWbtc is Script {
             CRV,
             PMUSD,
             address(0),
+            gov,
             USDT_CRVUSD_POOL,
             PMUSD_CRVUSD_POOL,
             STAKE_DAO_REWARD_VAULT,
@@ -103,7 +104,8 @@ contract DeployPmUsdWbtc is Script {
             address(swapper),
             7300,
             7800,
-            address(0)
+            address(0),
+            0 // eMode: disabled
         );
 
         ZenjiWbtcPmUsd vault = new ZenjiWbtcPmUsd(
@@ -116,6 +118,7 @@ contract DeployPmUsdWbtc is Script {
 
         loanManager.initializeVault(address(vault));
         strategy.initializeVault(address(vault));
+        swapper.setVault(address(vault));
 
         vm.stopBroadcast();
 

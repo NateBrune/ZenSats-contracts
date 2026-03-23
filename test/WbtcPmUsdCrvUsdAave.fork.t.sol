@@ -10,6 +10,7 @@ import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.so
 import { PmUsdCrvUsdStrategy } from "../src/strategies/PmUsdCrvUsdStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
+import { BaseSwapper } from "../src/swappers/base/BaseSwapper.sol";
 import { TimelockLib } from "../src/libraries/TimelockLib.sol";
 import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
 
@@ -114,6 +115,7 @@ contract WbtcPmUsdCrvUsdAave is ZenjiForkTestBase {
             CRV,
             PMUSD,
             expectedVaultAddress,
+            owner,
             USDT_CRVUSD_POOL,
             PMUSD_CRVUSD_POOL,
             STAKE_DAO_REWARD_VAULT,
@@ -138,7 +140,8 @@ contract WbtcPmUsdCrvUsdAave is ZenjiForkTestBase {
             address(swapper),
             7500,
             8000,
-            expectedVaultAddress
+            expectedVaultAddress,
+            0 // eMode: disabled
         );
 
         vault = new Zenji(
@@ -152,15 +155,14 @@ contract WbtcPmUsdCrvUsdAave is ZenjiForkTestBase {
         );
         require(address(vault) == expectedVaultAddress, "Vault address mismatch");
 
+        vm.prank(owner);
+        swapper.setVault(address(vault));
         yieldStrategy = strategy;
     }
 
     function _postDeploySetup() internal override {
         vm.prank(owner);
-        swapper.proposeSlippage(2e16);
-        vm.warp(block.timestamp + 1 weeks + 1);
-        vm.prank(owner);
-        swapper.executeSlippage();
+        swapper.setSlippage(1e16);
         _syncAndMockOracles();
     }
 
@@ -214,23 +216,19 @@ contract WbtcPmUsdCrvUsdAave is ZenjiForkTestBase {
         vault.executeSwapper();
     }
 
-    function test_slippageTimelock() public {
+    function test_setSlippage() public {
         _deployVault();
 
-        assertEq(swapper.slippage(), 2e16, "Slippage should be 2% after deploy setup");
+        assertEq(swapper.slippage(), 1e16, "Slippage should be 1% after deploy setup");
 
+        // Unauthorized caller cannot set slippage
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert(BaseSwapper.Unauthorized.selector);
+        swapper.setSlippage(10e16);
+
+        // Gov can set slippage directly
         vm.prank(owner);
-        swapper.proposeSlippage(10e16);
-
-        vm.prank(owner);
-        vm.expectRevert(TimelockLib.TimelockNotReady.selector);
-        swapper.executeSlippage();
-
-        vm.warp(block.timestamp + 1 weeks + 1);
-        _syncAndMockOracles();
-
-        vm.prank(owner);
-        swapper.executeSlippage();
+        swapper.setSlippage(10e16);
         assertEq(swapper.slippage(), 10e16, "Slippage should be 10%");
     }
 
@@ -258,11 +256,7 @@ contract WbtcPmUsdCrvUsdAave is ZenjiForkTestBase {
 
         if (swapper.slippage() != targetSlippage) {
             vm.prank(owner);
-            swapper.proposeSlippage(targetSlippage);
-            vm.warp(block.timestamp + 1 weeks + 1);
-            _syncAndMockOracles();
-            vm.prank(owner);
-            swapper.executeSlippage();
+            swapper.setSlippage(targetSlippage);
         }
 
         _depositAs(user1, depositAmount);
@@ -498,7 +492,7 @@ contract WbtcPmUsdCrvUsdAave is ZenjiForkTestBase {
         vm.prank(vault.gov());
         vault.setParam(1, 30e16);
         vm.prank(vault.gov());
-        vault.setStrategySlippage(5e16);
+        vault.setParam(4, 5e16);
 
         address user3 = makeAddr("user3");
         address user4 = makeAddr("user4");
@@ -971,13 +965,9 @@ contract WbtcPmUsdCrvUsdAave is ZenjiForkTestBase {
             _deployVault();
 
             // Propose + execute slippage change on swapper via gov
-            if (slippageLevels[i] != 1e16) {
+            if (slippageLevels[i] != swapper.slippage()) {
                 vm.prank(owner);
-                swapper.proposeSlippage(slippageLevels[i]);
-                vm.warp(block.timestamp + 8 days);
-                _syncAndMockOracles(); // re-sync after warp
-                vm.prank(owner);
-                swapper.executeSlippage();
+                swapper.setSlippage(slippageLevels[i]);
             }
 
             deal(WBTC, user1, depositAmount);
@@ -1031,5 +1021,450 @@ contract WbtcPmUsdCrvUsdAave is ZenjiForkTestBase {
         }
 
         console.log("firstSuccess_bps=%d", firstSuccess == 0 ? 0 : firstSuccess / 1e14);
+    }
+
+    /// @notice Deposit exactly vault.MIN_DEPOSIT() and fully redeem.
+    /// Confirms the contract-minimum path succeeds end-to-end on mainnet liquidity.
+    function test_minimumDeposit_fullRedeem() public {
+        _deployVault();
+
+        // Use the vault's own MIN_DEPOSIT() — production ZenjiWbtcPmUsd returns 1e5 sat (~$100),
+        // the base Zenji used in fork tests returns 1e4 sat (~$10).
+        uint256 minAmount = vault.MIN_DEPOSIT();
+        deal(WBTC, user1, minAmount);
+
+        uint256 shares = _depositAs(user1, minAmount);
+        assertGt(shares, 0, "Should receive shares for minimum deposit");
+
+        _refreshOracles();
+
+        uint256 received = _redeemAllAs(user1);
+        assertGt(received, 0, "Should receive collateral back for minimum deposit");
+        console.log("MinDeposit: deposited=%d sat received=%d sat", minAmount, received);
+    }
+
+    /// @notice Deposit 10 BTC (~$1M at $100k/BTC) and fully redeem.
+    /// Confirms a large round-trip within normal operating range succeeds.
+    function test_oneMillion_depositAndRedeem() public {
+        // 10 BTC ≈ $1M at $100k/BTC
+        uint256 depositAmount = 10e8; // 10 BTC in satoshis
+        bool passed = _runSlippageScenario(2e16, depositAmount);
+        assertTrue(passed, "10 BTC (~$1M) full redeem should succeed at 2% slippage");
+        console.log("$1M test: 10 BTC deposit+redeem at 2%% slippage passed");
+    }
+
+    // ============ TVL Ceiling / Uniswap Liquidity Tests ============
+
+    /// @dev Decode a low-level revert into a human-readable label for console output.
+    function _decodeRevertReason(bytes memory err, string memory step) internal pure returns (string memory) {
+        if (err.length < 4) return string(abi.encodePacked(step, ": revert (no data)"));
+        bytes4 sel;
+        assembly { sel := mload(add(err, 32)) }
+        if (sel == bytes4(keccak256("ExchangeFailed()")))
+            return string(abi.encodePacked(step, ": ExchangeFailed (Curve USDT->crvUSD output below oracle floor at 1% slippage)"));
+        if (sel == bytes4(keccak256("SwapperUnderperformed(uint256,uint256)")))
+            return string(abi.encodePacked(step, ": SwapperUnderperformed (Uniswap USDT->WBTC output below oracle floor)"));
+        if (sel == bytes4(keccak256("SlippageExceeded()")))
+            return string(abi.encodePacked(step, ": SlippageExceeded (Uniswap minAmountOut not met)"));
+        if (sel == bytes4(keccak256("InsufficientCollateral()")))
+            return string(abi.encodePacked(step, ": InsufficientCollateral (recovered WBTC < minOut after unwind)"));
+        if (sel == bytes4(keccak256("HealthTooLow()")))
+            return string(abi.encodePacked(step, ": HealthTooLow (Aave health < 1.1)"));
+        if (sel == bytes4(keccak256("Error(string)"))) {
+            if (err.length > 68) {
+                bytes memory msg_ = new bytes(err.length - 68);
+                for (uint256 i = 0; i < msg_.length; i++) msg_[i] = err[68 + i];
+                return string(abi.encodePacked(step, ": require(", string(msg_), ")"));
+            }
+            return string(abi.encodePacked(step, ": require (empty message)"));
+        }
+        bytes memory h = new bytes(8);
+        bytes16 chars = "0123456789abcdef";
+        for (uint256 k = 0; k < 4; k++) {
+            h[k * 2]     = chars[uint8(sel[k]) >> 4];
+            h[k * 2 + 1] = chars[uint8(sel[k]) & 0xf];
+        }
+        return string(abi.encodePacked(step, ": unknown selector 0x", string(h)));
+    }
+
+    /// @notice Exhaustively deposits until the protocol refuses all deposit sizes,
+    ///         reporting the true single-asset TVL ceiling at 30% target LTV.
+    function test_tvlCeiling_exhaustive() public {
+        _deployVault();
+        vm.prank(vault.gov()); vault.setParam(1, 30e16); // 30% target LTV
+        vm.prank(vault.gov()); vault.setParam(4, 5e16);  // 5% vault slippage
+
+        address[4] memory users = [user1, user2, makeAddr("user3"), makeAddr("user4")];
+        uint256 chunk = 10e8;   // 10 WBTC starting chunk
+        uint256 minChunk = 1e7; // 0.1 WBTC floor
+        string memory stopReason = "iter_cap";
+
+        for (uint256 i = 0; i < 500; i++) {
+            address depositor = users[i % users.length];
+            deal(WBTC, depositor, chunk);
+            bool ok;
+            try this.tryDepositChunk(depositor, chunk) returns (bool success) {
+                ok = success;
+            } catch {
+                ok = false;
+            }
+
+            if (!ok) {
+                if (chunk > minChunk) {
+                    chunk = chunk / 2;
+                    continue;
+                } else {
+                    stopReason = "ceiling_hit";
+                    break;
+                }
+            }
+
+            if (i % 4 == 0) _refreshOracles();
+            uint256 tvl = loanManager.getCollateralValue(vault.getTotalCollateral());
+            if (tvl >= 5_000_000e6  && tvl < 5_001_000e6)  console.log("WBTC Ceiling milestone: $5M");
+            if (tvl >= 10_000_000e6 && tvl < 10_001_000e6) console.log("WBTC Ceiling milestone: $10M");
+            if (tvl >= 20_000_000e6 && tvl < 20_001_000e6) console.log("WBTC Ceiling milestone: $20M");
+            if (tvl >= 30_000_000e6 && tvl < 30_001_000e6) console.log("WBTC Ceiling milestone: $30M");
+            if (tvl >= 50_000_000e6 && tvl < 50_001_000e6) console.log("WBTC Ceiling milestone: $50M");
+        }
+
+        uint256 tvlUsdt = loanManager.getCollateralValue(vault.getTotalCollateral());
+        console.log("WBTC TVL Ceiling stop_reason=%s", stopReason);
+        console.log("WBTC TVL Ceiling final_tvl_usdt6=%d", tvlUsdt);
+        console.log("WBTC TVL Ceiling final_chunk_sat=%d", chunk);
+        assertGt(tvlUsdt, 0, "Should have deposited something");
+    }
+
+    /// @notice Deposits multiple users toward the maximum achievable TVL, reporting the
+    ///         peak before Curve/Uniswap pool depth becomes binding.
+    function test_multiDepositors_maxTvl() public {
+        _deployVault();
+
+        vm.prank(vault.gov()); vault.setParam(1, 30e16);
+        vm.prank(vault.gov()); vault.setParam(4, 5e16);
+
+        address[4] memory users = [user1, user2, makeAddr("user3"), makeAddr("user4")];
+        uint256 targetTvlUsdt = 50_000_000e6; // push toward $50M (caps at pool depth)
+        uint256 chunk = 10e8;   // 10 WBTC per deposit tx
+        uint256 minChunk = 1e7; // 0.1 WBTC
+        uint256 tvlUsdt = 0;
+        uint256 iter = 0;
+
+        while (iter < 300 && tvlUsdt < targetTvlUsdt) {
+            address depositor = users[iter % users.length];
+            deal(WBTC, depositor, chunk);
+            bool ok;
+            try this.tryDepositChunk(depositor, chunk) returns (bool success) {
+                ok = success;
+            } catch {
+                ok = false;
+            }
+            if (!ok) {
+                if (chunk <= minChunk) break;
+                chunk = chunk / 2;
+                iter++;
+                continue;
+            }
+            iter++;
+            if (iter % 4 == 0) _refreshOracles();
+            tvlUsdt = loanManager.getCollateralValue(vault.getTotalCollateral());
+        }
+
+        console.log("WBTC MaxTvl reached TVL(USDT 6d)=%d", tvlUsdt);
+        console.log("WBTC MaxTvl final chunk size=%d sat", chunk);
+        assertGt(tvlUsdt, 3_000_000e6, "Should exceed $3M TVL");
+    }
+
+    /// @notice Pinpoints the Uniswap V3 WBTC/USDT 0.3% pool's per-tx USDT→WBTC slippage cliff
+    ///         at exactly 1% swapper tolerance.
+    /// @dev On every redeem the vault swaps ~5% USDT surplus back to WBTC via the swapper.
+    ///      Sweep from 50 to 500 WBTC to capture the single-depositor liquidity limit.
+    function test_uniswapSlippageCeiling_1pct() public {
+        uint256[] memory sizes = new uint256[](12);
+        sizes[0]  = 50e8;   //  50 WBTC  ~$5M
+        sizes[1]  = 75e8;   //  75 WBTC  ~$7.5M
+        sizes[2]  = 100e8;  // 100 WBTC  ~$10M
+        sizes[3]  = 125e8;  // 125 WBTC  ~$12.5M
+        sizes[4]  = 150e8;  // 150 WBTC  ~$15M
+        sizes[5]  = 175e8;  // 175 WBTC  ~$17.5M
+        sizes[6]  = 200e8;  // 200 WBTC  ~$20M  ← estimated boundary
+        sizes[7]  = 225e8;  // 225 WBTC  ~$22.5M
+        sizes[8]  = 250e8;  // 250 WBTC  ~$25M
+        sizes[9]  = 300e8;  // 300 WBTC  ~$30M
+        sizes[10] = 400e8;  // 400 WBTC  ~$40M
+        sizes[11] = 500e8;  // 500 WBTC  ~$50M
+
+        uint256 slippage = 1e16; // 1%
+        uint256 lastPass = 0;
+        uint256 firstFail = 0;
+
+        for (uint256 i = 0; i < sizes.length; i++) {
+            uint256 snap = vm.snapshot();
+            bool passed;
+            try this.runSlippageScenario(slippage, sizes[i]) returns (bool ok) {
+                passed = ok;
+            } catch {
+                passed = false;
+            }
+            vm.revertTo(snap);
+
+            // Surplus USDT swap estimate: deposit × $100k/BTC × 65% LTV × 5% buffer
+            uint256 approxSwapUsdtK = (sizes[i] * 3250) / 1e8 / 1000; // $K
+            console.log(
+                "WBTC UniswapCeiling slippage=100bps deposit=%s WBTC swapEst=$%sK passed=%s",
+                sizes[i] / 1e8,
+                approxSwapUsdtK,
+                passed ? 1 : 0
+            );
+
+            if (passed) {
+                lastPass = sizes[i];
+            } else if (firstFail == 0) {
+                firstFail = sizes[i];
+            }
+        }
+
+        console.log("WBTC UniswapCeiling lastPass=%s WBTC", lastPass / 1e8);
+        console.log("WBTC UniswapCeiling firstFail=%s WBTC", firstFail == 0 ? 0 : firstFail / 1e8);
+        assertGt(lastPass, 0, "At least 50 WBTC should pass at 1% slippage");
+    }
+
+    /// @notice Fine-grain bisection around the Uniswap WBTC/USDT 0.3% cliff at 1% slippage.
+    function test_uniswapSlippageCeiling_1pct_finegrain() public {
+        uint256[] memory sizes = new uint256[](10);
+        sizes[0] = 225e8; // 225 WBTC
+        sizes[1] = 250e8; // 250 WBTC
+        sizes[2] = 275e8; // 275 WBTC
+        sizes[3] = 300e8; // 300 WBTC
+        sizes[4] = 325e8; // 325 WBTC
+        sizes[5] = 350e8; // 350 WBTC
+        sizes[6] = 375e8; // 375 WBTC
+        sizes[7] = 400e8; // 400 WBTC
+        sizes[8] = 425e8; // 425 WBTC
+        sizes[9] = 450e8; // 450 WBTC
+
+        uint256 slippage = 1e16;
+        uint256 lastPass = 0;
+        uint256 firstFail = 0;
+
+        for (uint256 i = 0; i < sizes.length; i++) {
+            uint256 snap = vm.snapshot();
+            bool passed;
+            try this.runSlippageScenario(slippage, sizes[i]) returns (bool ok) {
+                passed = ok;
+            } catch {
+                passed = false;
+            }
+            vm.revertTo(snap);
+
+            console.log(
+                "WBTC UniswapFine slippage=100bps deposit=%s WBTC passed=%s",
+                sizes[i] / 1e8,
+                passed ? 1 : 0
+            );
+
+            if (passed) { lastPass = sizes[i]; }
+            else if (firstFail == 0) { firstFail = sizes[i]; }
+        }
+
+        console.log("WBTC UniswapFine lastPass=%s WBTC  firstFail=%s WBTC", lastPass / 1e8, firstFail / 1e8);
+        assertGt(lastPass, 0, "Fine-grain: at least 225 WBTC should pass");
+    }
+
+    /// @notice Finds the exact single-depositor safe TVL cap at 1% slippage via open-ended binary search.
+    ///
+    /// @dev Runs three phases:
+    ///   Phase 1 — coarse sweep (10 WBTC steps, 10..200) to bracket the cliff.
+    ///   Phase 2 — binary search within that bracket at 1 WBTC resolution.
+    ///   Phase 3 — clean deposit + redeem at the safe cap to measure actual round-trip cost.
+    ///   Phase 4 — trace the first failing size to expose the exact revert reason.
+    function test_singleDepositorSafeTvlCap_1pct() public {
+        uint256 slippage = 1e16; // 1%
+
+        // ── Phase 1: coarse sweep at 50 WBTC steps ────────────────────────────────────
+        uint256 clo = 0;
+        uint256 chi = 0;
+        {
+            uint256[] memory coarse = new uint256[](20);
+            for (uint256 i = 0; i < 20; i++) coarse[i] = (i + 1) * 50e8; // 50..1000 WBTC
+            for (uint256 i = 0; i < coarse.length; i++) {
+                uint256 snap = vm.snapshot();
+                bool passed;
+                try this.runSlippageScenario(slippage, coarse[i]) returns (bool ok) { passed = ok; } catch {}
+                vm.revertTo(snap);
+                if (passed) { clo = coarse[i]; }
+                else if (chi == 0) { chi = coarse[i]; break; }
+            }
+        }
+        require(clo > 0, "Not even 50 WBTC passes at 1% - pool is broken");
+        require(chi > 0, "Everything passes up to 1000 WBTC - extend upper bound");
+
+        // ── Phase 2: binary search within [clo, chi] at 5 WBTC resolution ────────────
+        uint256 lo = clo;
+        uint256 hi = chi;
+        while (hi - lo > 5e8) {
+            uint256 mid = lo + ((hi - lo) / 2 / 5e8) * 5e8;
+            uint256 snap = vm.snapshot();
+            bool passed;
+            try this.runSlippageScenario(slippage, mid) returns (bool ok) { passed = ok; } catch {}
+            vm.revertTo(snap);
+            if (passed) lo = mid;
+            else        hi = mid;
+        }
+        uint256 safeCap   = lo;
+        uint256 firstFail = hi;
+
+        // ── Phase 3: clean measurement at safeCap ─────────────────────────────────────
+        uint256 depositUsd;
+        uint256 redeemUsd;
+        uint256 roundTripBps;
+        {
+            uint256 snap = vm.snapshot();
+            _syncAndMockOracles();
+            _deployVault();
+            deal(WBTC, user1, safeCap);
+            vm.prank(owner); swapper.setSlippage(slippage);
+
+            _depositAs(user1, safeCap);
+            _syncAndMockOracles();
+
+            uint256 sharesAll = vault.balanceOf(user1);
+            vm.prank(user1);
+            uint256 wbtcOut = vault.redeem(sharesAll, user1, user1);
+
+            // BTC/USD oracle: 8-decimal Chainlink price. WBTC also has 8 decimals.
+            (, int256 rawPrice,,,) = IChainlinkOracle(BTC_USD_ORACLE).latestRoundData();
+            uint256 price8 = uint256(rawPrice);
+            depositUsd   = (safeCap * price8) / 1e16; // whole dollars
+            redeemUsd    = (wbtcOut * price8) / 1e16;
+            roundTripBps = safeCap > wbtcOut ? ((safeCap - wbtcOut) * 10000) / safeCap : 0;
+
+            vm.revertTo(snap);
+        }
+
+        // ── Phase 4: trace the first failing size ─────────────────────────────────────
+        string memory failReason = "not found";
+        uint256 traceTarget = firstFail;
+        for (uint256 probe = firstFail; probe <= firstFail + 20 * 5e8; probe += 5e8) {
+            uint256 snap = vm.snapshot();
+            bool passed;
+            try this.runSlippageScenario(slippage, probe) returns (bool ok) { passed = ok; } catch {}
+            vm.revertTo(snap);
+            if (!passed) { traceTarget = probe; break; }
+        }
+
+        {
+            uint256 snap = vm.snapshot();
+            _syncAndMockOracles();
+            _deployVault();
+            deal(WBTC, user1, traceTarget);
+            vm.prank(owner); swapper.setSlippage(slippage);
+
+            vm.startPrank(user1);
+            IERC20(WBTC).approve(address(vault), traceTarget);
+            bool depositOk;
+            try vault.deposit(traceTarget, user1) returns (uint256) {
+                depositOk = true;
+            } catch (bytes memory err) {
+                depositOk = false;
+                failReason = _decodeRevertReason(err, "deposit");
+            }
+            vm.stopPrank();
+
+            if (depositOk) {
+                vm.roll(block.number + 1);
+                _syncAndMockOracles();
+                uint256 sharesAll = vault.balanceOf(user1);
+                vm.prank(user1);
+                try vault.redeem(sharesAll, user1, user1) returns (uint256) {
+                    failReason = "passed in trace (pool state shifted)";
+                } catch (bytes memory err) {
+                    failReason = _decodeRevertReason(err, "redeem");
+                }
+            }
+            vm.revertTo(snap);
+        }
+
+        // ── Report ─────────────────────────────────────────────────────────────────────
+        console.log("=== WBTC Single-depositor safe TVL cap at 1%% slippage ===");
+        console.log("Max safe deposit:    %s WBTC",  safeCap / 1e8);
+        console.log("First failing size:  %s WBTC",  firstFail / 1e8);
+        console.log("Deposit value:      ~$%s",       depositUsd);
+        console.log("Redeem  value:      ~$%s",       redeemUsd);
+        console.log("Round-trip cost:     %s bps",    roundTripBps);
+        console.log("Failure reason:      %s",        failReason);
+
+        assertGt(safeCap, 0, "Must find a passing size");
+        assertLe(roundTripBps, 100, "Round-trip cost at cap must be within 1%%");
+    }
+
+    /// @notice Diagnostic: shows exactly WHY single-depositor transactions fail above the cliff.
+    /// @dev For WBTC, deposit routes via Curve USDT/crvUSD pool; redeem routes USDT surplus
+    ///      via Uniswap V3 WBTC/USDT 0.3%. At large sizes the Uniswap output can fall below
+    ///      the oracle floor, triggering SwapperUnderperformed.
+    function test_singleDepositorFailureDiagnosis() public {
+        uint256 slippage = 1e16; // 1%
+
+        // Straddle the expected Uniswap cliff (~200-250 WBTC at this fork block).
+        // Re-run test_uniswapSlippageCeiling_1pct to update if oracle prices shift.
+        uint256 failSize = 300e8; // 300 WBTC — expected to fail at 1%
+        uint256 safeSize = 150e8; // 150 WBTC — expected to pass at 1%
+
+        _syncAndMockOracles();
+        _deployVault();
+        vm.prank(owner); swapper.setSlippage(slippage);
+
+        console.log("");
+        console.log("=== WBTC Deposit / Redeem path analysis ===");
+        console.log("  Deposit: WBTC -> Aave (collateral) -> borrow USDT");
+        console.log("           -> [USDT/crvUSD Curve pool] -> crvUSD");
+        console.log("           -> [pmUSD/crvUSD Curve pool] -> LP staked in Stake DAO");
+        console.log("  Redeem:  LP -> crvUSD -> USDT repays Aave debt");
+        console.log("           -> 5%% USDT surplus -> [Uniswap V3 WBTC/USDT 0.3%%] -> WBTC");
+        console.log("");
+
+        // ── Attempt deposit at failing size ────────────────────────────────────
+        console.log("=== Live vault.deposit(%s WBTC, 1%% slippage) ===", failSize / 1e8);
+        deal(WBTC, user1, failSize);
+        vm.startPrank(user1);
+        IERC20(WBTC).approve(address(vault), failSize);
+        bool depositOk;
+        try vault.deposit(failSize, user1) returns (uint256 shares) {
+            depositOk = true;
+            console.log("  Deposit PASSED, shares: %s", shares);
+        } catch (bytes memory err) {
+            depositOk = false;
+            console.log("  Deposit FAILED: %s", _decodeRevertReason(err, "deposit"));
+        }
+        vm.stopPrank();
+
+        if (depositOk) {
+            vm.roll(block.number + 1);
+            _syncAndMockOracles();
+            uint256 shares = vault.balanceOf(user1);
+            vm.prank(user1);
+            try vault.redeem(shares, user1, user1) returns (uint256 wbtcOut) {
+                console.log("  Redeem PASSED, received %s WBTC", wbtcOut / 1e8);
+                console.log("  --> Neither step failed (pool liquidity shifted at fork block)");
+            } catch (bytes memory err) {
+                console.log("  Redeem FAILED: %s", _decodeRevertReason(err, "redeem"));
+                console.log("  --> Failure at redeem-time Uniswap USDT->WBTC swap (pool depth exceeded).");
+            }
+        } else {
+            console.log("  --> Failure at DEPOSIT (Curve USDT/crvUSD), not at redeem-time Uniswap swap.");
+        }
+
+        // ── Control: safe size should succeed ────────────────────────────────
+        console.log("");
+        console.log("=== Control: vault.deposit(%s WBTC, 1%% slippage) ===", safeSize / 1e8);
+        deal(WBTC, user2, safeSize);
+        vm.startPrank(user2);
+        IERC20(WBTC).approve(address(vault), safeSize);
+        try vault.deposit(safeSize, user2) returns (uint256 shares) {
+            console.log("  Control deposit PASSED, shares: %s (expected)", shares);
+        } catch (bytes memory err) {
+            console.log("  Control deposit FAILED: %s (unexpected)", _decodeRevertReason(err, "deposit"));
+        }
+        vm.stopPrank();
     }
 }

@@ -101,7 +101,8 @@ contract H5_ATokenDonation is ZenjiForkTestBase {
             address(swapper),
             7500,
             8000,
-            expectedVaultAddress
+            expectedVaultAddress,
+            0 // eMode: disabled
         );
 
         vault = new Zenji(
@@ -115,15 +116,14 @@ contract H5_ATokenDonation is ZenjiForkTestBase {
         );
         require(address(vault) == expectedVaultAddress, "Vault address mismatch");
 
+        vm.prank(owner);
+        swapper.setVault(address(vault));
         yieldStrategy = strategy;
     }
 
     function _postDeploySetup() internal override {
         vm.prank(owner);
-        swapper.proposeSlippage(2e16);
-        vm.warp(block.timestamp + 1 weeks + 1);
-        vm.prank(owner);
-        swapper.executeSlippage();
+        swapper.setSlippage(2e16);
         _syncAndMockOracles();
     }
 

@@ -9,6 +9,7 @@ import { LlamaLoanManager } from "../src/lenders/LlamaLoanManager.sol";
 import { CurveTwoCryptoSwapper } from "../src/swappers/base/CurveTwoCryptoSwapper.sol";
 import { CurveThreeCryptoSwapper } from "../src/swappers/base/CurveThreeCryptoSwapper.sol";
 import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
+import { BaseSwapper } from "../src/swappers/base/BaseSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import { UsdtIporYieldStrategy } from "../src/strategies/UsdtIporYieldStrategy.sol";
 import { IporYieldStrategy } from "../src/strategies/IporYieldStrategy.sol";
@@ -205,7 +206,8 @@ contract ProtocolSmokeTests is Test {
             address(swapper),
             7500, // 75% max LTV
             8000, // 80% liquidation threshold
-            expectedVaultAddress
+            expectedVaultAddress,
+            0 // eMode: disabled
         );
 
         // Deploy vault
@@ -222,14 +224,12 @@ contract ProtocolSmokeTests is Test {
         require(address(vault) == expectedVaultAddress, "Vault address mismatch");
 
         vm.prank(owner);
-        swapper.proposeSlippage(1e16);
+        swapper.setVault(address(vault));
         vm.warp(block.timestamp + 1 weeks + 1);
         _syncOracles();
         _mockOracle(BTC_USD_ORACLE);
         _mockOracle(USDT_USD_ORACLE);
         _mockOracle(CRVUSD_USD_ORACLE);
-        vm.prank(owner);
-        swapper.executeSlippage();
         assertEq(swapper.slippage(), 1e16, "Slippage should match deployment default (1%)");
 
         // Approve vault for user
@@ -308,6 +308,7 @@ contract ProtocolSmokeTests is Test {
             CRV,
             PMUSD,
             expectedVaultAddress,
+            owner,
             USDT_CRVUSD_POOL,
             PMUSD_CRVUSD_POOL,
             STAKE_DAO_REWARD_VAULT,
@@ -332,7 +333,8 @@ contract ProtocolSmokeTests is Test {
             address(swapper),
             7500,
             8000,
-            expectedVaultAddress
+            expectedVaultAddress,
+            0 // eMode: disabled
         );
 
         Zenji vault = new Zenji(
@@ -348,15 +350,13 @@ contract ProtocolSmokeTests is Test {
         require(address(vault) == expectedVaultAddress, "Vault address mismatch");
 
         vm.prank(owner);
-        swapper.proposeSlippage(1e16);
+        swapper.setVault(address(vault));
         vm.warp(block.timestamp + 1 weeks + 1);
         _syncOracles();
         _mockOracle(BTC_USD_ORACLE);
         _mockOracle(USDT_USD_ORACLE);
         _mockOracle(CRVUSD_USD_ORACLE);
         _mockOracle(CRV_USD_ORACLE);
-        vm.prank(owner);
-        swapper.executeSlippage();
         assertEq(swapper.slippage(), 1e16, "Slippage should match deployment default (1%)");
 
         vm.prank(user1);
@@ -620,27 +620,20 @@ contract ProtocolSmokeTests is Test {
             owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE
         );
 
-        // Test slippage proposal and execution
+        // Gov sets slippage directly
         vm.prank(owner);
-        swapper.proposeSlippage(10e16); // 10%
+        swapper.setSlippage(10e16); // 10%
+        assertEq(swapper.slippage(), 10e16, "Slippage should be updated to 10%");
 
-        // Wait for timelock
-        vm.warp(block.timestamp + 1 weeks + 1);
-
+        // Gov can update slippage again
         vm.prank(owner);
-        swapper.executeSlippage();
+        swapper.setSlippage(5e16); // 5%
+        assertEq(swapper.slippage(), 5e16, "Slippage should be updated to 5%");
 
-        assertEq(swapper.slippage(), 10e16, "Slippage should be updated");
-
-        // Test slippage cancellation
-        vm.prank(owner);
-        swapper.proposeSlippage(15e16); // 15%
-
-        vm.prank(owner);
-        swapper.cancelSlippage();
-
-        // Should still be 10%
-        assertEq(swapper.slippage(), 10e16, "Slippage should remain unchanged after cancel");
+        // Non-gov cannot set slippage
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert(BaseSwapper.Unauthorized.selector);
+        swapper.setSlippage(1e16);
 
         console.log("Swapper slippage management test passed!");
     }

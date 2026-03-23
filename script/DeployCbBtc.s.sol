@@ -78,7 +78,8 @@ contract DeployCbBtc is Script {
             address(swapper),
             7300,
             7800,
-            address(0)
+            address(0),
+            0 // eMode: disabled
         );
 
         UsdtIporYieldStrategy strategy = new UsdtIporYieldStrategy(

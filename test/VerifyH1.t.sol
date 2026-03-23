@@ -122,6 +122,8 @@ contract H1MockYieldStrategy is IYieldStrategy {
     function costBasis() external view returns (uint256) { return _costBasis; }
     function unrealizedProfit() external pure returns (uint256) { return 0; }
     function pendingRewards() external pure returns (uint256) { return 0; }
+    function transferOwnerFromVault(address) external pure { }
+    function setSlippage(uint256) external pure { }
     function name() external pure returns (string memory) { return "H1 Mock Strategy"; }
 }
 

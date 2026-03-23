@@ -814,6 +814,7 @@ contract PmUsdCrvUsdInvariantTest is Test {
             address(crv),
             address(pmUsd),
             address(0), // deferred vault init
+            owner,
             address(usdtCrvUsdPool),
             address(lpPool),
             address(rewardVault),

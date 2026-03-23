@@ -116,7 +116,8 @@ contract CbBtcUsdtIporAaveStrategyForkTest is Test {
             address(swapper),
             7500,
             8000,
-            address(0)
+            address(0),
+            0 // eMode: disabled
         );
 
         strategy = new UsdtIporYieldStrategy(

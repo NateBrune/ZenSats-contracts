@@ -179,7 +179,8 @@ contract WstEthUsdtIporAaveForkTest is Test {
             address(swapper),
             7100, // 71% max LTV
             7600, // 76% liquidation threshold
-            expectedVaultAddress
+            expectedVaultAddress,
+            0 // eMode: disabled
         );
 
         // Deploy vault

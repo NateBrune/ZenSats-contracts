@@ -18,6 +18,10 @@ interface IAavePool {
 
     function withdraw(address asset, uint256 amount, address to) external returns (uint256);
 
+    function setUserEMode(uint8 categoryId) external;
+
+    function getUserEMode(address user) external view returns (uint256);
+
     function flashLoanSimple(
         address receiverAddress,
         address asset,

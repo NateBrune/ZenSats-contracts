@@ -5,6 +5,7 @@ import { ZenjiForkTestBase } from "./base/ZenjiForkTestBase.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { CbBtcUniswapV3TwoHopSwapper } from "../src/swappers/base/CbBtcUniswapV3TwoHopSwapper.sol";
+import { BaseSwapper } from "../src/swappers/base/BaseSwapper.sol";
 import { UsdtIporYieldStrategy } from "../src/strategies/UsdtIporYieldStrategy.sol";
 import { TimelockLib } from "../src/libraries/TimelockLib.sol";
 import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
@@ -99,7 +100,8 @@ contract CbBtcAaveExtensive is ZenjiForkTestBase {
             address(swapper),
             7500,
             8000,
-            expectedVaultAddress
+            expectedVaultAddress,
+            0 // eMode: disabled
         );
 
         vault = new Zenji(
@@ -113,12 +115,15 @@ contract CbBtcAaveExtensive is ZenjiForkTestBase {
         );
         require(address(vault) == expectedVaultAddress, "Vault address mismatch");
 
+        vm.prank(owner);
+        swapper.setVault(address(vault));
         yieldStrategy = strategy;
     }
 
     function _postDeploySetup() internal override {
         // cbBTC can trade at a persistent basis vs BTC oracle; relax floor for fork realism
-        vm.store(address(swapper), bytes32(uint256(0)), bytes32(uint256(5e16)));
+        vm.prank(owner);
+        swapper.setSlippage(5e16);
     }
 
     // ============ Swapper-Specific Tests ============
@@ -175,23 +180,19 @@ contract CbBtcAaveExtensive is ZenjiForkTestBase {
         vault.executeSwapper();
     }
 
-    function test_slippageTimelock() public {
+    function test_setSlippage() public {
         _deployVault();
 
         assertEq(swapper.slippage(), 5e16, "Initial slippage should be 5%");
 
-        vm.prank(owner);
-        swapper.proposeSlippage(10e16);
+        // Unauthorized caller cannot set slippage
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert(BaseSwapper.Unauthorized.selector);
+        swapper.setSlippage(10e16);
 
+        // Gov can set slippage directly
         vm.prank(owner);
-        vm.expectRevert(TimelockLib.TimelockNotReady.selector);
-        swapper.executeSlippage();
-
-        vm.warp(block.timestamp + 1 weeks + 1);
-        _syncAndMockOracles();
-
-        vm.prank(owner);
-        swapper.executeSlippage();
+        swapper.setSlippage(10e16);
         assertEq(swapper.slippage(), 10e16, "Slippage should be 10%");
     }
 

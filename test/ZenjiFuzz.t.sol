@@ -129,6 +129,9 @@ contract FzYieldStrategy is IYieldStrategy {
         return 0;
     }
 
+    function transferOwnerFromVault(address) external pure { }
+    function setSlippage(uint256) external pure { }
+
     function name() external pure returns (string memory) {
         return "Fuzz Yield Strategy";
     }

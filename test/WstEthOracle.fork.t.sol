@@ -58,7 +58,8 @@ contract WstEthOracleForkTest is Test {
             dummySwapper,
             7100, // maxLtvBps
             7600, // liquidationThresholdBps
-            vaultAddr
+            vaultAddr,
+            0 // eMode: disabled
         );
     }
 

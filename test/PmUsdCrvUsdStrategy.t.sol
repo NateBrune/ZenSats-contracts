@@ -300,6 +300,8 @@ contract MockSwapper {
         collateral.mint(msg.sender, debtAmount);
         return debtAmount;
     }
+
+    function setSlippage(uint256) external {}
 }
 
 contract MockAavePool is IAavePool {
@@ -355,6 +357,8 @@ contract MockAavePool is IAavePool {
             .executeOperation(asset, amount, 0, receiverAddress, params);
         IERC20(asset).transferFrom(receiverAddress, address(this), amount);
     }
+    function setUserEMode(uint8) external {}
+    function getUserEMode(address) external pure returns (uint256) { return 0; }
 }
 
 // ============ Test Contract ============
@@ -437,7 +441,8 @@ contract PmUsdCrvUsdStrategyTest is Test {
             address(swapper),
             7500,
             8000,
-            predictedVault
+            predictedVault,
+            0 // eMode: disabled
         );
 
         strategy = new PmUsdCrvUsdStrategy(
@@ -446,6 +451,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
             address(crv),
             address(pmUsd),
             predictedVault,
+            owner,
             address(usdtCrvUsdPool),
             address(lpPool),
             address(rewardVault),
@@ -607,16 +613,16 @@ contract PmUsdCrvUsdStrategyTest is Test {
         strategy.balanceOf();
     }
 
-    function test_setStrategySlippage_forwardedByOwner() public {
+    function test_setParam4_slippage_forwardedByOwner() public {
         vm.prank(owner);
-        vault.setStrategySlippage(3e16);
+        vault.setParam(4, 3e16);
         assertEq(strategy.slippageTolerance(), 3e16);
     }
 
-    function test_setStrategySlippage_reverts_nonOwner() public {
+    function test_setParam4_slippage_reverts_nonOwner() public {
         vm.prank(user);
         vm.expectRevert(Zenji.Unauthorized.selector);
-        vault.setStrategySlippage(3e16);
+        vault.setParam(4, 3e16);
     }
 
     function test_balanceOf_zero_when_empty() public view {
@@ -679,7 +685,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
     function test_rescueERC20_reverts_for_crv_rewards() public {
         crv.mint(address(strategy), 1e18);
 
-        vm.prank(address(this));
+        vm.prank(owner);
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
         strategy.rescueERC20(address(crv), user, 1e18);
     }
@@ -863,6 +869,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
             address(crv),
             address(pmUsd),
             address(vault),
+            makeAddr("owner"),
             address(usdtCrvUsdPool),
             address(lpPool),
             address(rewardVault),
@@ -885,6 +892,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
             address(crv),
             address(pmUsd),
             address(vault),
+            makeAddr("owner"),
             address(usdtCrvUsdPool),
             address(lpPool),
             address(rewardVault),
@@ -907,6 +915,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
             address(0), // crv = 0
             address(pmUsd),
             address(vault),
+            makeAddr("owner"),
             address(usdtCrvUsdPool),
             address(lpPool),
             address(rewardVault),
@@ -929,6 +938,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
             address(crv),
             address(pmUsd),
             address(vault),
+            makeAddr("owner"),
             address(0), // usdtCrvUsdPool = 0
             address(lpPool),
             address(rewardVault),
@@ -951,6 +961,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
             address(crv),
             address(pmUsd),
             address(vault),
+            makeAddr("owner"),
             address(usdtCrvUsdPool),
             address(0), // lpPool = 0
             address(rewardVault),
@@ -973,6 +984,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
             address(crv),
             address(pmUsd),
             address(vault),
+            makeAddr("owner"),
             address(usdtCrvUsdPool),
             address(lpPool),
             address(rewardVault),
@@ -995,6 +1007,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
             address(crv),
             address(pmUsd),
             address(vault),
+            makeAddr("owner"),
             address(usdtCrvUsdPool),
             address(lpPool),
             address(rewardVault),
@@ -1017,6 +1030,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
             address(crv),
             address(pmUsd),
             address(vault),
+            makeAddr("owner"),
             address(usdtCrvUsdPool),
             address(lpPool),
             address(rewardVault),
@@ -1039,6 +1053,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
             address(crv),
             address(pmUsd),
             address(vault),
+            makeAddr("owner"),
             address(usdtCrvUsdPool),
             address(lpPool),
             address(rewardVault),

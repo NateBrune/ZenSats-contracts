@@ -119,7 +119,11 @@ contract UniversalRouterV3SingleHopSwapper is BaseSwapper, ISwapper {
             collateralToken,
             debtToken
         );
-        uint256 minOut = (expectedOut * (PRECISION - slippage)) / PRECISION;
+        // Waive minOut when expected output is dust: V3 fee rounding dominates at tiny sizes.
+        // Mirrors the same guard on swapCollateralForDebt above.
+        uint256 minOut = expectedOut >= DUST_SWAP_THRESHOLD
+            ? (expectedOut * (PRECISION - slippage)) / PRECISION
+            : 0;
 
         debtToken.safeTransfer(address(universalRouter), debtAmount);
 

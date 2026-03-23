@@ -86,6 +86,8 @@ contract H8MockAavePool is IAavePool {
             .executeOperation(asset, amount, 0, receiverAddress, params);
         IERC20(asset).transferFrom(receiverAddress, address(this), amount);
     }
+    function setUserEMode(uint8) external {}
+    function getUserEMode(address) external pure returns (uint256) { return 0; }
 }
 
 contract H8MockOracle {
@@ -181,7 +183,8 @@ contract H8_StaleOracle_RemoveCollateral_Test is Test {
             address(swapper),
             7500, // maxLtvBps: 75%
             8000, // liquidationThresholdBps: 80%
-            vault
+            vault,
+            0 // eMode: disabled
         );
 
         // Create an initial loan: 100 collateral, 50 debt (50% LTV)

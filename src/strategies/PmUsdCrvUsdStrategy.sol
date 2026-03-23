@@ -24,6 +24,7 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
     error SwapFailed();
     // ============ Constants ============
 
+    uint256 public constant MIN_SLIPPAGE = 1e15; // 0.1% minimum
     uint256 public constant DEFAULT_SLIPPAGE = 1e16; // 1% for stablecoin swaps
     uint256 public constant MAX_SLIPPAGE = 5e16; // 5% governance max
     uint256 public constant EMERGENCY_SLIPPAGE = 1e17; // 10% emergency
@@ -53,13 +54,13 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
     // ============ State ============
 
     address public owner;
-    address public pendingOwner;
-    uint256 public ownerTimelockReady;
+    // address public pendingOwner;
+    // uint256 public ownerTimelockReady;
     uint256 public slippageTolerance = DEFAULT_SLIPPAGE;
     uint256 public cachedVirtualPrice;
 
-    uint256 public constant OWNER_TIMELOCK_DELAY = 2 days;
-    uint256 public constant OWNER_TIMELOCK_EXPIRY = 7 days;
+    // uint256 public constant OWNER_TIMELOCK_DELAY = 2 days;
+    // uint256 public constant OWNER_TIMELOCK_EXPIRY = 7 days;
 
     // ============ Events ============
 
@@ -81,6 +82,7 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
     /// @param _crv CRV token address
     /// @param _pmUsd pmUSD token address (extra reward token reinvested into LP)
     /// @param _vault Zenji vault address
+    /// @param _owner Initial owner address (set to vault gov at deploy time)
     /// @param _usdtCrvUsdPool Curve USDT/crvUSD StableSwap pool
     /// @param _lpPool Curve pmUSD/crvUSD StableSwapNG pool
     /// @param _rewardVault Stake DAO ERC4626 reward vault
@@ -98,6 +100,7 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         address _crv,
         address _pmUsd,
         address _vault,
+        address _owner,
         address _usdtCrvUsdPool,
         address _lpPool,
         address _rewardVault,
@@ -110,6 +113,7 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         address _usdtOracle,
         address _crvOracle
     ) BaseCurveRewardVaultStrategy(_usdt, _vault, _rewardVault) {
+        if (_owner == address(0)) revert InvalidAddress();
         if (_crvUsd == address(0) || _crv == address(0)) revert InvalidAddress();
         if (_pmUsd == address(0)) revert InvalidAddress();
         if (_usdtCrvUsdPool == address(0) || _lpPool == address(0)) revert InvalidAddress();
@@ -134,7 +138,7 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         usdtOracle = IChainlinkOracle(_usdtOracle);
         crvOracle = IChainlinkOracle(_crvOracle);
         cachedVirtualPrice = ICurveStableSwapNG(_lpPool).get_virtual_price();
-        owner = msg.sender;
+        owner = _owner;
     }
 
     // ============ Admin ============
@@ -144,33 +148,42 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         _;
     }
 
-    /// @notice Propose a new owner (starts timelock)
-    function proposeOwner(address newOwner) external onlyOwner {
+    // /// @notice Propose a new owner (starts timelock)
+    // function proposeOwner(address newOwner) external onlyOwner {
+    //     if (newOwner == address(0)) revert InvalidAddress();
+    //     pendingOwner = newOwner;
+    //     ownerTimelockReady = block.timestamp + OWNER_TIMELOCK_DELAY;
+    //     emit OwnerTransferProposed(owner, newOwner);
+    // }
+
+    // /// @notice Accept ownership (called by pending owner after timelock)
+    // function acceptOwner() external {
+    //     if (msg.sender != pendingOwner) revert Unauthorized();
+    //     if (ownerTimelockReady == 0) revert Unauthorized();
+    //     if (block.timestamp < ownerTimelockReady) revert Unauthorized();
+    //     if (block.timestamp > ownerTimelockReady + OWNER_TIMELOCK_EXPIRY) revert Unauthorized();
+
+    //     emit OwnerTransferred(owner, msg.sender);
+    //     owner = msg.sender;
+    //     pendingOwner = address(0);
+    //     ownerTimelockReady = 0;
+    // }
+
+    // /// @notice Cancel pending ownership transfer
+    // function cancelOwnerTransfer() external onlyOwner {
+    //     if (pendingOwner == address(0)) revert InvalidAddress();
+    //     emit OwnerTransferCancelled(pendingOwner);
+    //     pendingOwner = address(0);
+    //     ownerTimelockReady = 0;
+    // }
+
+    //@notice Transfer strategy ownership directly, initiated by the vault upon gov transfer.
+    //@dev Bypasses the 2-day timelock. Only callable by the vault. Clears any pending transfer.
+    function transferOwnerFromVault(address newOwner) external {
+        if (msg.sender != vault) revert Unauthorized();
         if (newOwner == address(0)) revert InvalidAddress();
-        pendingOwner = newOwner;
-        ownerTimelockReady = block.timestamp + OWNER_TIMELOCK_DELAY;
-        emit OwnerTransferProposed(owner, newOwner);
-    }
-
-    /// @notice Accept ownership (called by pending owner after timelock)
-    function acceptOwner() external {
-        if (msg.sender != pendingOwner) revert Unauthorized();
-        if (ownerTimelockReady == 0) revert Unauthorized();
-        if (block.timestamp < ownerTimelockReady) revert Unauthorized();
-        if (block.timestamp > ownerTimelockReady + OWNER_TIMELOCK_EXPIRY) revert Unauthorized();
-
-        emit OwnerTransferred(owner, msg.sender);
-        owner = msg.sender;
-        pendingOwner = address(0);
-        ownerTimelockReady = 0;
-    }
-
-    /// @notice Cancel pending ownership transfer
-    function cancelOwnerTransfer() external onlyOwner {
-        if (pendingOwner == address(0)) revert InvalidAddress();
-        emit OwnerTransferCancelled(pendingOwner);
-        pendingOwner = address(0);
-        ownerTimelockReady = 0;
+        emit OwnerTransferred(owner, newOwner);
+        owner = newOwner;
     }
 
     /// @notice Updates strategy slippage tolerance.
@@ -178,7 +191,7 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
     /// @param newSlippage New slippage in 1e18 precision.
     function setSlippage(uint256 newSlippage) external {
         if (msg.sender != vault && msg.sender != owner) revert Unauthorized();
-        if (newSlippage > MAX_SLIPPAGE) revert SlippageExceeded();
+        if (newSlippage < MIN_SLIPPAGE || newSlippage > MAX_SLIPPAGE) revert SlippageExceeded();
         uint256 oldSlippage = slippageTolerance;
         slippageTolerance = newSlippage;
         emit SlippageUpdated(oldSlippage, newSlippage);
@@ -193,6 +206,7 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         if (
             token == address(debtAsset) || token == address(lpToken) || token == address(crvUSD)
                 || token == address(pmUSD) || token == address(crv)
+                || token == address(rewardVault)
         ) revert InvalidAddress();
         IERC20(token).safeTransfer(to, amount);
         emit TokenRescued(token, to, amount);

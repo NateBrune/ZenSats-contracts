@@ -5,6 +5,7 @@ import { ZenjiForkTestBase } from "./base/ZenjiForkTestBase.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
+import { BaseSwapper } from "../src/swappers/base/BaseSwapper.sol";
 import { UsdtIporYieldStrategy } from "../src/strategies/UsdtIporYieldStrategy.sol";
 import { TimelockLib } from "../src/libraries/TimelockLib.sol";
 import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
@@ -88,7 +89,8 @@ contract WbtcAaveExtensive is ZenjiForkTestBase {
             address(swapper),
             7500,
             8000,
-            expectedVaultAddress
+            expectedVaultAddress,
+            0 // eMode: disabled
         );
 
         vault = new Zenji(
@@ -102,6 +104,8 @@ contract WbtcAaveExtensive is ZenjiForkTestBase {
         );
         require(address(vault) == expectedVaultAddress, "Vault address mismatch");
 
+        vm.prank(owner);
+        swapper.setVault(address(vault));
         yieldStrategy = strategy;
     }
 
@@ -110,10 +114,7 @@ contract WbtcAaveExtensive is ZenjiForkTestBase {
         // prices diverge by ~1.4% on small amounts, causing flashloan premium swaps
         // to fail with Curve's Slippage error when minOut uses the 1% oracle floor.
         vm.prank(owner);
-        swapper.proposeSlippage(2e16);
-        vm.warp(block.timestamp + 1 weeks + 1);
-        vm.prank(owner);
-        swapper.executeSlippage();
+        swapper.setSlippage(2e16);
         _syncAndMockOracles();
     }
 
@@ -155,23 +156,19 @@ contract WbtcAaveExtensive is ZenjiForkTestBase {
         vault.executeSwapper();
     }
 
-    function test_slippageTimelock() public {
+    function test_setSlippage() public {
         _deployVault();
 
         assertEq(swapper.slippage(), 2e16, "Slippage should be 2% after deploy setup");
 
-        vm.prank(owner);
-        swapper.proposeSlippage(10e16);
+        // Unauthorized caller cannot set slippage
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert(BaseSwapper.Unauthorized.selector);
+        swapper.setSlippage(10e16);
 
+        // Gov can set slippage directly
         vm.prank(owner);
-        vm.expectRevert(TimelockLib.TimelockNotReady.selector);
-        swapper.executeSlippage();
-
-        vm.warp(block.timestamp + 1 weeks + 1);
-        _syncAndMockOracles();
-
-        vm.prank(owner);
-        swapper.executeSlippage();
+        swapper.setSlippage(10e16);
         assertEq(swapper.slippage(), 10e16, "Slippage should be 10%");
     }
 }

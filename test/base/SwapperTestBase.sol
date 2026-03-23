@@ -55,19 +55,11 @@ abstract contract SwapperTestBase is Test {
         // Unauthorized access
         vm.prank(nonGov);
         vm.expectRevert(BaseSwapper.Unauthorized.selector);
-        s.proposeSlippage(10e16);
+        s.setSlippage(10e16);
 
-        // Propose and execute slippage
+        // Direct slippage set by gov
         vm.prank(owner);
-        s.proposeSlippage(10e16);
-
-        vm.prank(owner);
-        vm.expectRevert();
-        s.executeSlippage();
-
-        vm.warp(block.timestamp + 1 weeks + 1);
-        vm.prank(owner);
-        s.executeSlippage();
+        s.setSlippage(10e16);
         assertEq(s.slippage(), 10e16, "Slippage should be updated");
 
         // Governance transfer
@@ -85,26 +77,24 @@ abstract contract SwapperTestBase is Test {
 
         vm.prank(owner);
         vm.expectRevert(BaseSwapper.InvalidSlippage.selector);
-        s.proposeSlippage(0);
+        s.setSlippage(0);
 
         vm.prank(owner);
         vm.expectRevert(BaseSwapper.InvalidSlippage.selector);
-        s.proposeSlippage(1e18 + 1);
+        s.setSlippage(1e18 + 1);
     }
 
-    function test_slippage_cancellation() public {
+    /// @notice Registered vault can also call setSlippage directly
+    function test_setSlippage_vault_authorized() public {
         BaseSwapper s = _swapper();
 
+        address mockVault = makeAddr("mockVault");
         vm.prank(owner);
-        s.proposeSlippage(10e16);
+        s.setVault(mockVault);
 
-        vm.prank(owner);
-        s.cancelSlippage();
-
-        vm.warp(block.timestamp + 1 weeks + 1);
-        vm.prank(owner);
-        vm.expectRevert();
-        s.executeSlippage();
+        vm.prank(mockVault);
+        s.setSlippage(5e16);
+        assertEq(s.slippage(), 5e16, "Vault should be able to set slippage");
     }
 
     // ============ ISwapper Zero-Amount Tests ============

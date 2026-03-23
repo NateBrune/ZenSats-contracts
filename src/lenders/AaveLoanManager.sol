@@ -89,7 +89,8 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         address _swapper,
         uint256 _maxLtvBps,
         uint256 _liquidationThresholdBps,
-        address _vault
+        address _vault,
+        uint8 _emodeCategory
     ) {
         if (
             _collateralAsset == address(0) || _debtAsset == address(0) || _aToken == address(0)
@@ -116,6 +117,9 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
             initializer = msg.sender;
         }
         swapper = ISwapper(_swapper);
+        if (_emodeCategory > 0) {
+            aavePool.setUserEMode(_emodeCategory);
+        }
     }
 
     /// @notice Initializes the vault address exactly once.

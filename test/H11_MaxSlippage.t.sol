@@ -85,6 +85,8 @@ contract MockYieldStrategyH11 is IYieldStrategy {
     function costBasis() external pure returns (uint256) { return 0; }
     function unrealizedProfit() external pure returns (uint256) { return 0; }
     function pendingRewards() external pure returns (uint256) { return 0; }
+    function transferOwnerFromVault(address) external pure { }
+    function setSlippage(uint256) external pure { }
     function name() external pure returns (string memory) { return "Mock H11 Strategy"; }
 }
 
@@ -123,6 +125,8 @@ contract MockSwapperH11 is ISwapper {
         collateral.transfer(msg.sender, payout);
         return payout;
     }
+
+    function setSlippage(uint256) external {}
 }
 
 // ============ Test Contract ============

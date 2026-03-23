@@ -136,7 +136,8 @@ contract VerifyH40 is Test {
             address(swapper),
             7500,
             8000,
-            expectedVaultAddress
+            expectedVaultAddress,
+            0 // eMode: disabled
         );
 
         vault = new Zenji(
@@ -151,10 +152,9 @@ contract VerifyH40 is Test {
         require(address(vault) == expectedVaultAddress, "Vault address mismatch");
 
         vm.prank(owner);
-        swapper.proposeSlippage(2e16);
-        vm.warp(block.timestamp + 1 weeks + 1);
+        swapper.setVault(address(vault));
         vm.prank(owner);
-        swapper.executeSlippage();
+        swapper.setSlippage(2e16);
         syncAndMock();
     }
 

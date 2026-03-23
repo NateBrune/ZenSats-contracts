@@ -480,6 +480,7 @@ contract PmUsdCrvUsdStrategyInvariantTest is Test {
             address(crv),
             address(pmUsd),
             mockVault,
+            address(this),
             address(usdtCrvUsdPool),
             address(lpPool),
             address(rewardVault),

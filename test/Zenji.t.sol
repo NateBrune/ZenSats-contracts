@@ -122,6 +122,9 @@ contract MockYieldStrategy is IYieldStrategy {
         return 0;
     }
 
+    function transferOwnerFromVault(address) external pure { }
+    function setSlippage(uint256) external pure { }
+
     function name() external pure returns (string memory) {
         return "Mock Yield Strategy";
     }
@@ -178,6 +181,9 @@ contract MockYieldStrategy is IYieldStrategy {
         function pendingRewards() external pure returns (uint256) {
             return 0;
         }
+
+        function transferOwnerFromVault(address) external pure { }
+        function setSlippage(uint256) external pure { }
 
         function name() external pure returns (string memory) {
             return "Bad Strategy";
@@ -328,6 +334,9 @@ contract MockYieldStrategy is IYieldStrategy {
         function pendingRewards() external pure returns (uint256) {
             return 0;
         }
+
+        function transferOwnerFromVault(address) external pure { }
+        function setSlippage(uint256) external pure { }
 
         function name() external pure returns (string memory) {
             return "Bricked Strategy";

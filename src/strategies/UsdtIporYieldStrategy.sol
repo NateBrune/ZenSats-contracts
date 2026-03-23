@@ -11,10 +11,6 @@ import { CurveUsdtSwapLib } from "../libraries/CurveUsdtSwapLib.sol";
 /// @title UsdtIporYieldStrategy
 /// @notice Swaps USDT to crvUSD and deposits into IPOR PlasmaVault
 contract UsdtIporYieldStrategy is BaseIporStrategy {
-    uint256 public constant DEFAULT_SLIPPAGE = 1e16;
-    uint256 public constant MAX_SLIPPAGE = 5e16;
-    uint256 public constant EMERGENCY_SLIPPAGE = 1e17;
-
     IERC20 public immutable crvUSD;
     ICurveStableSwap public immutable curvePool;
     IChainlinkOracle public immutable crvUsdOracle;
@@ -24,9 +20,6 @@ contract UsdtIporYieldStrategy is BaseIporStrategy {
     int128 public immutable usdtIndex;
     int128 public immutable crvUsdIndex;
 
-    uint256 public slippageTolerance = DEFAULT_SLIPPAGE;
-
-    event SlippageUpdated(uint256 oldSlippage, uint256 newSlippage);
     event SwappedUsdtToCrvUsd(uint256 usdtAmount, uint256 crvUsdReceived);
     event SwappedCrvUsdToUsdt(uint256 crvUsdAmount, uint256 usdtReceived);
 
@@ -51,15 +44,6 @@ contract UsdtIporYieldStrategy is BaseIporStrategy {
         usdtOracle = IChainlinkOracle(_usdtOracle);
         usdtIndex = _usdtIndex;
         crvUsdIndex = _crvUsdIndex;
-    }
-
-    /// @notice Updates strategy slippage tolerance (vault-controlled).
-    /// @param newSlippage New slippage in 1e18 precision.
-    function setSlippage(uint256 newSlippage) external onlyVault {
-        if (newSlippage > MAX_SLIPPAGE) revert SlippageExceeded();
-        uint256 oldSlippage = slippageTolerance;
-        slippageTolerance = newSlippage;
-        emit SlippageUpdated(oldSlippage, newSlippage);
     }
 
     // ============ View Functions ============

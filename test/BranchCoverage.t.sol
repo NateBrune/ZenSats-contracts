@@ -479,11 +479,11 @@ contract BaseSwapperTest is Test {
         swapper.acceptGovernance();
     }
 
-    function test_proposeSlippage_exactly_precision_reverts() public {
+    function test_setSlippage_exactly_precision_reverts() public {
         ConcreteSwapper swapper = new ConcreteSwapper(gov);
         vm.prank(gov);
         vm.expectRevert(BaseSwapper.InvalidSlippage.selector);
-        swapper.proposeSlippage(1e18); // exactly PRECISION
+        swapper.setSlippage(1e18); // exactly PRECISION
     }
 }
 

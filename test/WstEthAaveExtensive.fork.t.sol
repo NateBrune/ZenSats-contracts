@@ -5,6 +5,7 @@ import { ZenjiForkTestBase } from "./base/ZenjiForkTestBase.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UniswapV3TwoHopSwapper } from "../src/swappers/base/UniswapV3TwoHopSwapper.sol";
+import { BaseSwapper } from "../src/swappers/base/BaseSwapper.sol";
 import { WstEthOracle } from "../src/WstEthOracle.sol";
 import { UsdtIporYieldStrategy } from "../src/strategies/UsdtIporYieldStrategy.sol";
 import { TimelockLib } from "../src/libraries/TimelockLib.sol";
@@ -118,7 +119,8 @@ contract WstEthAaveExtensive is ZenjiForkTestBase {
             address(swapper),
             7100,
             7600,
-            expectedVaultAddress
+            expectedVaultAddress,
+            0 // eMode: disabled
         );
 
         vault = new Zenji(
@@ -132,6 +134,8 @@ contract WstEthAaveExtensive is ZenjiForkTestBase {
         );
         require(address(vault) == expectedVaultAddress, "Vault address mismatch");
 
+        vm.prank(owner);
+        swapper.setVault(address(vault));
         yieldStrategy = strategy;
     }
 
@@ -189,23 +193,19 @@ contract WstEthAaveExtensive is ZenjiForkTestBase {
         vault.executeSwapper();
     }
 
-    function test_slippageTimelock() public {
+    function test_setSlippage() public {
         _deployVault();
 
         assertEq(swapper.slippage(), 1e16, "Initial slippage should be 1%");
 
-        vm.prank(owner);
-        swapper.proposeSlippage(10e16);
+        // Unauthorized caller cannot set slippage
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert(BaseSwapper.Unauthorized.selector);
+        swapper.setSlippage(10e16);
 
+        // Gov can set slippage directly
         vm.prank(owner);
-        vm.expectRevert(TimelockLib.TimelockNotReady.selector);
-        swapper.executeSlippage();
-
-        vm.warp(block.timestamp + 1 weeks + 1);
-        _syncAndMockOracles();
-
-        vm.prank(owner);
-        swapper.executeSlippage();
+        swapper.setSlippage(10e16);
         assertEq(swapper.slippage(), 10e16, "Slippage should be 10%");
     }
 }
