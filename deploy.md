@@ -88,7 +88,7 @@ Save the deployed address as `VIEW_HELPER`.
 This swapper handles WBTC ↔ USDT swaps for the loan manager (e.g., during unwind).
 
 ```bash
-forge create src/CurveThreeCryptoSwapper.sol:CurveThreeCryptoSwapper \
+forge create src/swappers/base/CurveThreeCryptoSwapper.sol:CurveThreeCryptoSwapper \
   --rpc-url $MAINNET_RPC_URL \
   --private-key $PRIVATE_KEY \
   --constructor-args \
@@ -98,6 +98,9 @@ forge create src/CurveThreeCryptoSwapper.sol:CurveThreeCryptoSwapper \
     0xf5f5B97624542D72A9E06f04804Bf81baA15e2B4 \
     1 \
     0 \
+    0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c \
+    0x3E7d1eAB13ad0104d2750B8863b489D65364e32D \
+    3600 \
   --verify
 ```
 
@@ -108,13 +111,16 @@ Constructor args:
 4. `TRICRYPTO_POOL` - Curve pool address
 5. `1` - WBTC index in tricrypto
 6. `0` - USDT index in tricrypto
+7. `BTC_USD_ORACLE` - Chainlink BTC/USD price feed
+8. `USDT_USD_ORACLE` - Chainlink USDT/USD price feed
+9. `3600` - max collateral oracle staleness (seconds)
 
 Save the deployed address as `SWAPPER`.
 
 For cbBTC vaults, use the two-hop swapper (cbBTC <-> WBTC, then WBTC <-> USDT):
 
 ```bash
-forge create src/CbBtcWbtcUsdtSwapper.sol:CbBtcWbtcUsdtSwapper \
+forge create src/swappers/base/CbBtcWbtcUsdtSwapper.sol:CbBtcWbtcUsdtSwapper \
   --rpc-url $MAINNET_RPC_URL \
   --private-key $PRIVATE_KEY \
   --constructor-args \
@@ -128,6 +134,9 @@ forge create src/CbBtcWbtcUsdtSwapper.sol:CbBtcWbtcUsdtSwapper \
     0xf5f5B97624542D72A9E06f04804Bf81baA15e2B4 \
     1 \
     0 \
+    0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c \
+    0x3E7d1eAB13ad0104d2750B8863b489D65364e32D \
+    3600 \
   --verify
 ```
 
@@ -142,6 +151,9 @@ Constructor args:
 8. `TRICRYPTO_POOL` - Curve TriCrypto pool
 9. `1` - WBTC index in tricrypto
 10. `0` - USDT index in tricrypto
+11. `BTC_USD_ORACLE` - Chainlink BTC/USD price feed
+12. `USDT_USD_ORACLE` - Chainlink USDT/USD price feed
+13. `3600` - max collateral oracle staleness (seconds)
 
 ---
 

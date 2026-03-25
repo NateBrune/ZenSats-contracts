@@ -98,7 +98,7 @@ contract VerifyH6ForkTest is Test {
             owner, CBBTC, USDT, WBTC,
             CBBTC_WBTC_POOL, CBBTC_INDEX, WBTC_INDEX,
             TRICRYPTO_POOL, TRICRYPTO_WBTC_INDEX, TRICRYPTO_USDT_INDEX,
-            CBBTC_USD_ORACLE, USDT_USD_ORACLE
+            CBBTC_USD_ORACLE, USDT_USD_ORACLE, 3_600
         );
         loanManager = new AaveLoanManager(
             CBBTC, USDT, AAVE_A_CBBTC, AAVE_VAR_DEBT_USDT, AAVE_POOL,

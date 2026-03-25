@@ -93,7 +93,8 @@ contract WstEthAaveExtensive is ZenjiForkTestBase {
             FEE_WSTETH_WETH,
             FEE_WETH_USDT,
             address(wstEthOracle),
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            3_600
         );
 
         UsdtIporYieldStrategy strategy = new UsdtIporYieldStrategy(
@@ -155,7 +156,8 @@ contract WstEthAaveExtensive is ZenjiForkTestBase {
             FEE_WSTETH_WETH,
             FEE_WETH_USDT,
             address(wstEthOracle),
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            3_600
         );
 
         vm.prank(vault.gov());
@@ -181,7 +183,8 @@ contract WstEthAaveExtensive is ZenjiForkTestBase {
             FEE_WSTETH_WETH,
             FEE_WETH_USDT,
             address(wstEthOracle),
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            3_600
         );
         vm.prank(vault.gov());
         vault.proposeSwapper(address(anotherSwapper));

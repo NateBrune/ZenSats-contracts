@@ -124,7 +124,8 @@ contract WstEthPmUsdCrvUsdAave is ZenjiForkTestBase {
             FEE_WSTETH_WETH,
             FEE_WETH_USDT,
             address(wstEthOracle),
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            3_600
         );
 
         strategy = new PmUsdCrvUsdStrategy(
@@ -200,7 +201,8 @@ contract WstEthPmUsdCrvUsdAave is ZenjiForkTestBase {
             FEE_WSTETH_WETH,
             FEE_WETH_USDT,
             address(wstEthOracle),
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            3_600
         );
 
         vm.prank(vault.gov());
@@ -226,7 +228,8 @@ contract WstEthPmUsdCrvUsdAave is ZenjiForkTestBase {
             FEE_WSTETH_WETH,
             FEE_WETH_USDT,
             address(wstEthOracle),
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            3_600
         );
         vm.prank(vault.gov());
         vault.proposeSwapper(address(anotherSwapper));

@@ -22,7 +22,9 @@ contract CurveThreeCryptoSwapper is BaseSwapper, ISwapper {
     IChainlinkOracle public immutable collateralOracle;
     IChainlinkOracle public immutable debtOracle;
 
-    uint256 public constant MAX_COLLATERAL_ORACLE_STALENESS = 3600;
+    /// @notice Max age (seconds) for collateral-oracle answers before they are considered stale.
+    ///         e.g. BTC/USD = 3600 (1 h), XAU/USD = 90000 (25 h).
+    uint256 public immutable maxCollateralOracleStaleness;
     uint256 public constant MAX_DEBT_ORACLE_STALENESS = 90000;
 
     constructor(
@@ -33,7 +35,8 @@ contract CurveThreeCryptoSwapper is BaseSwapper, ISwapper {
         uint256 _collateralIndex,
         uint256 _debtIndex,
         address _collateralOracle,
-        address _debtOracle
+        address _debtOracle,
+        uint256 _maxCollateralStaleness
     ) BaseSwapper(_gov) {
         if (
             _collateralToken == address(0) || _debtToken == address(0) || _pool == address(0)
@@ -41,6 +44,7 @@ contract CurveThreeCryptoSwapper is BaseSwapper, ISwapper {
         ) {
             revert InvalidAddress();
         }
+        if (_maxCollateralStaleness == 0) revert InvalidAddress();
         collateralToken = IERC20(_collateralToken);
         debtToken = IERC20(_debtToken);
         pool = ICurveThreeCrypto(_pool);
@@ -48,6 +52,7 @@ contract CurveThreeCryptoSwapper is BaseSwapper, ISwapper {
         debtIndex = _debtIndex;
         collateralOracle = IChainlinkOracle(_collateralOracle);
         debtOracle = IChainlinkOracle(_debtOracle);
+        maxCollateralOracleStaleness = _maxCollateralStaleness;
         // TriCrypto dynamic fees typically run ~0.74%, leaving very little margin under 1%.
         // 1.5% gives adequate clearance while still protecting against oracle manipulation.
         slippage = 15e15;
@@ -74,7 +79,7 @@ contract CurveThreeCryptoSwapper is BaseSwapper, ISwapper {
         uint256 oracleExpected = OracleLib.getCollateralValue(
             collateralAmount,
             collateralOracle,
-            MAX_COLLATERAL_ORACLE_STALENESS,
+            maxCollateralOracleStaleness,
             debtOracle,
             MAX_DEBT_ORACLE_STALENESS,
             collateralToken,
@@ -106,7 +111,7 @@ contract CurveThreeCryptoSwapper is BaseSwapper, ISwapper {
         uint256 oracleExpected = OracleLib.getDebtValue(
             debtAmount,
             collateralOracle,
-            MAX_COLLATERAL_ORACLE_STALENESS,
+            maxCollateralOracleStaleness,
             debtOracle,
             MAX_DEBT_ORACLE_STALENESS,
             collateralToken,

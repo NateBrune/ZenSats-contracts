@@ -178,7 +178,8 @@ contract ProtocolSmokeTests is Test {
             UNIVERSAL_ROUTER,
             WBTC_USDT_V3_FEE,
             BTC_USD_ORACLE,
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            3_600
         );
 
         // Deploy yield strategy
@@ -300,7 +301,8 @@ contract ProtocolSmokeTests is Test {
             UNIVERSAL_ROUTER,
             WBTC_USDT_V3_FEE,
             BTC_USD_ORACLE,
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            3_600
         );
 
         PmUsdCrvUsdStrategy strategy = new PmUsdCrvUsdStrategy(
@@ -653,7 +655,8 @@ contract ProtocolSmokeTests is Test {
             1, // WBTC index
             0, // USDT index
             BTC_USD_ORACLE,
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            3_600
         );
 
         // Test quote

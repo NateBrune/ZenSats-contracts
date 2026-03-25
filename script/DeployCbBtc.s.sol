@@ -64,7 +64,8 @@ contract DeployCbBtc is Script {
             TRICRYPTO_WBTC_INDEX,
             TRICRYPTO_USDT_INDEX,
             BTC_USD_ORACLE, // cbBTC tracks BTC
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            3_600
         );
 
         AaveLoanManager loanManager = new AaveLoanManager(

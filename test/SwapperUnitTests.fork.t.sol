@@ -51,7 +51,7 @@ contract CurveThreeCryptoSwapperTest is SwapperTestBase {
 
     function _deploySwapper() internal override {
         swapper = new CurveThreeCryptoSwapper(
-            owner, WBTC, USDT, TRICRYPTO_POOL, 1, 0, BTC_USD_ORACLE, USDT_USD_ORACLE
+            owner, WBTC, USDT, TRICRYPTO_POOL, 1, 0, BTC_USD_ORACLE, USDT_USD_ORACLE, 3_600
         );
     }
 
@@ -85,7 +85,8 @@ contract CbBtcWbtcUsdtSwapperTest is SwapperTestBase {
             TRICRYPTO_WBTC_INDEX,
             TRICRYPTO_USDT_INDEX,
             CBBTC_USD_ORACLE,
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            3_600
         );
     }
 
@@ -116,7 +117,8 @@ contract UniswapV3TwoHopSwapperTest is SwapperTestBase {
             FEE_WSTETH_WETH,
             FEE_WETH_USDT,
             WSTETH_USD_ORACLE,
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            3_600
         );
     }
 

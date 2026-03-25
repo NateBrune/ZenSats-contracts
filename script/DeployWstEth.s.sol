@@ -62,7 +62,8 @@ contract DeployWstEth is Script {
             FEE_WSTETH_WETH,
             FEE_WETH_USDT,
             address(wstEthOracle),
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            3_600
         );
 
         AaveLoanManager loanManager = new AaveLoanManager(

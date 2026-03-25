@@ -52,7 +52,7 @@ Save as `VIEW_HELPER`.
 
 2) **Deploy CbBtcWbtcUsdtSwapper** (cbBTC↔WBTC↔USDT)
 ```bash
-forge create src/CbBtcWbtcUsdtSwapper.sol:CbBtcWbtcUsdtSwapper \
+forge create src/swappers/base/CbBtcWbtcUsdtSwapper.sol:CbBtcWbtcUsdtSwapper \
   --rpc-url $MAINNET_RPC_URL \
   --private-key $PRIVATE_KEY \
   --constructor-args \
@@ -66,6 +66,9 @@ forge create src/CbBtcWbtcUsdtSwapper.sol:CbBtcWbtcUsdtSwapper \
     0xf5f5B97624542D72A9E06f04804Bf81baA15e2B4 \
     1 \
     0 \
+    0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c \
+    0x3E7d1eAB13ad0104d2750B8863b489D65364e32D \
+    3600 \
   --verify
 ```
 Save as `SWAPPER`.

@@ -76,6 +76,7 @@ forge create src/swappers/base/UniswapV3TwoHopSwapper.sol:UniswapV3TwoHopSwapper
     3000 \
     <WSTETH_ORACLE> \
     0x3E7d1eAB13ad0104d2750B8863b489D65364e32D \
+    3600 \
   --verify
 ```
 Save as `SWAPPER`.

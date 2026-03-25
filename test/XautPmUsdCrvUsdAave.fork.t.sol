@@ -121,7 +121,8 @@ contract XautPmUsdCrvUsdAave is ZenjiForkTestBase {
             UNIVERSAL_ROUTER,
             XAUT_USDT_V3_FEE,
             XAU_USD_ORACLE,
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            90_000 // XAU/USD heartbeat is 24h
         );
 
         strategy = new PmUsdCrvUsdStrategy(
@@ -204,7 +205,8 @@ contract XautPmUsdCrvUsdAave is ZenjiForkTestBase {
             UNIVERSAL_ROUTER,
             XAUT_USDT_V3_FEE,
             XAU_USD_ORACLE,
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            90_000
         );
 
         vm.prank(vault.gov());
@@ -228,7 +230,8 @@ contract XautPmUsdCrvUsdAave is ZenjiForkTestBase {
             UNIVERSAL_ROUTER,
             XAUT_USDT_V3_FEE,
             XAU_USD_ORACLE,
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            90_000
         );
         vm.prank(vault.gov());
         vault.proposeSwapper(address(anotherSwapper));

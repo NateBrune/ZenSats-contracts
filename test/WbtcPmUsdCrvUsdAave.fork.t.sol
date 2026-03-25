@@ -106,7 +106,8 @@ contract WbtcPmUsdCrvUsdAave is ZenjiForkTestBase {
             UNIVERSAL_ROUTER,
             WBTC_USDT_V3_FEE,
             BTC_USD_ORACLE,
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            3_600
         );
 
         strategy = new PmUsdCrvUsdStrategy(
@@ -180,7 +181,8 @@ contract WbtcPmUsdCrvUsdAave is ZenjiForkTestBase {
             UNIVERSAL_ROUTER,
             WBTC_USDT_V3_FEE,
             BTC_USD_ORACLE,
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            3_600
         );
 
         vm.prank(vault.gov());
@@ -204,7 +206,8 @@ contract WbtcPmUsdCrvUsdAave is ZenjiForkTestBase {
             UNIVERSAL_ROUTER,
             WBTC_USDT_V3_FEE,
             BTC_USD_ORACLE,
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            3_600
         );
         vm.prank(vault.gov());
         vault.proposeSwapper(address(anotherSwapper));

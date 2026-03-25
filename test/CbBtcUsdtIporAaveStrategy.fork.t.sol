@@ -102,7 +102,8 @@ contract CbBtcUsdtIporAaveStrategyForkTest is Test {
             TRICRYPTO_WBTC_INDEX,
             TRICRYPTO_USDT_INDEX,
             CBBTC_USD_ORACLE,
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            3_600
         );
 
         loanManager = new AaveLoanManager(

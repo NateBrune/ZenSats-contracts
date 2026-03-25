@@ -73,7 +73,8 @@ contract DeployPmUsdXaut is Script {
             UNIVERSAL_ROUTER,
             XAUT_USDT_V3_FEE,
             XAU_USD_ORACLE,
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            90_000 // XAU/USD heartbeat is 24h
         );
 
         int128 lpCrvUsdIndex = _lpCrvUsdIndex();

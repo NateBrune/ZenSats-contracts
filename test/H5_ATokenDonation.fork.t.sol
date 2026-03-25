@@ -75,7 +75,7 @@ contract H5_ATokenDonation is ZenjiForkTestBase {
         address expectedVaultAddress = computeCreateAddress(address(this), startNonce + 3);
 
         swapper = new UniversalRouterV3SingleHopSwapper(
-            owner, WBTC, USDT, UNIVERSAL_ROUTER, WBTC_USDT_V3_FEE, BTC_USD_ORACLE, USDT_USD_ORACLE
+            owner, WBTC, USDT, UNIVERSAL_ROUTER, WBTC_USDT_V3_FEE, BTC_USD_ORACLE, USDT_USD_ORACLE, 3_600
         );
 
         UsdtIporYieldStrategy strategy = new UsdtIporYieldStrategy(

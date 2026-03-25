@@ -26,7 +26,9 @@ contract UniversalRouterV3SingleHopSwapper is BaseSwapper, ISwapper {
     IChainlinkOracle public immutable collateralOracle;
     IChainlinkOracle public immutable debtOracle;
 
-    uint256 public constant MAX_COLLATERAL_ORACLE_STALENESS = 3600;
+    /// @notice Max age (seconds) for collateral-oracle answers before they are considered stale.
+    ///         e.g. BTC/USD = 3600 (1 h), XAU/USD = 90000 (25 h).
+    uint256 public immutable maxCollateralOracleStaleness;
     uint256 public constant MAX_DEBT_ORACLE_STALENESS = 90000;
 
     constructor(
@@ -36,7 +38,8 @@ contract UniversalRouterV3SingleHopSwapper is BaseSwapper, ISwapper {
         address _universalRouter,
         uint24 _poolFee,
         address _collateralOracle,
-        address _debtOracle
+        address _debtOracle,
+        uint256 _maxCollateralStaleness
     ) BaseSwapper(_gov) {
         if (
             _collateralToken == address(0) || _debtToken == address(0)
@@ -45,6 +48,7 @@ contract UniversalRouterV3SingleHopSwapper is BaseSwapper, ISwapper {
         ) {
             revert InvalidAddress();
         }
+        if (_maxCollateralStaleness == 0) revert InvalidAddress();
 
         collateralToken = IERC20(_collateralToken);
         debtToken = IERC20(_debtToken);
@@ -52,6 +56,7 @@ contract UniversalRouterV3SingleHopSwapper is BaseSwapper, ISwapper {
         poolFee = _poolFee;
         collateralOracle = IChainlinkOracle(_collateralOracle);
         debtOracle = IChainlinkOracle(_debtOracle);
+        maxCollateralOracleStaleness = _maxCollateralStaleness;
     }
 
     /// @inheritdoc ISwapper
@@ -61,7 +66,7 @@ contract UniversalRouterV3SingleHopSwapper is BaseSwapper, ISwapper {
         uint256 collateralOut = OracleLib.getDebtValue(
             debtAmount,
             collateralOracle,
-            MAX_COLLATERAL_ORACLE_STALENESS,
+            maxCollateralOracleStaleness,
             debtOracle,
             MAX_DEBT_ORACLE_STALENESS,
             collateralToken,
@@ -79,7 +84,7 @@ contract UniversalRouterV3SingleHopSwapper is BaseSwapper, ISwapper {
         uint256 expectedOut = OracleLib.getCollateralValue(
             collateralAmount,
             collateralOracle,
-            MAX_COLLATERAL_ORACLE_STALENESS,
+            maxCollateralOracleStaleness,
             debtOracle,
             MAX_DEBT_ORACLE_STALENESS,
             collateralToken,
@@ -113,7 +118,7 @@ contract UniversalRouterV3SingleHopSwapper is BaseSwapper, ISwapper {
         uint256 expectedOut = OracleLib.getDebtValue(
             debtAmount,
             collateralOracle,
-            MAX_COLLATERAL_ORACLE_STALENESS,
+            maxCollateralOracleStaleness,
             debtOracle,
             MAX_DEBT_ORACLE_STALENESS,
             collateralToken,

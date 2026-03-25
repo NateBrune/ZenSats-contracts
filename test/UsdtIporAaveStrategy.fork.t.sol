@@ -90,7 +90,8 @@ contract UsdtIporAaveStrategyForkTest is Test {
             UNIVERSAL_ROUTER,
             WBTC_USDT_V3_FEE,
             BTC_USD_ORACLE,
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            3_600
         );
 
         loanManager = new AaveLoanManager(

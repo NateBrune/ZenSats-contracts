@@ -63,7 +63,7 @@ contract WbtcAaveExtensive is ZenjiForkTestBase {
         address expectedVaultAddress = computeCreateAddress(address(this), startNonce + 3);
 
         swapper = new UniversalRouterV3SingleHopSwapper(
-            owner, WBTC, USDT, UNIVERSAL_ROUTER, WBTC_USDT_V3_FEE, BTC_USD_ORACLE, USDT_USD_ORACLE
+            owner, WBTC, USDT, UNIVERSAL_ROUTER, WBTC_USDT_V3_FEE, BTC_USD_ORACLE, USDT_USD_ORACLE, 3_600
         );
 
         UsdtIporYieldStrategy strategy = new UsdtIporYieldStrategy(
@@ -126,7 +126,7 @@ contract WbtcAaveExtensive is ZenjiForkTestBase {
         _depositAs(user1, _unit());
 
         UniversalRouterV3SingleHopSwapper newSwapper = new UniversalRouterV3SingleHopSwapper(
-            owner, WBTC, USDT, UNIVERSAL_ROUTER, WBTC_USDT_V3_FEE, BTC_USD_ORACLE, USDT_USD_ORACLE
+            owner, WBTC, USDT, UNIVERSAL_ROUTER, WBTC_USDT_V3_FEE, BTC_USD_ORACLE, USDT_USD_ORACLE, 3_600
         );
 
         vm.prank(vault.gov());
@@ -144,7 +144,7 @@ contract WbtcAaveExtensive is ZenjiForkTestBase {
         assertEq(address(vault.swapper()), address(newSwapper), "Swapper should be updated");
 
         UniversalRouterV3SingleHopSwapper anotherSwapper = new UniversalRouterV3SingleHopSwapper(
-            owner, WBTC, USDT, UNIVERSAL_ROUTER, WBTC_USDT_V3_FEE, BTC_USD_ORACLE, USDT_USD_ORACLE
+            owner, WBTC, USDT, UNIVERSAL_ROUTER, WBTC_USDT_V3_FEE, BTC_USD_ORACLE, USDT_USD_ORACLE, 3_600
         );
         vm.prank(vault.gov());
         vault.proposeSwapper(address(anotherSwapper));

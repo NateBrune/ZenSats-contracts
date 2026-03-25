@@ -98,6 +98,7 @@ forge create src/swappers/base/UniversalRouterV3SingleHopSwapper.sol:UniversalRo
     500 \
     0x214eD9Da11D2fbe465a6fc601a91E62EbEc1a0D6 \
     0x3E7d1eAB13ad0104d2750B8863b489D65364e32D \
+    90000 \
   --verify
 ```
 
@@ -109,6 +110,7 @@ Constructor args:
 5. `500` — 0.05% fee tier (XAUT/USDT pool)
 6. XAU/USD oracle
 7. USDT/USD oracle
+8. `90000` — max collateral oracle staleness (XAU/USD heartbeat is 24h)
 
 Save as `SWAPPER`.
 

@@ -151,7 +151,8 @@ contract WstEthUsdtIporAaveForkTest is Test {
             FEE_WSTETH_WETH,
             FEE_WETH_USDT,
             address(wstEthOracle),
-            USDT_USD_ORACLE
+            USDT_USD_ORACLE,
+            3_600
         );
 
         // Deploy yield strategy (USDT → crvUSD → IPOR)
