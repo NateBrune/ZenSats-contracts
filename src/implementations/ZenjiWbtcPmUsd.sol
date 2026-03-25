@@ -26,15 +26,15 @@ contract ZenjiWbtcPmUsd is Zenji {
         return "zenWBTC-pmUSDcrvUSDStake";
     }
 
-    /// @notice 1e5 sat = 0.001 BTC ≈ $100 dead capital (at $100K/BTC).
-    /// Attack cost: ~$100. Dilution: ~10 bps at $100K TVL, ~1 bp at $1M TVL.
+    /// @notice 1e4 sat = 0.0001 BTC ≈ $10 dead capital (at $100K/BTC).
+    /// Attack cost: ~$10. Dilution: ~10 bps at $10K TVL, ~1 bp at $100K TVL.
     function VIRTUAL_SHARE_OFFSET() public pure override returns (uint256) {
-        return 1e5;
+        return 1e4;
     }
 
-    /// @notice 1e5 sat = 0.001 BTC ≈ $100 at $100K/BTC.
+    /// @notice 1e4 sat = 0.0001 BTC ≈ $10 at $100K/BTC.
     /// Must be >= VIRTUAL_SHARE_OFFSET to preserve inflation-attack economics.
     function MIN_DEPOSIT() public pure override returns (uint256) {
-        return 1e5;
+        return 1e4;
     }
 }

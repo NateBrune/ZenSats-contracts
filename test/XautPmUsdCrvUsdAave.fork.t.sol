@@ -82,6 +82,14 @@ contract XautPmUsdCrvUsdAave is ZenjiForkTestBase {
         return 20;
     }
 
+    function _collateralStalenessWarp() internal pure override returns (uint256) {
+        return 90001; // XAU/USD Chainlink heartbeat is 24 h; staleness window is 90000 s
+    }
+
+    function _maxTargetLtv() internal pure override returns (uint256) {
+        return 60e16; // XAUT loan manager maxLtvBps = 6000 (60%)
+    }
+
     function _fuzzMultiUserFairnessPct() internal pure override returns (uint256) {
         return 20;
     }
@@ -148,7 +156,8 @@ contract XautPmUsdCrvUsdAave is ZenjiForkTestBase {
             6000,
             7500,
             expectedVaultAddress,
-            AAVE_EMODE_XAUT
+            AAVE_EMODE_XAUT,
+            90000 // XAU/USD heartbeat is 24h
         );
 
         vault = new Zenji(
@@ -598,19 +607,22 @@ contract XautPmUsdCrvUsdAave is ZenjiForkTestBase {
         assertGt(lastPass, 0, "At least 2000 XAUT should pass at 1% slippage");
     }
 
-    /// @notice Bisect the 4000–4500 XAUT cliff with 50 XAUT resolution.
+    /// @notice Bisect the 3000–3500 XAUT cliff with 50 XAUT resolution.
+    /// @dev The coarse sweep (test_uniswapSlippageCeiling_1pct) estimates the per-tx USDT→XAUT
+    ///      slippage boundary at ~3,500 XAUT. This test refines that cliff at 50 XAUT resolution
+    ///      to find the exact safe single-deposit cap.
     function test_uniswapSlippageCeiling_1pct_finegrain() public {
         uint256[] memory sizes = new uint256[](10);
-        sizes[0] = 4000e6;
-        sizes[1] = 4050e6;
-        sizes[2] = 4100e6;
-        sizes[3] = 4150e6;
-        sizes[4] = 4200e6;
-        sizes[5] = 4250e6;
-        sizes[6] = 4300e6;
-        sizes[7] = 4350e6;
-        sizes[8] = 4400e6;
-        sizes[9] = 4450e6;
+        sizes[0] = 3000e6;
+        sizes[1] = 3050e6;
+        sizes[2] = 3100e6;
+        sizes[3] = 3150e6;
+        sizes[4] = 3200e6;
+        sizes[5] = 3250e6;
+        sizes[6] = 3300e6;
+        sizes[7] = 3350e6;
+        sizes[8] = 3400e6;
+        sizes[9] = 3450e6;
 
         uint256 slippage = 1e16;
         uint256 lastPass = 0;
@@ -637,7 +649,7 @@ contract XautPmUsdCrvUsdAave is ZenjiForkTestBase {
         }
 
         console.log("UniswapFine lastPass=%s XAUT  firstFail=%s XAUT", lastPass / 1e6, firstFail / 1e6);
-        assertGt(lastPass, 0, "Fine-grain: at least 4000 should pass");
+        assertGt(lastPass, 0, "Fine-grain: at least 3000 XAUT should pass at 1% slippage");
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -811,8 +823,8 @@ contract XautPmUsdCrvUsdAave is ZenjiForkTestBase {
     function test_singleDepositorFailureDiagnosis() public {
         uint256 slippage = 1e16; // 1%
 
-        // Use a size comfortably above the known ~4000 XAUT cliff so it reliably fails.
-        uint256 failSize = 4500e6; // 4500 XAUT ~ $20.25M
+        // Use a size comfortably above the known ~4450 XAUT cliff so it reliably fails.
+        uint256 failSize = 5000e6; // 5000 XAUT ~ $22.5M (above the ceiling)
         uint256 safeSize = 4000e6; // 4000 XAUT ~ $18M (known to pass)
 
         _syncAndMockOracles();
@@ -877,7 +889,7 @@ contract XautPmUsdCrvUsdAave is ZenjiForkTestBase {
         }
 
         // The test is informational; it asserts the deposit fails so CI catches pool liquidity changes.
-        require(!depositOk, "Expected deposit to fail at 4500 XAUT with 1% slippage");
+        require(!depositOk, "Expected deposit to fail at 5000 XAUT with 1% slippage");
     }
 
     /// @dev Internal helper: prints a full two-step Curve deposit analysis for a given deposit size.

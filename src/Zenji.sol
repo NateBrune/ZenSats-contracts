@@ -32,7 +32,7 @@ contract Zenji is ERC20, IERC4626 {
     uint256 public constant PRECISION = 1e18;
     uint256 public constant DEADBAND_SPREAD = 3e16; // 3%
     uint256 public constant MIN_TARGET_LTV = 15e16; // 15%
-    uint256 public constant MAX_TARGET_LTV = 65e16; // 65%
+    // MAX_TARGET_LTV is a virtual function — implementations override for per-vault ceilings
     uint256 internal constant DEFAULT_LOAN_BANDS = 4; // TODO: This should live in llamaloanmanager
     uint256 public constant MAX_FEE_RATE = 2e17; // 20%
     // VIRTUAL_SHARE_OFFSET is now a virtual function — see bottom of contract
@@ -40,6 +40,7 @@ contract Zenji is ERC20, IERC4626 {
     uint256 public constant MAX_REBALANCE_BOUNTY = 1e18; // 100%
     uint256 public constant TIMELOCK_DELAY = 1 weeks;
     uint256 public constant MAX_VAULT_SLIPPAGE = 1e17; // 10% cap
+    uint256 public constant ROLE_TRANSFER_DELAY = 1 weeks;
 
     // ============ Immutables ============
 
@@ -70,6 +71,9 @@ contract Zenji is ERC20, IERC4626 {
     address public pendingStrategist;
     address public pendingGov;
     address public pendingGuardian;
+    uint256 public pendingStrategistTimestamp;
+    uint256 public pendingGovTimestamp;
+    uint256 public pendingGuardianTimestamp;
     uint256 public rebalanceBountyRate;
     uint256 public depositCap;
     uint256 public maxSlippage;
@@ -233,7 +237,7 @@ contract Zenji is ERC20, IERC4626 {
         gov = _owner;
         guardian = _owner;
         idle = false;
-        targetLtv = 65e16; // 65% default target LTV
+        targetLtv = MAX_TARGET_LTV(); // set to per-vault ceiling at construction
         // Liquidation starts at ~90%
         // Vault can handle about 25% price move in testing without rebalancing.
         rebalanceBountyRate = 2e17; // 20% default rebalance bounty
@@ -462,6 +466,11 @@ contract Zenji is ERC20, IERC4626 {
             revert RebalanceNotNeeded();
         }
 
+        // Advance the strategy's cached virtual price before fee accrual so
+        // _accrueYieldFees() sees an up-to-date strategy balance. This prevents
+        // VP drift from causing phantom fee accrual during catch-up steps.
+        yieldStrategy.updateCachedVirtualPrice();
+
         // Accrue fees and pay keeper bounty before adjusting LTV
         // (must happen before deposit to avoid IPOR lock conflict)
         _accrueYieldFees();
@@ -598,39 +607,64 @@ contract Zenji is ERC20, IERC4626 {
     // ============ Role Management (Gov-only) ============
 
     /// @notice Transfer role: 0=strategist, 1=gov, 2=guardian (only gov can initiate all transfers)
+    /// @dev Starts a 2-day timelock; new address must call acceptRole after the delay.
     function transferRole(uint8 role, address to) external onlyGov {
         if (to == address(0)) revert InvalidAddress();
         if (role == 0) {
             pendingStrategist = to;
+            pendingStrategistTimestamp = block.timestamp + ROLE_TRANSFER_DELAY;
             emit StrategistTransferStarted(strategist, to);
         } else if (role == 1) {
             pendingGov = to;
+            pendingGovTimestamp = block.timestamp + ROLE_TRANSFER_DELAY;
             emit GovernanceTransferStarted(gov, to);
         } else {
             pendingGuardian = to;
+            pendingGuardianTimestamp = block.timestamp + ROLE_TRANSFER_DELAY;
             emit GuardianTransferStarted(guardian, to);
         }
     }
 
     /// @notice Accept role: 0=strategist, 1=gov, 2=guardian
+    /// @dev Caller must be the pending address and 2-day timelock must have passed.
     function acceptRole(uint8 role) external {
         if (role == 0) {
             if (msg.sender != pendingStrategist) revert Unauthorized();
+            if (block.timestamp < pendingStrategistTimestamp) revert TimelockLib.TimelockNotReady();
             strategist = msg.sender;
             pendingStrategist = address(0);
+            pendingStrategistTimestamp = 0;
             emit StrategistUpdated(msg.sender);
         } else if (role == 1) {
             if (msg.sender != pendingGov) revert Unauthorized();
+            if (block.timestamp < pendingGovTimestamp) revert TimelockLib.TimelockNotReady();
             gov = msg.sender;
             pendingGov = address(0);
+            pendingGovTimestamp = 0;
             emit GovernanceUpdated(msg.sender);
             // Propagate to strategy if it supports vault-initiated ownership transfer
             yieldStrategy.transferOwnerFromVault(msg.sender);
         } else {
             if (msg.sender != pendingGuardian) revert Unauthorized();
+            if (block.timestamp < pendingGuardianTimestamp) revert TimelockLib.TimelockNotReady();
             guardian = msg.sender;
             pendingGuardian = address(0);
+            pendingGuardianTimestamp = 0;
             emit GuardianUpdated(msg.sender);
+        }
+    }
+
+    /// @notice Cancel a pending role transfer (Gov-only)
+    function cancelRole(uint8 role) external onlyGov {
+        if (role == 0) {
+            pendingStrategist = address(0);
+            pendingStrategistTimestamp = 0;
+        } else if (role == 1) {
+            pendingGov = address(0);
+            pendingGovTimestamp = 0;
+        } else {
+            pendingGuardian = address(0);
+            pendingGuardianTimestamp = 0;
         }
     }
 
@@ -731,7 +765,13 @@ contract Zenji is ERC20, IERC4626 {
             emit ParamUpdated(p, feeRate, v);
             feeRate = v;
         } else if (p == 1) {
-            if (v < MIN_TARGET_LTV || v > MAX_TARGET_LTV) {
+            if (v < MIN_TARGET_LTV || v > MAX_TARGET_LTV()) {
+                revert InvalidTargetLtv();
+            }
+            // Cross-check against the loan manager's Aave maxLtvBps cap.
+            // LlamaLend returns type(uint256).max — no cap. Aave returns the actual BPS ceiling.
+            uint256 lmMaxBps = loanManager.maxLtvBps();
+            if (lmMaxBps != type(uint256).max && v > lmMaxBps * 1e14) {
                 revert InvalidTargetLtv();
             }
             emit ParamUpdated(p, targetLtv, v);
@@ -891,12 +931,17 @@ contract Zenji is ERC20, IERC4626 {
         uint256 supply = totalSupply();
         if (supply < 1) return (0, 0);
         uint256 availableCollateral = collateralAsset.balanceOf(address(this));
+        uint256 availableDebt = debtAsset.balanceOf(address(this));
         collateralAmount = (availableCollateral * actualShareAmount) / supply;
+        uint256 debtAmount = (availableDebt * actualShareAmount) / supply;
 
         _burn(owner_, actualShareAmount);
 
         if (collateralAmount > 0) {
             collateralAsset.safeTransfer(receiver, collateralAmount);
+        }
+        if (debtAmount > 0) {
+            debtAsset.safeTransfer(receiver, debtAmount);
         }
 
         emit Withdraw(msg.sender, receiver, owner_, collateralAmount, actualShareAmount);
@@ -1121,6 +1166,13 @@ contract Zenji is ERC20, IERC4626 {
     }
 
     // ============ Virtual share offset & deposit floor ============
+
+    /// @notice Per-vault ceiling for targetLtv, used both in setParam validation and
+    ///         as the constructor default. Override in implementation contracts whose
+    ///         Aave maxLtvBps is lower than the base 65%.
+    function MAX_TARGET_LTV() public pure virtual returns (uint256) {
+        return 65e16; // 65% default — safe for BTC/ETH vaults (Aave maxLtv ≥ 73%)
+    }
 
     /// @notice Virtual share offset for ERC4626 inflation attack mitigation
     /// @dev Override in implementation contracts to customize per collateral type

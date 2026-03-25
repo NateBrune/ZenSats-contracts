@@ -4,6 +4,9 @@
 - [deployments/wbtc_ipor_aave_usdt.md](deployments/wbtc_ipor_aave_usdt.md)
 - [deployments/cbBTC_ipor_aave_usdt.md](deployments/cbBTC_ipor_aave_usdt.md)
 - [deployments/wstETH_ipor_aave_usdt.md](deployments/wstETH_ipor_aave_usdt.md)
+- [deployments/wbtc_pmUsdCrvUsd_aave_usdt.md](deployments/wbtc_pmUsdCrvUsd_aave_usdt.md)
+- [deployments/wstETH_pmUsdCrvUsd_aave_usdt.md](deployments/wstETH_pmUsdCrvUsd_aave_usdt.md)
+- [deployments/xaut_pmUsd_aave_usdt.md](deployments/xaut_pmUsd_aave_usdt.md)
 
 The sections below retain the original WBTC notes and scratch material.
 
@@ -145,7 +148,7 @@ Constructor args:
 ### Step 3: Deploy AaveLoanManager
 
 ```bash
-forge create src/AaveLoanManager.sol:AaveLoanManager \
+forge create src/lenders/AaveLoanManager.sol:AaveLoanManager \
   --rpc-url $MAINNET_RPC_URL \
   --private-key $PRIVATE_KEY \
   --constructor-args \
@@ -160,6 +163,8 @@ forge create src/AaveLoanManager.sol:AaveLoanManager \
     7300 \
     7800 \
     0x0000000000000000000000000000000000000000 \
+    0 \
+    3600 \
   --verify
 ```
 
@@ -172,9 +177,11 @@ Constructor args:
 6. `BTC/USD oracle` - Chainlink
 7. `USDT/USD oracle` - Chainlink
 8. `SWAPPER` - from Step 2
-9. `7500` - max LTV (75%)
-10. `8000` - liquidation threshold (80%)
+9. `7300` - max LTV (73%)
+10. `7800` - liquidation threshold (78%)
 11. `address(0)` - vault set later
+12. `0` - eMode category (disabled for WBTC; use 43 for XAUT)
+13. `3600` - collateral oracle staleness limit in seconds (BTC/USD heartbeat = 1h; use 90000 for XAUT)
 
 Save the deployed address as `LOAN_MANAGER`.
 
@@ -374,6 +381,14 @@ cast call <VAULT> "yieldStrategy()(address)" --rpc-url $MAINNET_RPC_URL
 # Check vault is not idle
 cast call <VAULT> "idle()(bool)" --rpc-url $MAINNET_RPC_URL
 # Should return false
+
+# Check oracle staleness window
+cast call <LOAN_MANAGER> "maxCollateralOracleStaleness()(uint256)" --rpc-url $MAINNET_RPC_URL
+# Should return 3600 (BTC/ETH vaults) or 90000 (XAUT vault)
+
+# Check target LTV (set to MAX_TARGET_LTV at construction)
+cast call <VAULT> "targetLtv()(uint256)" --rpc-url $MAINNET_RPC_URL
+# Should return 650000000000000000 (65e16) for BTC/ETH, or 600000000000000000 (60e16) for XAUT
 ```
 
 ---

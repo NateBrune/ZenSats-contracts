@@ -21,7 +21,6 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
     // ============ Constants ============
 
     uint256 public constant PRECISION = 1e18;
-    uint256 public constant MAX_ORACLE_STALENESS = 3600; // 1 hour for BTC/USD
     uint256 public constant MAX_DEBT_ORACLE_STALENESS = 90000; // 25 hours for USDT/USD (Chainlink heartbeat is 24h)
     uint256 public constant AAVE_LTV_SCALE = 1e4;
     uint256 public constant VARIABLE_RATE_MODE = 2;
@@ -57,6 +56,10 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
     // Aave risk params (basis points)
     uint256 public immutable maxLtvBps;
     uint256 public immutable liquidationThresholdBps;
+    /// @notice Staleness window for the collateral oracle (seconds). Set to the
+    ///         Chainlink heartbeat of the collateral feed plus a small buffer.
+    ///         e.g. BTC/USD = 3600 (1 h), XAU/USD = 90000 (25 h).
+    uint256 public immutable maxCollateralOracleStaleness;
 
     event SwapperUpdated(address indexed oldSwapper, address indexed newSwapper);
     event SwapperChangeProposed(
@@ -90,7 +93,8 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         uint256 _maxLtvBps,
         uint256 _liquidationThresholdBps,
         address _vault,
-        uint8 _emodeCategory
+        uint8 _emodeCategory,
+        uint256 _maxCollateralStaleness
     ) {
         if (
             _collateralAsset == address(0) || _debtAsset == address(0) || _aToken == address(0)
@@ -100,6 +104,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
             revert InvalidAddress();
         }
         if (_maxLtvBps == 0 || _liquidationThresholdBps == 0) revert InvalidAddress();
+        if (_maxCollateralStaleness == 0) revert InvalidAddress();
 
         collateralToken = IERC20(_collateralAsset);
         debtToken = IERC20(_debtAsset);
@@ -110,6 +115,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         debtOracle = IChainlinkOracle(_debtOracle);
         maxLtvBps = _maxLtvBps;
         liquidationThresholdBps = _liquidationThresholdBps;
+        maxCollateralOracleStaleness = _maxCollateralStaleness;
         if (_vault != address(0)) {
             vault = _vault;
             initializer = address(0);
@@ -202,6 +208,10 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         if (amount == 0) revert ZeroAmount();
         _checkOracleFreshness();
         aavePool.withdraw(address(collateralToken), amount, address(this));
+        if (variableDebtToken.balanceOf(address(this)) > 0) {
+            int256 health = this.getHealth();
+            if (health < MIN_HEALTH) revert HealthTooLow();
+        }
         emit CollateralRemoved(amount);
     }
 
@@ -571,7 +581,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
 
     function _checkOracleFreshness() internal view {
         OracleLib.checkOracleFreshness(
-            collateralOracle, MAX_ORACLE_STALENESS, debtOracle, MAX_DEBT_ORACLE_STALENESS
+            collateralOracle, maxCollateralOracleStaleness, debtOracle, MAX_DEBT_ORACLE_STALENESS
         );
     }
 
@@ -579,7 +589,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         return OracleLib.getCollateralValue(
             collateralAmount,
             collateralOracle,
-            MAX_ORACLE_STALENESS,
+            maxCollateralOracleStaleness,
             debtOracle,
             MAX_DEBT_ORACLE_STALENESS,
             collateralToken,
@@ -591,7 +601,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         return OracleLib.getDebtValue(
             debtAmount,
             collateralOracle,
-            MAX_ORACLE_STALENESS,
+            maxCollateralOracleStaleness,
             debtOracle,
             MAX_DEBT_ORACLE_STALENESS,
             collateralToken,
@@ -601,7 +611,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
 
     function _getCollateralUsdValue(uint256 collateralAmount) internal view returns (uint256) {
         return OracleLib.getCollateralUsdValue(
-            collateralAmount, collateralOracle, MAX_ORACLE_STALENESS, collateralToken
+            collateralAmount, collateralOracle, maxCollateralOracleStaleness, collateralToken
         );
     }
 

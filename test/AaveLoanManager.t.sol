@@ -164,7 +164,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             7500,
             8000,
             vault,
-            0 // eMode: disabled
+            0, // eMode: disabled
+            3600
         );
         manager = ILoanManager(address(aaveManager));
     }
@@ -182,7 +183,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             7500,
             8000,
             address(0),
-            0 // eMode: disabled
+            0, // eMode: disabled
+            3600
         );
         return ILoanManager(address(deferred));
     }
@@ -491,7 +493,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             7500,
             8000,
             vault,
-            0 // eMode: disabled
+            0, // eMode: disabled
+            3600
         );
     }
 
@@ -509,7 +512,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             7500,
             8000,
             vault,
-            0 // eMode: disabled
+            0, // eMode: disabled
+            3600
         );
     }
 
@@ -527,7 +531,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             7500,
             8000,
             vault,
-            0 // eMode: disabled
+            0, // eMode: disabled
+            3600
         );
     }
 
@@ -545,7 +550,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             7500,
             8000,
             vault,
-            0 // eMode: disabled
+            0, // eMode: disabled
+            3600
         );
     }
 
@@ -563,7 +569,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             7500,
             8000,
             vault,
-            0 // eMode: disabled
+            0, // eMode: disabled
+            3600
         );
     }
 
@@ -581,7 +588,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             7500,
             8000,
             vault,
-            0 // eMode: disabled
+            0, // eMode: disabled
+            3600
         );
     }
 
@@ -599,7 +607,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             7500,
             8000,
             vault,
-            0 // eMode: disabled
+            0, // eMode: disabled
+            3600
         );
     }
 
@@ -617,7 +626,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             0,
             8000,
             vault,
-            0 // eMode: disabled
+            0, // eMode: disabled
+            3600
         );
     }
 
@@ -635,7 +645,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             7500,
             0,
             vault,
-            0 // eMode: disabled
+            0, // eMode: disabled
+            3600
         );
     }
 
@@ -652,7 +663,8 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
             7500,
             8000,
             address(0),
-            0 // eMode: disabled
+            0, // eMode: disabled
+            3600
         );
         assertEq(deferred.vault(), address(0));
     }

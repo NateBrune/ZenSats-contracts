@@ -39,6 +39,10 @@ contract MockKeeperLoanManager is ILoanManager {
         return loanExistsFlag;
     }
 
+    function maxLtvBps() external pure returns (uint256) {
+        return type(uint256).max;
+    }
+
     function checkOracleFreshness() external view {
         if (stale) revert("stale");
     }

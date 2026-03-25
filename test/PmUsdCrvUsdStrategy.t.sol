@@ -442,7 +442,8 @@ contract PmUsdCrvUsdStrategyTest is Test {
             7500,
             8000,
             predictedVault,
-            0 // eMode: disabled
+            0, // eMode: disabled
+            3600
         );
 
         strategy = new PmUsdCrvUsdStrategy(

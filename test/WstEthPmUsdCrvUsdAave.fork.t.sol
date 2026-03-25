@@ -159,7 +159,8 @@ contract WstEthPmUsdCrvUsdAave is ZenjiForkTestBase {
             7100,
             7600,
             expectedVaultAddress,
-            0 // eMode: disabled
+            0, // eMode: disabled
+            3600
         );
 
         vault = new Zenji(

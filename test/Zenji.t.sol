@@ -125,6 +125,8 @@ contract MockYieldStrategy is IYieldStrategy {
     function transferOwnerFromVault(address) external pure { }
     function setSlippage(uint256) external pure { }
 
+    function updateCachedVirtualPrice() external { }
+
     function name() external pure returns (string memory) {
         return "Mock Yield Strategy";
     }
@@ -184,6 +186,7 @@ contract MockYieldStrategy is IYieldStrategy {
 
         function transferOwnerFromVault(address) external pure { }
         function setSlippage(uint256) external pure { }
+        function updateCachedVirtualPrice() external { }
 
         function name() external pure returns (string memory) {
             return "Bad Strategy";
@@ -337,6 +340,7 @@ contract MockYieldStrategy is IYieldStrategy {
 
         function transferOwnerFromVault(address) external pure { }
         function setSlippage(uint256) external pure { }
+        function updateCachedVirtualPrice() external { }
 
         function name() external pure returns (string memory) {
             return "Bricked Strategy";
@@ -997,6 +1001,7 @@ contract MockYieldStrategy is IYieldStrategy {
                 vault.transferRole(0, newStrategist);
                 assertEq(vault.pendingStrategist(), newStrategist, "Pending strategist mismatch");
 
+                vm.warp(block.timestamp + vault.ROLE_TRANSFER_DELAY());
                 vm.prank(newStrategist);
                 vault.acceptRole(0);
                 assertEq(vault.strategist(), newStrategist, "Strategist mismatch");
@@ -1010,6 +1015,7 @@ contract MockYieldStrategy is IYieldStrategy {
                 vault.transferRole(2, newGuardian);
                 assertEq(vault.pendingGuardian(), newGuardian, "Pending guardian mismatch");
 
+                vm.warp(block.timestamp + vault.ROLE_TRANSFER_DELAY());
                 vm.prank(newGuardian);
                 vault.acceptRole(2);
                 assertEq(vault.guardian(), newGuardian, "Guardian mismatch");
@@ -2812,6 +2818,7 @@ contract MockYieldStrategy is IYieldStrategy {
                 vault.transferRole(1, newGov);
                 assertEq(vault.pendingGov(), newGov, "Pending gov should be set");
 
+                vm.warp(block.timestamp + vault.ROLE_TRANSFER_DELAY());
                 vm.prank(newGov);
                 vault.acceptRole(1);
                 assertEq(vault.gov(), newGov, "Gov should be updated");

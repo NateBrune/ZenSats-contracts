@@ -82,7 +82,7 @@ Save as `SWAPPER`.
 
 4) **Deploy AaveLoanManager**
 ```bash
-forge create src/AaveLoanManager.sol:AaveLoanManager \
+forge create src/lenders/AaveLoanManager.sol:AaveLoanManager \
   --rpc-url $MAINNET_RPC_URL \
   --private-key $PRIVATE_KEY \
   --constructor-args \
@@ -97,6 +97,8 @@ forge create src/AaveLoanManager.sol:AaveLoanManager \
     7800 \
     8100 \
     0x0000000000000000000000000000000000000000 \
+    0 \
+    3600 \
   --verify
 ```
 Save as `LOAN_MANAGER`.

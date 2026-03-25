@@ -505,7 +505,8 @@ contract AaveLoanManagerInvariantTest is Test {
             7100, // maxLtvBps (71%)
             7600, // liquidationThresholdBps (76%)
             vault,
-            0 // eMode: disabled
+            0, // eMode: disabled
+            3600
         );
 
         // Deploy handler

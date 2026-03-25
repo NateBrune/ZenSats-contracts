@@ -94,6 +94,8 @@ contract ControlledMockStrategy is IYieldStrategy {
     function pendingRewards() external pure returns (uint256) { return 0; }
     function transferOwnerFromVault(address) external pure { }
     function setSlippage(uint256) external pure { }
+
+    function updateCachedVirtualPrice() external { }
     function name() external pure returns (string memory) { return "ControlledMock"; }
     function vault() external view returns (address) { return _vault; }
 }
@@ -130,6 +132,7 @@ contract MockLoanManager_H3 is ILoanManager {
     function calculateBorrowAmount(uint256, uint256) external pure returns (uint256) { return 0; }
     function healthCalculator(int256, int256) external pure returns (int256) { return 0; }
     function minCollateral(uint256, uint256) external pure returns (uint256) { return 0; }
+    function maxLtvBps() external pure returns (uint256) { return type(uint256).max; }
     function checkOracleFreshness() external view {} // view, not pure (matches interface)
     function initializeVault(address v) external { _vault = v; }
 

@@ -141,6 +141,8 @@ contract InvMockYieldStrategy is IYieldStrategy {
     function transferOwnerFromVault(address) external pure { }
     function setSlippage(uint256) external pure { }
 
+    function updateCachedVirtualPrice() external { }
+
     function name() external pure returns (string memory) {
         return "Mock Yield Strategy";
     }
@@ -316,6 +318,10 @@ contract InvMockYieldStrategy is IYieldStrategy {
             uint256 collateralValue = _getCollateralValue(positionCollateral);
             uint256 debtInCollateral = _getDebtValue(positionDebt);
             return collateralValue > debtInCollateral ? positionCollateral - debtInCollateral : 0;
+        }
+
+        function maxLtvBps() external pure returns (uint256) {
+            return type(uint256).max;
         }
 
         function checkOracleFreshness() external pure {

@@ -124,6 +124,10 @@ interface ILoanManager {
     /// @notice Check oracle freshness
     function checkOracleFreshness() external view;
 
+    /// @notice Maximum LTV in basis points (100% = 10000). Returns type(uint256).max for managers
+    ///         with no fixed LTV cap (e.g. LlamaLend band-based risk model).
+    function maxLtvBps() external view returns (uint256);
+
     // ============ Token Management ============
 
     /// @notice Transfer collateral from this contract

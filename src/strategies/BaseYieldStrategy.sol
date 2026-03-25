@@ -191,6 +191,11 @@ abstract contract BaseYieldStrategy is IYieldStrategy {
         return currentValue > _costBasis ? currentValue - _costBasis : 0;
     }
 
+    /// @inheritdoc IYieldStrategy
+    /// @dev No-op for strategies that do not use a virtual price cache.
+    ///      Override in strategies that maintain a cached virtual price.
+    function updateCachedVirtualPrice() external virtual override { }
+
     // ============ Internal Functions (to be implemented by derived contracts) ============
 
     function _deposit(uint256 amount) internal virtual returns (uint256 underlyingDeposited);

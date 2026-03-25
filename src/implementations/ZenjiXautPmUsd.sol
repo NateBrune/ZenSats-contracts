@@ -20,6 +20,11 @@ contract ZenjiXautPmUsd is Zenji {
         address _viewHelper
     ) Zenji(XAUT, USDT, _loanManager, _yieldStrategy, _swapper, _owner, _viewHelper) { }
 
+    /// @notice XAUT loan manager maxLtvBps = 6000 (60%); cap targetLtv to match.
+    function MAX_TARGET_LTV() public pure override returns (uint256) {
+        return 60e16; // 60% — matches AaveLoanManager maxLtvBps for XAUT eMode 43
+    }
+
     function name() public pure override(ERC20, IERC20Metadata) returns (string memory) {
         return "Zen XAUT (pmUSD/crvUSD StakeDao)";
     }

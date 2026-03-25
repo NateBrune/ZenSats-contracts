@@ -110,7 +110,8 @@ contract DeployPmUsdXaut is Script {
             6000,
             7500,
             address(0),
-            AAVE_EMODE_XAUT
+            AAVE_EMODE_XAUT,
+            90000 // XAU/USD Chainlink heartbeat is 24h; allow 25h
         );
 
         ZenjiXautPmUsd vault = new ZenjiXautPmUsd(

@@ -207,7 +207,8 @@ contract ProtocolSmokeTests is Test {
             7500, // 75% max LTV
             8000, // 80% liquidation threshold
             expectedVaultAddress,
-            0 // eMode: disabled
+            0, // eMode: disabled
+            3600
         );
 
         // Deploy vault
@@ -334,7 +335,8 @@ contract ProtocolSmokeTests is Test {
             7500,
             8000,
             expectedVaultAddress,
-            0 // eMode: disabled
+            0, // eMode: disabled
+            3600
         );
 
         Zenji vault = new Zenji(
@@ -534,6 +536,7 @@ contract ProtocolSmokeTests is Test {
         vm.prank(owner);
         vault.transferRole(1, newGov);
 
+        vm.warp(block.timestamp + vault.ROLE_TRANSFER_DELAY());
         vm.prank(newGov);
         vault.acceptRole(1);
 

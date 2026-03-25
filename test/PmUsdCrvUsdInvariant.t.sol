@@ -494,6 +494,7 @@ contract PmMockLoanManager is ILoanManager {
         return positionCollateral > debtInCollateral ? positionCollateral - debtInCollateral : 0;
     }
 
+    function maxLtvBps() external pure returns (uint256) { return type(uint256).max; }
     function checkOracleFreshness() external pure { }
 
     function transferCollateral(address to, uint256 amount) external onlyVault {

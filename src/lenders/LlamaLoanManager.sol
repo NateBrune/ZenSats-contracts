@@ -504,6 +504,13 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     }
 
     /// @inheritdoc ILoanManager
+    function maxLtvBps() external pure returns (uint256) {
+        // LlamaLend uses a band-based risk model with no single LTV ceiling.
+        // Return max to signal no Aave-style cap applies.
+        return type(uint256).max;
+    }
+
+    /// @inheritdoc ILoanManager
     function getNetCollateralValue() external view returns (uint256 value) {
         if (!llamaLend.loan_exists(address(this))) {
             return 0;

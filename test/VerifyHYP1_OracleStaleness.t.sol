@@ -199,7 +199,8 @@ contract VerifyHYP1_OracleStaleness_Test is Test {
             7500, // maxLtvBps: 75%
             8000, // liquidationThresholdBps: 80%
             vault,
-            0 // eMode: disabled
+            0, // eMode: disabled
+            3600
         );
 
         // Create initial healthy loan: 1 BTC collateral, 100 USDT debt

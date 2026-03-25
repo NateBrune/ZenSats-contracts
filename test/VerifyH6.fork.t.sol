@@ -102,7 +102,7 @@ contract VerifyH6ForkTest is Test {
         );
         loanManager = new AaveLoanManager(
             CBBTC, USDT, AAVE_A_CBBTC, AAVE_VAR_DEBT_USDT, AAVE_POOL,
-            CBBTC_USD_ORACLE, USDT_USD_ORACLE, address(swapper), 7500, 8000, address(0), 0
+            CBBTC_USD_ORACLE, USDT_USD_ORACLE, address(swapper), 7500, 8000, address(0), 0, 3600
         );
         strategy = new UsdtIporYieldStrategy(
             USDT, CRVUSD, address(0), CURVE_USDT_CRVUSD_POOL, IPOR_PLASMA_VAULT,

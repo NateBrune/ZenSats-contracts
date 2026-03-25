@@ -143,6 +143,8 @@ contract MockHarvestStrategy is IYieldStrategy {
     function transferOwnerFromVault(address) external pure { }
     function setSlippage(uint256) external pure { }
 
+    function updateCachedVirtualPrice() external { }
+
     function name() external pure returns (string memory) {
         return "Mock Harvest Strategy";
     }

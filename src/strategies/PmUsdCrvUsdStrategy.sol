@@ -54,18 +54,11 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
     // ============ State ============
 
     address public owner;
-    // address public pendingOwner;
-    // uint256 public ownerTimelockReady;
     uint256 public slippageTolerance = DEFAULT_SLIPPAGE;
     uint256 public cachedVirtualPrice;
 
-    // uint256 public constant OWNER_TIMELOCK_DELAY = 2 days;
-    // uint256 public constant OWNER_TIMELOCK_EXPIRY = 7 days;
-
     // ============ Events ============
 
-    event OwnerTransferProposed(address indexed currentOwner, address indexed proposedOwner);
-    event OwnerTransferCancelled(address indexed cancelledOwner);
     event OwnerTransferred(address indexed oldOwner, address indexed newOwner);
     event SlippageUpdated(uint256 oldSlippage, uint256 newSlippage);
     event SwappedUsdtToCrvUsd(uint256 usdtAmount, uint256 crvUsdReceived);
@@ -148,37 +141,10 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         _;
     }
 
-    // /// @notice Propose a new owner (starts timelock)
-    // function proposeOwner(address newOwner) external onlyOwner {
-    //     if (newOwner == address(0)) revert InvalidAddress();
-    //     pendingOwner = newOwner;
-    //     ownerTimelockReady = block.timestamp + OWNER_TIMELOCK_DELAY;
-    //     emit OwnerTransferProposed(owner, newOwner);
-    // }
-
-    // /// @notice Accept ownership (called by pending owner after timelock)
-    // function acceptOwner() external {
-    //     if (msg.sender != pendingOwner) revert Unauthorized();
-    //     if (ownerTimelockReady == 0) revert Unauthorized();
-    //     if (block.timestamp < ownerTimelockReady) revert Unauthorized();
-    //     if (block.timestamp > ownerTimelockReady + OWNER_TIMELOCK_EXPIRY) revert Unauthorized();
-
-    //     emit OwnerTransferred(owner, msg.sender);
-    //     owner = msg.sender;
-    //     pendingOwner = address(0);
-    //     ownerTimelockReady = 0;
-    // }
-
-    // /// @notice Cancel pending ownership transfer
-    // function cancelOwnerTransfer() external onlyOwner {
-    //     if (pendingOwner == address(0)) revert InvalidAddress();
-    //     emit OwnerTransferCancelled(pendingOwner);
-    //     pendingOwner = address(0);
-    //     ownerTimelockReady = 0;
-    // }
-
-    //@notice Transfer strategy ownership directly, initiated by the vault upon gov transfer.
-    //@dev Bypasses the 2-day timelock. Only callable by the vault. Clears any pending transfer.
+    /// @notice Transfer strategy ownership to a new address.
+    /// @dev Only callable by the vault. The vault enforces a 2-day timelock before any gov role
+    ///      transfer completes (see Zenji.transferRole / acceptRole), so this function is
+    ///      effectively timelocked at the vault level. `owner` is always the vault's current gov.
     function transferOwnerFromVault(address newOwner) external {
         if (msg.sender != vault) revert Unauthorized();
         if (newOwner == address(0)) revert InvalidAddress();
@@ -416,6 +382,14 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         if (current > upperBound) return upperBound;
         if (current < lowerBound) return lowerBound;
         return current;
+    }
+
+    /// @notice Advance the cached virtual price toward the current LP virtual price (permissionless).
+    /// @dev Callable by anyone — intended for keepers to prevent VP drift during vault inactivity.
+    ///      Each call moves the cache at most MAX_VP_DEVIATION (0.5%) toward the live value,
+    ///      preserving the manipulation-resistance property of the bounded cache.
+    function updateCachedVirtualPrice() external override {
+        _updateCachedVirtualPrice();
     }
 
     /// @notice Update cached virtual price using bounded value

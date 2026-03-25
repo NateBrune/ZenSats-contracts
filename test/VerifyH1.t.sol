@@ -124,6 +124,8 @@ contract H1MockYieldStrategy is IYieldStrategy {
     function pendingRewards() external pure returns (uint256) { return 0; }
     function transferOwnerFromVault(address) external pure { }
     function setSlippage(uint256) external pure { }
+
+    function updateCachedVirtualPrice() external { }
     function name() external pure returns (string memory) { return "H1 Mock Strategy"; }
 }
 
@@ -264,6 +266,7 @@ contract H1MockLoanManager is ILoanManager {
         return cv > dv ? positionCollateral - dv : 0;
     }
 
+    function maxLtvBps() external pure returns (uint256) { return type(uint256).max; }
     function checkOracleFreshness() external pure { }
 
     function transferCollateral(address to, uint256 amount) external onlyVault {

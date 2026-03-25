@@ -184,7 +184,8 @@ contract H8_StaleOracle_RemoveCollateral_Test is Test {
             7500, // maxLtvBps: 75%
             8000, // liquidationThresholdBps: 80%
             vault,
-            0 // eMode: disabled
+            0, // eMode: disabled
+            3600
         );
 
         // Create an initial loan: 100 collateral, 50 debt (50% LTV)
@@ -257,17 +258,14 @@ contract H8_StaleOracle_RemoveCollateral_Test is Test {
         assertTrue(true, "Operations completed under mocked stale-oracle setup");
     }
 
-    /// @notice PHASE 3: Demonstrate high-LTV removeCollateral execution in mocked stale setup.
+    /// @notice PHASE 3: Health check guards removeCollateral at high LTV.
     ///
-    /// BTC drops 5% but oracle is stale (still shows old high price).
-    /// The vault's off-chain health monitoring (keeper) triggers setIdle → which calls
-    /// unwindPosition. But if instead removeCollateral is called directly (e.g. in a
-    /// future extension or test harness path), position safety is evaluated with stale data.
-    ///
-    /// This test captures current mocked execution near high LTV.
+    /// FIX for M-03: removeCollateral now calls getHealth() after withdrawal and reverts
+    /// if health < MIN_HEALTH (1.1e18). This test verifies:
+    ///   1. Removing collateral that breaches MIN_HEALTH reverts with HealthTooLow
+    ///   2. Removing a small amount that keeps health >= MIN_HEALTH succeeds
     function test_H8_high_ltv_removeCollateral_succeeds_with_stale_oracle() public {
         // Set up a position close to the LTV ceiling: 100 collateral, 70 debt (70% LTV)
-        // First unwind existing loan and create a new higher-LTV one
         aaveManager.unwindPosition(type(uint256).max);
 
         collateral.mint(address(aaveManager), 100e18);
@@ -278,11 +276,16 @@ contract H8_StaleOracle_RemoveCollateral_Test is Test {
         collateralOracle.setUpdatedAt(staleTimestamp);
         debtOracle.setUpdatedAt(staleTimestamp);
 
-        // Oracle is stale — removeCollateral executes in this mocked setup
-        uint256 aTokenBefore = aToken.balanceOf(address(aaveManager));
+        // Removing 10 collateral: 90/70 → health ≈ 1.028 < MIN_HEALTH (1.1) → REVERTS
+        // liquidationThresholdBps = 8000 (80%), so health = (90 * 0.80) / 70 ≈ 1.028
+        vm.expectRevert(AaveLoanManager.HealthTooLow.selector);
         aaveManager.removeCollateral(10e18);
 
+        // Removing 3 collateral: 97/70 → health ≈ 1.109 > MIN_HEALTH → SUCCEEDS
+        // health = (97 * 0.80) / 70 ≈ 1.109
+        uint256 aTokenBefore = aToken.balanceOf(address(aaveManager));
+        aaveManager.removeCollateral(3e18);
         uint256 aTokenAfter = aToken.balanceOf(address(aaveManager));
-        assertEq(aTokenBefore - aTokenAfter, 10e18, "Collateral should be removed in current mocked behavior");
+        assertEq(aTokenBefore - aTokenAfter, 3e18, "Small safe removal should succeed");
     }
 }

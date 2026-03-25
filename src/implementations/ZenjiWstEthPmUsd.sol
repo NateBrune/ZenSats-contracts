@@ -27,15 +27,15 @@ contract ZenjiWstEthPmUsd is Zenji {
     }
 
     /// @notice wstETH has 18 decimals — the base 1e5 provides zero protection.
-    /// 3e16 = 0.03 wstETH ≈ $114 dead capital (at $3,800/wstETH).
-    /// Matches WBTC's ~$100 dead capital. Dilution: ~11 bps at $100K TVL, ~1 bp at $1M TVL.
+    /// 3e15 = 0.003 wstETH ≈ $11.4 dead capital (at $3,800/wstETH).
+    /// Matches WBTC's ~$10 dead capital. Dilution: ~11 bps at $10K TVL, ~1 bp at $100K  TVL.
     function VIRTUAL_SHARE_OFFSET() public pure override returns (uint256) {
-        return 3e16;
+        return 3e15;
     }
 
-    /// @notice 3e16 = 0.03 wstETH ≈ $114 at $3,800/wstETH.
+    /// @notice 3e15 = 0.003 wstETH ≈ $11.4 at $3,800/wstETH.
     /// Must be >= VIRTUAL_SHARE_OFFSET to preserve inflation-attack economics.
     function MIN_DEPOSIT() public pure override returns (uint256) {
-        return 3e16;
+        return 3e15;
     }
 }

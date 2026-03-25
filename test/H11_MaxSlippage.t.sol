@@ -87,6 +87,8 @@ contract MockYieldStrategyH11 is IYieldStrategy {
     function pendingRewards() external pure returns (uint256) { return 0; }
     function transferOwnerFromVault(address) external pure { }
     function setSlippage(uint256) external pure { }
+
+    function updateCachedVirtualPrice() external { }
     function name() external pure returns (string memory) { return "Mock H11 Strategy"; }
 }
 

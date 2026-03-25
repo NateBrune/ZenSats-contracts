@@ -103,6 +103,22 @@ abstract contract ZenjiForkTestBase is Test {
         return true;
     }
 
+    /// @notice Seconds to warp forward to trigger a stale collateral oracle.
+    ///         Must exceed the collateral oracle's staleness window by at least 1.
+    ///         Default matches the standard 1-hour BTC/ETH heartbeat (3600 + 1).
+    ///         Override for vaults whose collateral oracle has a longer heartbeat
+    ///         e.g. XAU/USD (24 h) → return 90001.
+    function _collateralStalenessWarp() internal pure virtual returns (uint256) {
+        return 3601;
+    }
+
+    /// @dev The maximum targetLtv accepted by this vault's loan manager (in 1e18 precision).
+    ///      Default matches BTC/ETH vaults whose maxLtvBps ≥ 6500.
+    ///      Override for vaults with a lower cap, e.g. XAUT (maxLtvBps = 6000 → 60e16).
+    function _maxTargetLtv() internal pure virtual returns (uint256) {
+        return 65e16;
+    }
+
     // ============ setUp ============
 
     function setUp() public {
@@ -532,7 +548,7 @@ abstract contract ZenjiForkTestBase is Test {
     function test_oracleStale_depositReverts() public {
         _deployVault();
 
-        vm.warp(block.timestamp + 3601);
+        vm.warp(block.timestamp + _collateralStalenessWarp());
 
         vm.startPrank(user1);
         collateralToken.approve(address(vault), _baseDeposit());
@@ -545,7 +561,7 @@ abstract contract ZenjiForkTestBase is Test {
         _deployVault();
         _depositAs(user1, _baseDeposit());
 
-        vm.warp(block.timestamp + 3601);
+        vm.warp(block.timestamp + _collateralStalenessWarp());
 
         vm.expectRevert();
         vault.rebalance();
@@ -604,14 +620,14 @@ abstract contract ZenjiForkTestBase is Test {
         vault.setParam(1, 15e16);
         assertEq(vault.targetLtv(), 15e16, "Should accept min LTV");
 
-        vault.setParam(1, 65e16);
-        assertEq(vault.targetLtv(), 65e16, "Should accept max LTV");
+        vault.setParam(1, _maxTargetLtv());
+        assertEq(vault.targetLtv(), _maxTargetLtv(), "Should accept max LTV");
 
         vm.expectRevert(Zenji.InvalidTargetLtv.selector);
         vault.setParam(1, 15e16 - 1);
 
         vm.expectRevert(Zenji.InvalidTargetLtv.selector);
-        vault.setParam(1, 65e16 + 1);
+        vault.setParam(1, _maxTargetLtv() + 1);
 
         vault.setParam(0, 2e17);
         assertEq(vault.feeRate(), 2e17, "Should accept max fee rate");

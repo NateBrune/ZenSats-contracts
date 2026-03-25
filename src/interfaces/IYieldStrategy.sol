@@ -75,4 +75,8 @@ interface IYieldStrategy {
 
     // @notice set strategy slippage
     function setSlippage(uint256 newSlippage) external;
+
+    /// @notice Advance the cached virtual price toward the current value (permissionless).
+    ///         No-op for strategies that do not use a virtual price cache.
+    function updateCachedVirtualPrice() external;
 }

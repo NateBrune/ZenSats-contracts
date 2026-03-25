@@ -137,7 +137,8 @@ contract VerifyH40 is Test {
             7500,
             8000,
             expectedVaultAddress,
-            0 // eMode: disabled
+            0, // eMode: disabled
+            3600
         );
 
         vault = new Zenji(

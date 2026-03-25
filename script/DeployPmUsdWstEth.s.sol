@@ -113,7 +113,8 @@ contract DeployPmUsdWstEth is Script {
             7800,
             8100,
             address(0),
-            0 // eMode: disabled
+            0, // eMode: disabled
+            3600 // ETH/USD Chainlink heartbeat is 1h
         );
 
         ZenjiWstEthPmUsd vault = new ZenjiWstEthPmUsd(

@@ -105,7 +105,8 @@ contract DeployPmUsdWbtc is Script {
             7300,
             7800,
             address(0),
-            0 // eMode: disabled
+            0, // eMode: disabled
+            3600 // BTC/USD Chainlink heartbeat is 1h
         );
 
         ZenjiWbtcPmUsd vault = new ZenjiWbtcPmUsd(
