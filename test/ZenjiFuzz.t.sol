@@ -278,9 +278,8 @@ contract FzYieldStrategy is IYieldStrategy {
         }
 
         function getNetCollateralValue() external view returns (uint256) {
-            uint256 colVal = _getCollateralValue(positionCollateral);
             uint256 debtInCol = _getDebtValue(positionDebt);
-            return colVal > debtInCol ? positionCollateral - debtInCol : 0;
+            return positionCollateral > debtInCol ? positionCollateral - debtInCol : 0;
         }
 
         function maxLtvBps() external pure returns (uint256) { return type(uint256).max; }

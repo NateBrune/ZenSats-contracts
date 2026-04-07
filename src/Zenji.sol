@@ -983,19 +983,50 @@ contract Zenji is ERC20, IERC4626 {
 
             if (availableCollateral < collateralAmount) {
                 uint256 needed = collateralAmount - availableCollateral;
+
+                // Ensure we unwind at least the withdrawer's proportional share
+                // of the LM's gross Aave position. Without this, the LM residual
+                // remains oversized relative to remaining depositors, causing the
+                // re-pricing below to expect more collateral than the vault holds.
+                if (loanManager.loanExists()) {
+                    (uint256 posCol,) = loanManager.getPositionValues();
+                    uint256 virtualSupply =
+                        totalSupply() + actualShareAmount + VIRTUAL_SHARE_OFFSET();
+                    uint256 proportionalLM =
+                        (posCol * actualShareAmount) / virtualSupply;
+                    if (proportionalLM > needed) {
+                        needed = proportionalLM;
+                    }
+                }
+
                 uint256 balanceBefore = collateralAsset.balanceOf(address(this));
 
                 _unwindPosition(needed);
 
                 uint256 balanceAfter = collateralAsset.balanceOf(address(this));
-                uint256 gained = balanceAfter > balanceBefore ? balanceAfter - balanceBefore : 0;
 
-                uint256 totalAvailable = availableCollateral + gained;
+                // Re-price shares using post-unwind realized value so the
+                // withdrawer absorbs strategy unwind slippage proportionally,
+                // not remaining depositors. Without this, oracle-priced shares
+                // let the withdrawer claim more collateral than was actually
+                // recovered, socializing slippage onto remaining shareholders.
+                uint256 remainingShares = totalSupply(); // shares already burned above
+                if (remainingShares > 0) {
+                    uint256 postUnwindTotal = getTotalCollateral();
+                    // Reconstruct total supply as if shares weren't burned yet
+                    uint256 virtualSupply =
+                        remainingShares + actualShareAmount + VIRTUAL_SHARE_OFFSET();
+                    uint256 realizedCollateral = (actualShareAmount
+                        * (postUnwindTotal + VIRTUAL_SHARE_OFFSET())) / virtualSupply;
+                    if (realizedCollateral < collateralAmount) {
+                        collateralAmount = realizedCollateral;
+                    }
+                }
+
+                uint256 totalAvailable = balanceAfter;
                 if (totalAvailable < collateralAmount) {
-                    // Allow slippage-adjusted withdrawal: multi-hop strategies
-                    // lose value to swap slippage during unwind. Rather than
-                    // reverting (shares are already burned), send what we recovered
-                    // as long as the shortfall is within maxSlippage.
+                    // Even after re-pricing, if vault balance is insufficient
+                    // (e.g. dust rounding), allow slippage-adjusted withdrawal.
                     uint256 minAcceptable =
                         (collateralAmount * (PRECISION - maxSlippage)) / PRECISION;
                     if (totalAvailable < minAcceptable) {

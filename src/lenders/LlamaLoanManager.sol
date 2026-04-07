@@ -329,9 +329,15 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
         }
     }
 
+    // TODO: Refactor onFlashLoan to match AaveLoanManager's cleaned-up executeOperation:
+    //   - Use single repay call with max amount instead of two-pass repay
+    //   - Handle 1-wei rounding residual defensively (cap at <= 2 wei)
+    //   - Remove duplicated second swap block; keep single swap + defensive sweep
+    //   - Reduce redundant balanceOf calls
+
     /// @notice ERC3156 flashloan callback for position unwinding
     /// @dev Called during unwindPosition when available debt can't cover the debt.
-    ///      Repays remaining debt, removes collateral, swaps collateral→debt for repayment.
+    ///      Repays remaining debt, removes collateral, swaps collateral->debt for repayment.
     function onFlashLoan(
         address initiator,
         address token,

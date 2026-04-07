@@ -39,9 +39,12 @@ contract MockAavePool is IAavePool {
         external
         returns (uint256)
     {
-        IERC20(asset).transferFrom(msg.sender, address(this), amount);
-        variableDebtToken.burnFrom(onBehalfOf, amount);
-        return amount;
+        uint256 actualDebt = variableDebtToken.balanceOf(onBehalfOf);
+        uint256 repayAmount = amount == type(uint256).max ? actualDebt : amount;
+        if (repayAmount > actualDebt) repayAmount = actualDebt;
+        IERC20(asset).transferFrom(msg.sender, address(this), repayAmount);
+        variableDebtToken.burnFrom(onBehalfOf, repayAmount);
+        return repayAmount;
     }
 
     function withdraw(address asset, uint256 amount, address to) external returns (uint256) {

@@ -3,6 +3,7 @@ src = "src"
 out = "out"
 libs = ["lib"]
 solc_version = "0.8.34"
+fuzz = { runs = 10 }  # fork fuzz tests take ~70s each — 10 runs ≈ 12 min
 remappings = [
     "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/"
 ]
