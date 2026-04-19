@@ -190,7 +190,7 @@ contract H8_StaleOracle_RemoveCollateral_Test is Test {
 
         // Create an initial loan: 100 collateral, 50 debt (50% LTV)
         collateral.mint(address(aaveManager), 100e18);
-        aaveManager.createLoan(100e18, 50e18, 0);
+        aaveManager.createLoan(100e18, 50e18);
     }
 
     /// @notice PHASE 1: removeCollateral() executes under stale oracle in this mocked setup.
@@ -235,7 +235,7 @@ contract H8_StaleOracle_RemoveCollateral_Test is Test {
 
         // createLoan executes
         collateral.mint(address(aaveManager), 10e18);
-        aaveManager.createLoan(10e18, 0, 0);
+        aaveManager.createLoan(10e18, 0);
 
         // addCollateral executes
         collateral.mint(address(aaveManager), 10e18);
@@ -269,7 +269,7 @@ contract H8_StaleOracle_RemoveCollateral_Test is Test {
         aaveManager.unwindPosition(type(uint256).max);
 
         collateral.mint(address(aaveManager), 100e18);
-        aaveManager.createLoan(100e18, 70e18, 0); // 70% LTV — near maxLtvBps=75%
+        aaveManager.createLoan(100e18, 70e18); // 70% LTV — near maxLtvBps=75%
 
         uint256 staleTimestamp = block.timestamp;
         vm.warp(block.timestamp + 26 hours + 1);

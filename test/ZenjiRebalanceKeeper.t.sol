@@ -112,7 +112,7 @@ contract MockKeeperLoanManager is ILoanManager {
         balance = 0;
     }
 
-    function createLoan(uint256, uint256, uint256) external pure { }
+    function createLoan(uint256, uint256) external pure { }
 
     function addCollateral(uint256) external pure { }
 

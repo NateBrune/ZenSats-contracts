@@ -241,6 +241,8 @@ contract MockYieldStrategy is IYieldStrategy {
             collateral.transfer(msg.sender, payout);
             return payout;
         }
+
+        function slippage() external pure returns (uint256) { return 1e16; }
     }
 
     /// @notice Mock strategy that can be toggled to revert on withdrawals

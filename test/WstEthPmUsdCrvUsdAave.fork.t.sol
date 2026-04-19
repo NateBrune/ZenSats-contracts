@@ -429,12 +429,14 @@ contract WstEthPmUsdCrvUsdAave is ZenjiForkTestBase {
     }
 
     function test_liquiditySweep_bySize_ultraRefined() public {
-        uint256[] memory sizes = new uint256[](5);
-        sizes[0] = 5000e18;
-        sizes[1] = 5500e18;
-        sizes[2] = 6000e18;
-        sizes[3] = 6500e18;
-        sizes[4] = 7000e18;
+        // pmUSD/crvUSD pool is ~$15.8M; observed cliff at ~4000–5000 wstETH (65% LTV)
+        uint256[] memory sizes = new uint256[](6);
+        sizes[0] = 3000e18;
+        sizes[1] = 3500e18;
+        sizes[2] = 3750e18;
+        sizes[3] = 4000e18;
+        sizes[4] = 4250e18;
+        sizes[5] = 4500e18;
 
         uint256 slippage = 1e16; // 1%
         uint256 lastPass = 0;

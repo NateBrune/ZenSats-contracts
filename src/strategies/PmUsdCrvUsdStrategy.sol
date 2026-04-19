@@ -14,6 +14,11 @@ import { SafeTransferLib } from "../libraries/SafeTransferLib.sol";
 import { CurveUsdtSwapLib } from "../libraries/CurveUsdtSwapLib.sol";
 import { TimelockLib } from "../libraries/TimelockLib.sol";
 
+/// @dev Minimal interface for propagating slippage to the CRV reward swapper.
+interface ICrvSwapperWithSlippage {
+    function setSlippage(uint256 newSlippage) external;
+}
+
 /// @title PmUsdCrvUsdStrategy
 /// @notice USDT -> crvUSD -> pmUSD/crvUSD LP -> Stake DAO RewardVault
 /// @dev Accepts USDT debt, swaps to crvUSD, provides single-sided liquidity to pmUSD/crvUSD pool,
@@ -154,6 +159,7 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
 
     /// @notice Updates strategy slippage tolerance.
     /// @dev Callable by vault (normal operations) or owner (manual recovery/ops).
+    ///      Propagates to the CRV reward swapper so its oracle floor stays in sync.
     /// @param newSlippage New slippage in 1e18 precision.
     function setSlippage(uint256 newSlippage) external {
         if (msg.sender != vault && msg.sender != owner) revert Unauthorized();
@@ -161,6 +167,8 @@ contract PmUsdCrvUsdStrategy is BaseCurveRewardVaultStrategy {
         uint256 oldSlippage = slippageTolerance;
         slippageTolerance = newSlippage;
         emit SlippageUpdated(oldSlippage, newSlippage);
+        // Propagate to the CRV->crvUSD reward swapper so harvest slippage stays in sync.
+        try ICrvSwapperWithSlippage(address(crvSwapper)).setSlippage(newSlippage) {} catch {}
     }
 
     /// @notice Rescue ERC20 tokens that are not core strategy assets

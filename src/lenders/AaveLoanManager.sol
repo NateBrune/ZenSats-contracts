@@ -143,7 +143,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
     // ============ Loan Management Functions ============
 
     /// @inheritdoc ILoanManager
-    function createLoan(uint256 collateral, uint256 debt, uint256) external onlyVault {
+    function createLoan(uint256 collateral, uint256 debt) external onlyVault {
         if (collateral == 0) revert ZeroAmount();
         _checkOracleFreshness();
 
@@ -399,96 +399,6 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         _ensureApprove(address(debtToken), address(aavePool), repaymentNeeded);
         return true;
     }
-
-    /* ── OLD executeOperation (commented out for reference) ──
-    function executeOperation_OLD(
-        address asset_,
-        uint256 amount,
-        uint256 premium,
-        address initiator,
-        bytes calldata data
-    ) external override returns (bool) {
-        if (msg.sender != address(aavePool)) revert Unauthorized();
-        if (initiator != address(this)) revert Unauthorized();
-        if (asset_ != address(debtToken)) revert InvalidAddress();
-
-        (uint256 collateralNeeded, bool fullyClose) = abi.decode(data, (uint256, bool));
-        uint256 repaymentNeeded = amount + premium;
-
-        uint256 debt = variableDebtToken.balanceOf(address(this));
-        uint256 debtBal = debtToken.balanceOf(address(this));
-        uint256 toRepay = debt < debtBal ? debt : debtBal;
-        if (toRepay > 0) {
-            _ensureApprove(address(debtToken), address(aavePool), toRepay);
-            aavePool.repay(address(debtToken), toRepay, VARIABLE_RATE_MODE, address(this));
-        }
-
-        uint256 residualDebt = variableDebtToken.balanceOf(address(this));
-        if (residualDebt > 0) {
-            uint256 remaining = debtToken.balanceOf(address(this));
-            if (remaining >= residualDebt) {
-                _ensureApprove(address(debtToken), address(aavePool), residualDebt);
-                aavePool.repay(address(debtToken), residualDebt, VARIABLE_RATE_MODE, address(this));
-            }
-        }
-
-        if (fullyClose) {
-            aavePool.withdraw(address(collateralToken), type(uint256).max, address(this));
-        } else if (collateralNeeded > 0) {
-            aavePool.withdraw(address(collateralToken), collateralNeeded, address(this));
-        }
-
-        uint256 debtAvailable = debtToken.balanceOf(address(this));
-        if (debtAvailable < repaymentNeeded) {
-            if (address(swapper) == address(0)) revert InvalidAddress();
-            uint256 shortfall = repaymentNeeded - debtAvailable;
-            uint256 collateralQuote = _getDebtValue(shortfall);
-            uint256 collateralNeededForSwap =
-                (collateralQuote * SWAP_AMOUNT_BUFFER) / 100 + DUST_BUFFER;
-            uint256 collateralBal = collateralToken.balanceOf(address(this));
-            uint256 toSwap =
-                collateralNeededForSwap < collateralBal ? collateralNeededForSwap : collateralBal;
-            if (toSwap > 0) {
-                uint256 debtBefore = debtToken.balanceOf(address(this));
-                uint256 expectedDebt = toSwap >= DUST_SWAP_THRESHOLD
-                    ? (_getCollateralValue(toSwap) * MIN_SWAP_OUT_BPS) / 10000
-                    : 0;
-                collateralToken.safeTransfer(address(swapper), toSwap);
-                swapper.swapCollateralForDebt(toSwap);
-                uint256 debtAfter = debtToken.balanceOf(address(this));
-                uint256 debtDelta = debtAfter - debtBefore;
-                if (expectedDebt > 0 && debtDelta < expectedDebt) {
-                    revert SwapperUnderperformed(expectedDebt, debtDelta);
-                }
-            }
-
-            debtAvailable = debtToken.balanceOf(address(this));
-            if (debtAvailable < repaymentNeeded) {
-                uint256 remainingCollateral = collateralToken.balanceOf(address(this));
-                if (remainingCollateral > 0) {
-                    uint256 debtBefore = debtToken.balanceOf(address(this));
-                    uint256 expectedDebt = remainingCollateral >= DUST_SWAP_THRESHOLD
-                        ? (_getCollateralValue(remainingCollateral) * MIN_SWAP_OUT_BPS) / 10000
-                        : 0;
-                    collateralToken.safeTransfer(address(swapper), remainingCollateral);
-                    swapper.swapCollateralForDebt(remainingCollateral);
-                    uint256 debtAfter = debtToken.balanceOf(address(this));
-                    uint256 debtDelta = debtAfter - debtBefore;
-                    if (expectedDebt > 0 && debtDelta < expectedDebt) {
-                        revert SwapperUnderperformed(expectedDebt, debtDelta);
-                    }
-                }
-            }
-        }
-
-        if (debtToken.balanceOf(address(this)) < repaymentNeeded) {
-            revert InsufficientFlashloanRepayment();
-        }
-
-        _ensureApprove(address(debtToken), address(aavePool), repaymentNeeded);
-        return true;
-    }
-    */
 
     /// @notice Propose a new swapper (requires timelock)
     function proposeSwapper(address newSwapper) external onlyVault {

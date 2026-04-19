@@ -186,7 +186,7 @@ contract InvMockYieldStrategy is IYieldStrategy {
 
         // ============ Loan Management ============
 
-        function createLoan(uint256 collateral, uint256 debt, uint256) external onlyVault {
+        function createLoan(uint256 collateral, uint256 debt) external onlyVault {
             // Take collateral from vault (vault already transferred it to us)
             positionCollateral += collateral;
             // "Borrow" debt: mint debt tokens to ourselves

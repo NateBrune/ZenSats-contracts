@@ -337,7 +337,7 @@ contract LlamaLoanManagerTest is LoanManagerTestBase {
     // ============ Llama-Specific Tests ============
 
     function test_createLoan_borrow_repay_and_removeCollateral() public {
-        manager.createLoan(1e8, 10_000e18, 4);
+        manager.createLoan(1e8, 10_000e18);
         assertEq(manager.getCurrentCollateral(), 1e8);
         assertEq(manager.getCurrentDebt(), 10_000e18);
 
@@ -365,7 +365,7 @@ contract LlamaLoanManagerTest is LoanManagerTestBase {
     }
 
     function test_unwindPosition_fullClose() public {
-        manager.createLoan(2e8, 10_000e18, 4);
+        manager.createLoan(2e8, 10_000e18);
         crvUSD.mint(address(manager), 10_000e18);
 
         manager.unwindPosition(type(uint256).max);
@@ -375,25 +375,25 @@ contract LlamaLoanManagerTest is LoanManagerTestBase {
     function test_createLoan_revertsOnStaleOracle() public {
         oracle.setUpdatedAt(block.timestamp - 2 hours);
         vm.expectRevert(ILoanManager.StaleOracle.selector);
-        manager.createLoan(1e8, 10_000e18, 4);
+        manager.createLoan(1e8, 10_000e18);
     }
 
     function test_addCollateral_revertsOnStaleOracle() public {
-        manager.createLoan(1e8, 10_000e18, 4);
+        manager.createLoan(1e8, 10_000e18);
         oracle.setUpdatedAt(block.timestamp - 2 hours);
         vm.expectRevert(ILoanManager.StaleOracle.selector);
         manager.addCollateral(1e7);
     }
 
     function test_borrowMore_revertsOnStaleOracle() public {
-        manager.createLoan(1e8, 10_000e18, 4);
+        manager.createLoan(1e8, 10_000e18);
         oracle.setUpdatedAt(block.timestamp - 2 hours);
         vm.expectRevert(ILoanManager.StaleOracle.selector);
         manager.borrowMore(0, 100e18);
     }
 
     function test_repayDebt_revertsOnStaleOracle() public {
-        manager.createLoan(1e8, 10_000e18, 4);
+        manager.createLoan(1e8, 10_000e18);
         crvUSD.mint(address(manager), 100e18);
         oracle.setUpdatedAt(block.timestamp - 2 hours);
         vm.expectRevert(ILoanManager.StaleOracle.selector);
@@ -408,7 +408,7 @@ contract LlamaLoanManagerTest is LoanManagerTestBase {
     }
 
     function test_unwindPosition_partial_noFlashloan() public {
-        manager.createLoan(1e8, 10_000e18, 4);
+        manager.createLoan(1e8, 10_000e18);
 
         uint256 d = llamaLend.debt(address(manager));
         crvUSD.mint(address(manager), d - 500);
@@ -418,7 +418,7 @@ contract LlamaLoanManagerTest is LoanManagerTestBase {
     }
 
     function test_onFlashLoan_repayPartial() public {
-        manager.createLoan(1e8, 10_000e18, 4);
+        manager.createLoan(1e8, 10_000e18);
         crvUSD.mint(address(manager), 1010e18);
 
         vm.startPrank(0x26dE7861e213A5351F6ED767d00e0839930e9eE1);
@@ -464,25 +464,25 @@ contract LlamaLoanManagerTest is LoanManagerTestBase {
     }
 
     function test_unwindPosition_dustDebt_noFlashloan() public {
-        manager.createLoan(2e8, 1e18, 4);
+        manager.createLoan(2e8, 1e18);
         crvUSD.mint(address(manager), 5e17);
         manager.unwindPosition(1e8);
         assertGt(wbtc.balanceOf(vault), 0);
     }
 
     function test_unwindPosition_dustDebt_fullRepayWithDust() public {
-        manager.createLoan(2e8, 5e17, 4);
+        manager.createLoan(2e8, 5e17);
         crvUSD.mint(address(manager), 1e18);
         manager.unwindPosition(1e8);
     }
 
     function test_isDustDebt_exactThreshold() public {
-        manager.createLoan(2e8, 1e18, 4);
+        manager.createLoan(2e8, 1e18);
         manager.unwindPosition(1e8);
     }
 
     function test_isDustDebt_aboveThreshold() public {
-        manager.createLoan(2e8, 2e18, 4);
+        manager.createLoan(2e8, 2e18);
         assertTrue(llamaLend.loan_exists(address(manager)));
     }
 
@@ -519,7 +519,7 @@ contract LlamaLoanManagerTest is LoanManagerTestBase {
     // ============ onFlashLoan Edge Cases ============
 
     function test_onFlashLoan_residualDebt() public {
-        manager.createLoan(2e8, 10_000e18, 4);
+        manager.createLoan(2e8, 10_000e18);
         crvUSD.mint(address(manager), 11_000e18);
 
         vm.startPrank(0x26dE7861e213A5351F6ED767d00e0839930e9eE1);
@@ -529,7 +529,7 @@ contract LlamaLoanManagerTest is LoanManagerTestBase {
     }
 
     function test_onFlashLoan_fullyClose() public {
-        manager.createLoan(2e8, 10_000e18, 4);
+        manager.createLoan(2e8, 10_000e18);
         crvUSD.mint(address(manager), 11_000e18);
 
         vm.startPrank(0x26dE7861e213A5351F6ED767d00e0839930e9eE1);
@@ -539,7 +539,7 @@ contract LlamaLoanManagerTest is LoanManagerTestBase {
     }
 
     function test_onFlashLoan_swapShortfall() public {
-        manager.createLoan(2e8, 5000e18, 4);
+        manager.createLoan(2e8, 5000e18);
         crvUSD.mint(address(manager), 5000e18);
         wbtc.mint(address(manager), 1e8);
 
@@ -552,7 +552,7 @@ contract LlamaLoanManagerTest is LoanManagerTestBase {
     // ============ healthCalculator ============
 
     function test_healthCalculator_withDeltas() public {
-        manager.createLoan(1e8, 10_000e18, 4);
+        manager.createLoan(1e8, 10_000e18);
 
         int256 healthBase = manager.healthCalculator(0, 0);
         int256 healthMoreColl = manager.healthCalculator(int256(uint256(1e8)), 0);
@@ -564,7 +564,7 @@ contract LlamaLoanManagerTest is LoanManagerTestBase {
     }
 
     function test_borrowMore_collateralOnly() public {
-        manager.createLoan(1e8, 10_000e18, 4);
+        manager.createLoan(1e8, 10_000e18);
         manager.borrowMore(5e7, 0);
         assertEq(manager.getCurrentCollateral(), 1.5e8);
         assertEq(manager.getCurrentDebt(), 10_000e18);

@@ -669,7 +669,7 @@ contract VaultInvariants is Test {
         // Set up a position: 100 collateral, 65 debt (createLoan requires onlyVault)
         collateral.mint(address(mgr), 100e8);
         vm.prank(vaultAddr);
-        mgr.createLoan(100e8, 65e6, 0);
+        mgr.createLoan(100e8, 65e6);
         // Clear the borrowed debt from manager so it simulates "deployed to strategy"
         debt.burnFrom(address(mgr), debt.balanceOf(address(mgr)));
 

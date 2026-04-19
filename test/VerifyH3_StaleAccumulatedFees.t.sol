@@ -136,7 +136,7 @@ contract MockLoanManager_H3 is ILoanManager {
     function checkOracleFreshness() external view {} // view, not pure (matches interface)
     function initializeVault(address v) external { _vault = v; }
 
-    function createLoan(uint256, uint256, uint256) external {}
+    function createLoan(uint256, uint256) external {}
     function addCollateral(uint256) external {}
     function borrowMore(uint256, uint256) external {}
     function repayDebt(uint256) external {}

@@ -167,7 +167,7 @@ contract FzYieldStrategy is IYieldStrategy {
             _;
         }
 
-        function createLoan(uint256 collateral, uint256 debt, uint256) external onlyVault {
+        function createLoan(uint256 collateral, uint256 debt) external onlyVault {
             positionCollateral += collateral;
             FzCrvUSD(address(_debtAsset)).mint(address(this), debt);
             positionDebt += debt;
@@ -352,6 +352,8 @@ contract FzYieldStrategy is IYieldStrategy {
             collateral.transfer(msg.sender, payout);
             return payout;
         }
+
+        function slippage() external pure returns (uint256) { return 1e16; }
     }
 
     // ============ Fuzz Test Contract ============

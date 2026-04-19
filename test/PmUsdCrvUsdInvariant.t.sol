@@ -368,7 +368,7 @@ contract PmMockLoanManager is ILoanManager {
 
     // ============ Loan Management ============
 
-    function createLoan(uint256 collateral, uint256 debt, uint256) external onlyVault {
+    function createLoan(uint256 collateral, uint256 debt) external onlyVault {
         positionCollateral += collateral;
         PmMockUSDT(address(_debtAsset)).mint(address(this), debt);
         positionDebt += debt;

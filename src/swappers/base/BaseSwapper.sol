@@ -46,7 +46,7 @@ abstract contract BaseSwapper {
     /// @notice Set slippage tolerance directly
     /// @dev Callable by gov or the registered vault (vault propagates from setParam).
     /// @param newSlippage New slippage in 1e18 precision (e.g. 5e16 = 5%)
-    function setSlippage(uint256 newSlippage) external {
+    function setSlippage(uint256 newSlippage) external virtual {
         if (msg.sender != gov && msg.sender != vault) revert Unauthorized();
         if (newSlippage == 0 || newSlippage >= PRECISION) revert InvalidSlippage();
         slippage = newSlippage;

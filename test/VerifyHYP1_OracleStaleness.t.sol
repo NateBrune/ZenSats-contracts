@@ -205,7 +205,7 @@ contract VerifyHYP1_OracleStaleness_Test is Test {
 
         // Create initial healthy loan: 1 BTC collateral, 100 USDT debt
         collateral.mint(address(aaveManager), 1e8);
-        aaveManager.createLoan(1e8, 100e6, 0);
+        aaveManager.createLoan(1e8, 100e6);
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -238,7 +238,7 @@ contract VerifyHYP1_OracleStaleness_Test is Test {
         vm.warp(deployTs + MAX_DEBT_ORACLE_STALENESS + 1);
         collateral.mint(address(aaveManager), 1e8);
         vm.expectRevert(OracleLib.StaleOracle.selector);
-        aaveManager.createLoan(1e8, 100e6, 0);
+        aaveManager.createLoan(1e8, 100e6);
     }
 
     /// @notice Proof: addCollateral reverts when USDT oracle stale >25h

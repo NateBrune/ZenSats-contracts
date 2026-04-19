@@ -384,7 +384,7 @@ contract LlamaLoanManagerHandler is Test {
 
         collateral.mint(address(lm), collateralAmount);
         vm.prank(vault);
-        try lm.createLoan(collateralAmount, debtAmount, 4) {
+        try lm.createLoan(collateralAmount, debtAmount) {
             ghost_lastActionWasFullUnwind = false;
             ghost_priceChangedDuringLoan = false;
             calls_createLoan++;

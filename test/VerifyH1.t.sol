@@ -158,7 +158,7 @@ contract H1MockLoanManager is ILoanManager {
         _;
     }
 
-    function createLoan(uint256 collateral, uint256 debt, uint256) external onlyVault {
+    function createLoan(uint256 collateral, uint256 debt) external onlyVault {
         positionCollateral += collateral;
         H1MockDebt(address(_debtAsset)).mint(address(this), debt);
         positionDebt += debt;
@@ -333,6 +333,8 @@ contract H1MockSwapper is ISwapper {
         collateral.transfer(msg.sender, payout);
         return payout;
     }
+
+    function slippage() external pure returns (uint256) { return 1e16; }
 }
 
 // ============ Test Contract ============

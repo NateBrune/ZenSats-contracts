@@ -44,7 +44,7 @@ contract MockLoanManagerH1 is ILoanManager {
         debtAsset = _debt;
     }
 
-    function createLoan(uint256, uint256, uint256) external override {}
+    function createLoan(uint256, uint256) external override {}
     function addCollateral(uint256) external override {}
     function borrowMore(uint256, uint256) external override {}
     function repayDebt(uint256) external override {}

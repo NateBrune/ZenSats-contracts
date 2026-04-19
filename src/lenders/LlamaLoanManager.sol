@@ -49,6 +49,9 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     /// @notice Dust threshold in debt asset (1 USD) - below this we leave position with safe collateral
     uint256 public constant DUST_THRESHOLD = 1e18;
 
+    /// @notice Number of LLAMMA price bands for new loans
+    uint256 public constant DEFAULT_LOAN_BANDS = 4;
+
     /// @notice Safety multiplier for dust collateral (4x debt = 25% LTV)
     uint256 public constant DUST_SAFETY_MULTIPLIER = 4;
 
@@ -186,15 +189,15 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     // ============ Loan Management Functions ============
 
     /// @inheritdoc ILoanManager
-    function createLoan(uint256 collateral, uint256 debt, uint256 bands) external onlyVault {
+    function createLoan(uint256 collateral, uint256 debt) external onlyVault {
         _checkOracleFreshness();
         _ensureApprove(address(collateralToken), address(llamaLend), collateral);
-        llamaLend.create_loan(collateral, debt, bands);
+        llamaLend.create_loan(collateral, debt, DEFAULT_LOAN_BANDS);
 
         int256 health = this.getHealth();
         if (health < MIN_HEALTH) revert HealthTooLow();
 
-        emit LoanCreated(collateral, debt, bands);
+        emit LoanCreated(collateral, debt, DEFAULT_LOAN_BANDS);
     }
 
     /// @inheritdoc ILoanManager

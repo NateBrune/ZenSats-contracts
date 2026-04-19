@@ -311,7 +311,7 @@ contract AaveLoanManagerHandler is Test {
 
         collateral.mint(address(lm), collateralAmount);
         vm.prank(vault);
-        try lm.createLoan(collateralAmount, debtAmount, 0) {
+        try lm.createLoan(collateralAmount, debtAmount) {
             ghost_lastActionWasFullUnwind = false;
             ghost_priceChangedDuringLoan = false; // Fresh loan at current price
             calls_createLoan++;

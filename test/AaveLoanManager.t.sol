@@ -225,8 +225,7 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
 
     function test_createLoan_borrowMore_repayDebt() public {
         collateral.mint(address(manager), 100e18);
-        manager.createLoan(100e18, 50e18, 0);
-        assertEq(aToken.balanceOf(address(manager)), 100e18, "aToken minted");
+        manager.createLoan(100e18, 50e18);
         assertEq(vDebt.balanceOf(address(manager)), 50e18, "debt minted");
 
         collateral.mint(address(manager), 20e18);
@@ -240,7 +239,7 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
 
     function test_unwindPosition_partial_withdrawsCollateralToVault() public {
         collateral.mint(address(manager), 100e18);
-        manager.createLoan(100e18, 50e18, 0);
+        manager.createLoan(100e18, 50e18);
 
         uint256 vaultBefore = collateral.balanceOf(vault);
         manager.unwindPosition(40e18);
@@ -252,7 +251,7 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
 
     function test_unwindPosition_fullClose_usesFlashloanAndSwapper() public {
         collateral.mint(address(manager), 100e18);
-        manager.createLoan(100e18, 65e18, 0);
+        manager.createLoan(100e18, 65e18);
         debt.burnFrom(address(manager), debt.balanceOf(address(manager)));
 
         manager.unwindPosition(type(uint256).max);
@@ -291,7 +290,7 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
 
     function test_transferCollateral_withATokenUsesWithdraw() public {
         collateral.mint(address(manager), 10e18);
-        manager.createLoan(10e18, 0, 0);
+        manager.createLoan(10e18, 0);
 
         uint256 vaultBefore = collateral.balanceOf(vault);
         manager.transferCollateral(vault, 5e18);
@@ -300,7 +299,7 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
 
     function test_transferCollateral_partialIdle_withdrawsRemainder() public {
         collateral.mint(address(manager), 100e18);
-        manager.createLoan(100e18, 0, 0);
+        manager.createLoan(100e18, 0);
         collateral.mint(address(manager), 3e18);
 
         uint256 vaultBefore = collateral.balanceOf(vault);
@@ -310,7 +309,7 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
 
     function test_removeCollateral() public {
         collateral.mint(address(manager), 100e18);
-        manager.createLoan(100e18, 0, 0);
+        manager.createLoan(100e18, 0);
 
         uint256 aTokenBefore = aToken.balanceOf(address(manager));
         manager.removeCollateral(20e18);
@@ -327,7 +326,7 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
 
     function test_viewFunctions_afterBorrow() public {
         collateral.mint(address(manager), 100e18);
-        manager.createLoan(100e18, 40e18, 0);
+        manager.createLoan(100e18, 40e18);
 
         assertEq(manager.getCurrentCollateral(), 100e18);
         assertEq(manager.getCurrentDebt(), 40e18);
@@ -353,7 +352,7 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
 
     function test_getCurrentLTV_noDebt_returnsZero() public {
         collateral.mint(address(manager), 100e18);
-        manager.createLoan(100e18, 0, 0);
+        manager.createLoan(100e18, 0);
         assertEq(manager.getCurrentLTV(), 0);
     }
 
@@ -363,13 +362,13 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
 
     function test_getHealth_noDebt_returnsMax() public {
         collateral.mint(address(manager), 100e18);
-        manager.createLoan(100e18, 0, 0);
+        manager.createLoan(100e18, 0);
         assertEq(manager.getHealth(), type(int256).max);
     }
 
     function test_borrowMore_collateralOnly() public {
         collateral.mint(address(manager), 100e18);
-        manager.createLoan(100e18, 50e18, 0);
+        manager.createLoan(100e18, 50e18);
 
         collateral.mint(address(manager), 20e18);
         manager.borrowMore(20e18, 0);
@@ -379,7 +378,7 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
 
     function test_borrowMore_debtOnly() public {
         collateral.mint(address(manager), 100e18);
-        manager.createLoan(100e18, 50e18, 0);
+        manager.createLoan(100e18, 50e18);
 
         manager.borrowMore(0, 10e18);
         assertEq(aToken.balanceOf(address(manager)), 100e18);
@@ -388,7 +387,7 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
 
     function test_unwindPosition_partial_withAvailableDebt() public {
         collateral.mint(address(manager), 100e18);
-        manager.createLoan(100e18, 50e18, 0);
+        manager.createLoan(100e18, 50e18);
         debt.mint(address(manager), 30e18);
 
         uint256 vaultBefore = collateral.balanceOf(vault);
@@ -398,7 +397,7 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
 
     function test_unwindPosition_fullClose_withSufficientDebt() public {
         collateral.mint(address(manager), 100e18);
-        manager.createLoan(100e18, 30e18, 0);
+        manager.createLoan(100e18, 30e18);
         debt.mint(address(manager), 30e18);
 
         manager.unwindPosition(type(uint256).max);
@@ -408,7 +407,7 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
 
     function test_unwindPosition_partial_dustDebt_noFlashloan() public {
         collateral.mint(address(manager), 100e18);
-        manager.createLoan(100e18, 50e18, 0);
+        manager.createLoan(100e18, 50e18);
         debt.mint(address(manager), 20e18);
         manager.unwindPosition(40e18);
         assertGt(collateral.balanceOf(vault), 0, "Vault receives collateral");
@@ -416,27 +415,27 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
 
     function test_unwindPosition_fullClose_noDebt_withdrawsAll() public {
         collateral.mint(address(manager), 100e18);
-        manager.createLoan(100e18, 0, 0);
+        manager.createLoan(100e18, 0);
         manager.unwindPosition(type(uint256).max);
         assertGt(collateral.balanceOf(vault), 0, "All collateral to vault");
     }
 
     function test_createLoan_collateralOnly_noBorrow() public {
         collateral.mint(address(manager), 100e18);
-        manager.createLoan(100e18, 0, 0);
+        manager.createLoan(100e18, 0);
         assertEq(aToken.balanceOf(address(manager)), 100e18);
         assertEq(vDebt.balanceOf(address(manager)), 0);
     }
 
     function test_getNetCollateralValue_highDebt() public {
         collateral.mint(address(manager), 100e18);
-        manager.createLoan(100e18, 60e18, 0);
+        manager.createLoan(100e18, 60e18);
         assertEq(manager.getNetCollateralValue(), 40e18);
     }
 
     function test_healthCalculator_withDeltas() public {
         collateral.mint(address(manager), 100e18);
-        manager.createLoan(100e18, 40e18, 0);
+        manager.createLoan(100e18, 40e18);
 
         int256 healthBase = manager.healthCalculator(0, 0);
         int256 healthMoreColl = manager.healthCalculator(int256(50e18), 0);
@@ -452,28 +451,28 @@ contract AaveLoanManagerTest is LoanManagerTestBase {
 
     function test_healthCalculator_zeroDebt() public {
         collateral.mint(address(manager), 100e18);
-        manager.createLoan(100e18, 10e18, 0);
+        manager.createLoan(100e18, 10e18);
         int256 health = manager.healthCalculator(0, -int256(10e18));
         assertEq(health, type(int256).max);
     }
 
     function test_healthCalculator_negativeCollateralDelta() public {
         collateral.mint(address(manager), 100e18);
-        manager.createLoan(100e18, 40e18, 0);
+        manager.createLoan(100e18, 40e18);
         int256 health = manager.healthCalculator(-int256(50e18), 0);
         assertGt(health, 0);
     }
 
     function test_healthCalculator_negativeDebtDelta() public {
         collateral.mint(address(manager), 100e18);
-        manager.createLoan(100e18, 40e18, 0);
+        manager.createLoan(100e18, 40e18);
         int256 health = manager.healthCalculator(0, -int256(20e18));
         assertGt(health, manager.healthCalculator(0, 0));
     }
 
     function test_createLoan_zeroCollateral_reverts() public {
         vm.expectRevert(ILoanManager.ZeroAmount.selector);
-        manager.createLoan(0, 50e18, 0);
+        manager.createLoan(0, 50e18);
     }
 
     function test_minCollateral_zeroDebt() public view {

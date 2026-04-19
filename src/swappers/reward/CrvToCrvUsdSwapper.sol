@@ -62,6 +62,18 @@ contract CrvToCrvUsdSwapper is BaseSwapper {
         emit AuthorizedCallerUpdated(caller);
     }
 
+    /// @notice Set slippage — callable by gov, vault, or the authorized caller (strategy).
+    /// @dev Overrides BaseSwapper to also allow the authorizedCaller so the strategy can
+    ///      propagate vault-level slippage changes without needing a separate vault registration.
+    function setSlippage(uint256 newSlippage) external override {
+        if (msg.sender != gov && msg.sender != vault && msg.sender != authorizedCaller) {
+            revert Unauthorized();
+        }
+        if (newSlippage == 0 || newSlippage >= PRECISION) revert InvalidSlippage();
+        slippage = newSlippage;
+        emit SlippageUpdated(newSlippage);
+    }
+
     /// @notice Rescue tokens stuck in the swapper (gov-only)
     function rescueToken(address token, address to, uint256 amount) external onlyGov {
         if (to == address(0)) revert ISwapper.InvalidAddress();

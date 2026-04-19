@@ -25,8 +25,7 @@ interface ILoanManager {
     /// @notice Create a new loan with collateral
     /// @param collateral Amount of collateral asset
     /// @param debt Amount of debt asset to borrow
-    /// @param bands Number of bands for the loan (if applicable)
-    function createLoan(uint256 collateral, uint256 debt, uint256 bands) external;
+    function createLoan(uint256 collateral, uint256 debt) external;
 
     /// @notice Add collateral to an existing loan
     /// @param collateral Amount of collateral asset

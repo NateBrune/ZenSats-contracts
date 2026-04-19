@@ -400,13 +400,16 @@ contract WbtcPmUsdCrvUsdAave is ZenjiForkTestBase {
     }
 
     function test_liquiditySweep_bySize_ultraRefined() public {
-        uint256[] memory sizes = new uint256[](6);
-        sizes[0] = 225e8; // 225 WBTC
-        sizes[1] = 230e8; // 230 WBTC
-        sizes[2] = 235e8; // 235 WBTC
-        sizes[3] = 240e8; // 240 WBTC
-        sizes[4] = 245e8; // 245 WBTC
-        sizes[5] = 250e8; // 250 WBTC
+        // pmUSD/crvUSD pool is ~$15.8M; at 30% LTV the strategy-exit cliff is ~150-175 WBTC
+        uint256[] memory sizes = new uint256[](8);
+        sizes[0] = 100e8; // 100 WBTC
+        sizes[1] = 120e8; // 120 WBTC
+        sizes[2] = 130e8; // 130 WBTC
+        sizes[3] = 140e8; // 140 WBTC
+        sizes[4] = 150e8; // 150 WBTC
+        sizes[5] = 155e8; // 155 WBTC
+        sizes[6] = 160e8; // 160 WBTC
+        sizes[7] = 165e8; // 165 WBTC
 
         uint256 slippage = 1e16; // 1%
         uint256 lastPass = 0;
@@ -437,7 +440,7 @@ contract WbtcPmUsdCrvUsdAave is ZenjiForkTestBase {
 
         console.log("WBTC UltraRefined lastPass=%s WBTC", lastPass == 0 ? 0 : lastPass / 1e8);
         console.log("WBTC UltraRefined firstFail=%s WBTC", firstFail == 0 ? 0 : firstFail / 1e8);
-        assertGt(lastPass, 0, "Ultra-refined sweep should have at least one passing size");
+        assertGt(lastPass, 0, "Ultra-refined sweep should have at least one passing size (expected ~150 WBTC max)");
     }
 
     // ============ Strategy-Specific Tests ============
@@ -1233,19 +1236,19 @@ contract WbtcPmUsdCrvUsdAave is ZenjiForkTestBase {
         assertGt(lastPass, 0, "At least 50 WBTC should pass at 1% slippage");
     }
 
-    /// @notice Fine-grain bisection around the Uniswap WBTC/USDT 0.3% cliff at 1% slippage.
+    /// @notice Fine-grain bisection around the pmUSD/crvUSD cliff at 1% slippage (~150-175 WBTC at 30% LTV).
     function test_uniswapSlippageCeiling_1pct_finegrain() public {
         uint256[] memory sizes = new uint256[](10);
-        sizes[0] = 225e8; // 225 WBTC
-        sizes[1] = 250e8; // 250 WBTC
-        sizes[2] = 275e8; // 275 WBTC
-        sizes[3] = 300e8; // 300 WBTC
-        sizes[4] = 325e8; // 325 WBTC
-        sizes[5] = 350e8; // 350 WBTC
-        sizes[6] = 375e8; // 375 WBTC
-        sizes[7] = 400e8; // 400 WBTC
-        sizes[8] = 425e8; // 425 WBTC
-        sizes[9] = 450e8; // 450 WBTC
+        sizes[0] = 100e8; // 100 WBTC
+        sizes[1] = 110e8; // 110 WBTC
+        sizes[2] = 120e8; // 120 WBTC
+        sizes[3] = 130e8; // 130 WBTC
+        sizes[4] = 140e8; // 140 WBTC
+        sizes[5] = 150e8; // 150 WBTC
+        sizes[6] = 155e8; // 155 WBTC
+        sizes[7] = 160e8; // 160 WBTC
+        sizes[8] = 165e8; // 165 WBTC
+        sizes[9] = 170e8; // 170 WBTC
 
         uint256 slippage = 1e16;
         uint256 lastPass = 0;
@@ -1272,7 +1275,7 @@ contract WbtcPmUsdCrvUsdAave is ZenjiForkTestBase {
         }
 
         console.log("WBTC UniswapFine lastPass=%s WBTC  firstFail=%s WBTC", lastPass / 1e8, firstFail / 1e8);
-        assertGt(lastPass, 0, "Fine-grain: at least 225 WBTC should pass");
+        assertGt(lastPass, 0, "Fine-grain: at least 100 WBTC should pass");
     }
 
     /// @notice Finds the exact single-depositor safe TVL cap at 1% slippage via open-ended binary search.

@@ -16,6 +16,7 @@ import { ZenjiViewHelper } from "./ZenjiViewHelper.sol";
 /// @dev Minimal interface for propagating slippage to swappers (avoids adding setSlippage to ISwapper).
 interface ISwapperSlippageConfig {
     function setSlippage(uint256 newSlippage) external;
+    function slippage() external view returns (uint256);
 }
 
 
@@ -33,13 +34,12 @@ contract Zenji is ERC20, IERC4626 {
     uint256 public constant DEADBAND_SPREAD = 3e16; // 3%
     uint256 public constant MIN_TARGET_LTV = 15e16; // 15%
     // MAX_TARGET_LTV is a virtual function — implementations override for per-vault ceilings
-    uint256 internal constant DEFAULT_LOAN_BANDS = 4; // TODO: This should live in llamaloanmanager
     uint256 public constant MAX_FEE_RATE = 2e17; // 20%
     // VIRTUAL_SHARE_OFFSET is now a virtual function — see bottom of contract
     uint256 public constant COOLDOWN_BLOCKS = 1;
     uint256 public constant MAX_REBALANCE_BOUNTY = 1e18; // 100%
     uint256 public constant TIMELOCK_DELAY = 1 weeks;
-    uint256 public constant MAX_VAULT_SLIPPAGE = 1e17; // 10% cap
+    uint256 public constant MAX_VAULT_SLIPPAGE = 5e16; // 5% cap
     uint256 public constant ROLE_TRANSFER_DELAY = 1 weeks;
 
     // ============ Immutables ============
@@ -425,7 +425,7 @@ contract Zenji is ERC20, IERC4626 {
         collateralAsset.safeTransfer(address(loanManager), idleCollateral);
 
         if (!loanManager.loanExists()) {
-            loanManager.createLoan(idleCollateral, borrowAmount, DEFAULT_LOAN_BANDS);
+            loanManager.createLoan(idleCollateral, borrowAmount);
         } else {
             loanManager.addCollateral(idleCollateral);
             loanManager.borrowMore(0, borrowAmount);
@@ -838,12 +838,16 @@ contract Zenji is ERC20, IERC4626 {
         uint256 collateralReceived = collateralAfter - collateralBefore;
         if (!allowZeroOut) {
             uint256 oracleExpected = loanManager.getDebtValue(debtBal);
-            // Use 2x maxSlippage for the vault-level check. The swapper already
-            // enforces its own oracle floor per hop. Multi-hop swappers (e.g. cbBTC
-            // via WBTC) compound slippage across hops and use different oracle
-            // price paths than loanManager.getDebtValue, causing small divergence.
-            uint256 effectiveSlippage = maxSlippage * 2;
-            if (effectiveSlippage > PRECISION) effectiveSlippage = PRECISION;
+            // Floor = max(swapper.slippage, maxSlippage*2).
+            // The swapper.slippage() term ensures we never reject a swap that the
+            // swapper itself considers valid (e.g. a cbBTC swapper configured at 5%
+            // would be falsely penalised by a 2% vault floor).
+            // The maxSlippage*2 term preserves the original oracle-path divergence
+            // buffer: loanManager.getDebtValue uses a direct oracle feed while the
+            // swapper traverses a multi-hop path, so the two prices can differ by up
+            // to ~2×maxSlippage even on a fair swap.
+            uint256 swapperSlippage = ISwapperSlippageConfig(address(swapper)).slippage();
+            uint256 effectiveSlippage = swapperSlippage > maxSlippage * 2 ? swapperSlippage : maxSlippage * 2;
             uint256 minOut = (oracleExpected * (PRECISION - effectiveSlippage)) / PRECISION;
             if (collateralReceived < minOut) {
                 revert SwapperUnderperformed(minOut, collateralReceived);

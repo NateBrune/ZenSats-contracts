@@ -84,7 +84,7 @@ abstract contract LoanManagerTestBase is Test {
 
     function _createDefaultLoan() internal {
         collateral.mint(address(manager), _defaultCollateral());
-        manager.createLoan(_defaultCollateral(), _defaultDebt(), _defaultBands());
+        manager.createLoan(_defaultCollateral(), _defaultDebt());
     }
 
     // ============ Access Control ============
@@ -92,7 +92,7 @@ abstract contract LoanManagerTestBase is Test {
     function test_createLoan_revertsFromNonVault() public {
         vm.prank(nonVault);
         vm.expectRevert(ILoanManager.Unauthorized.selector);
-        manager.createLoan(_defaultCollateral(), _defaultDebt(), _defaultBands());
+        manager.createLoan(_defaultCollateral(), _defaultDebt());
     }
 
     // ============ Zero Amount Reverts ============
