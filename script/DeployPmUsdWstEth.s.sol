@@ -5,13 +5,12 @@ import "forge-std/Script.sol";
 import "forge-std/console2.sol";
 
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
-import { VaultTracker } from "../src/VaultTracker.sol";
 import { ZenjiRebalanceKeeper } from "../src/keepers/ZenjiRebalanceKeeper.sol";
 import { WstEthOracle } from "../src/WstEthOracle.sol";
-import { UniswapV3TwoHopSwapper } from "../src/swappers/base/UniswapV3TwoHopSwapper.sol";
+import { UniswapMixedTwoHopSwapper } from "../src/swappers/base/UniswapMixedTwoHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { PmUsdCrvUsdStrategy } from "../src/strategies/PmUsdCrvUsdStrategy.sol";
+import { UsdtPmUsdCrvUsdStrategy } from "../src/strategies/UsdtPmUsdCrvUsdStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { ZenjiWstEthPmUsd } from "../src/implementations/ZenjiWstEthPmUsd.sol";
 
@@ -37,10 +36,11 @@ contract DeployPmUsdWstEth is Script {
     address constant AAVE_A_WSTETH = 0x0B925eD163218f6662a35e0f0371Ac234f9E9371;
     address constant AAVE_VAR_DEBT_USDT = 0x6df1C1E379bC5a00a7b4C6e67A203333772f45A8;
 
-    // Uniswap V3
-    address constant UNISWAP_ROUTER = 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45;
-    uint24 constant FEE_WSTETH_WETH = 100;
-    uint24 constant FEE_WETH_USDT = 3000;
+    // Uniswap — Universal Router handles both V3 and V4
+    address constant UNIVERSAL_ROUTER = 0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af;
+    uint24 constant FEE_WSTETH_WETH = 100; // V3 wstETH/WETH 0.01 %
+    uint24 constant FEE_WETH_USDT = 500; // V4 ETH/USDT  0.05 %
+    int24 constant V4_TICK_SPACING = 10; // tick spacing for a 0.05 % V4 pool
 
     // Curve / Stake DAO
     address constant USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
@@ -67,14 +67,15 @@ contract DeployPmUsdWstEth is Script {
             gov, CRV, CRVUSD, CRV_CRVUSD_TRICRYPTO, CRV_USD_ORACLE, CRVUSD_USD_ORACLE
         );
 
-        UniswapV3TwoHopSwapper swapper = new UniswapV3TwoHopSwapper(
+        UniswapMixedTwoHopSwapper swapper = new UniswapMixedTwoHopSwapper(
             gov,
             WSTETH,
             USDT,
             WETH,
-            UNISWAP_ROUTER,
-            FEE_WSTETH_WETH,
-            FEE_WETH_USDT,
+            UNIVERSAL_ROUTER,
+            FEE_WSTETH_WETH, // V3: wstETH/WETH 0.01 %
+            FEE_WETH_USDT, // V4: ETH/USDT  0.05 %
+            V4_TICK_SPACING,
             address(wstEthOracle),
             USDT_USD_ORACLE,
             3_600
@@ -82,11 +83,8 @@ contract DeployPmUsdWstEth is Script {
 
         int128 lpCrvUsdIndex = _lpCrvUsdIndex();
 
-        PmUsdCrvUsdStrategy strategy = new PmUsdCrvUsdStrategy(
+        UsdtPmUsdCrvUsdStrategy strategy = new UsdtPmUsdCrvUsdStrategy(
             USDT,
-            CRVUSD,
-            CRV,
-            PMUSD,
             address(0),
             gov,
             USDT_CRVUSD_POOL,
@@ -122,8 +120,6 @@ contract DeployPmUsdWstEth is Script {
             address(loanManager), address(strategy), address(swapper), owner, address(viewHelper)
         );
 
-        //VaultTracker vaultTracker = new VaultTracker(address(vault));
-
         ZenjiRebalanceKeeper rebalanceKeeper = new ZenjiRebalanceKeeper(address(vault), owner);
 
         loanManager.initializeVault(address(vault));
@@ -139,7 +135,6 @@ contract DeployPmUsdWstEth is Script {
         console2.log("LoanManager", address(loanManager));
         console2.log("Strategy", address(strategy));
         console2.log("Vault", address(vault));
-        //console2.log("VaultTracker", address(vaultTracker));
         console2.log("RebalanceKeeper", address(rebalanceKeeper));
     }
 

@@ -7,6 +7,7 @@ import { CurveTwoCryptoSwapper } from "../src/swappers/base/CurveTwoCryptoSwappe
 import { CurveThreeCryptoSwapper } from "../src/swappers/base/CurveThreeCryptoSwapper.sol";
 import { CbBtcWbtcUsdtSwapper } from "../src/swappers/base/CbBtcWbtcUsdtSwapper.sol";
 import { UniswapV3TwoHopSwapper } from "../src/swappers/base/UniswapV3TwoHopSwapper.sol";
+import { UniswapMixedTwoHopSwapper } from "../src/swappers/base/UniswapMixedTwoHopSwapper.sol";
 import { CbBtcUniswapV3TwoHopSwapper } from "../src/swappers/base/CbBtcUniswapV3TwoHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 
@@ -182,5 +183,41 @@ contract CrvToCrvUsdSwapperTest is SwapperTestBase {
 
     function test_zero_swap() public {
         assertEq(swapper.swap(0), 0, "Zero swap should return zero");
+    }
+}
+
+// ============ UniswapMixedTwoHopSwapper Tests ============
+// Route: wstETH → WETH (V3, 0.01%) → ETH (unwrap) → USDT (V4, 0.05%)
+// Universal Router handles both V3 and V4 in a single execute() call.
+
+contract UniswapMixedTwoHopSwapperTest is SwapperTestBase {
+    address constant WSTETH = 0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0;
+    address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    address constant UNIVERSAL_ROUTER = 0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af;
+    address constant WSTETH_USD_ORACLE = 0xCfE54B5cD566aB89272946F602D76Ea879CAb4a8;
+    uint24 constant FEE_WSTETH_WETH = 100;  // V3 wstETH/WETH 0.01%
+    uint24 constant FEE_ETH_USDT = 500;     // V4 ETH/USDT   0.05%
+    int24 constant V4_TICK_SPACING = 10;
+
+    UniswapMixedTwoHopSwapper public swapper;
+
+    function _deploySwapper() internal override {
+        swapper = new UniswapMixedTwoHopSwapper(
+            owner,
+            WSTETH,
+            USDT,
+            WETH,
+            UNIVERSAL_ROUTER,
+            FEE_WSTETH_WETH,
+            FEE_ETH_USDT,
+            V4_TICK_SPACING,
+            WSTETH_USD_ORACLE,
+            USDT_USD_ORACLE,
+            3_600
+        );
+    }
+
+    function _swapper() internal view override returns (BaseSwapper) {
+        return swapper;
     }
 }

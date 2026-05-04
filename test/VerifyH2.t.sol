@@ -294,9 +294,13 @@ contract VerifyH2 is Test {
         vm.prank(user1);
         wbtc.approve(address(vault), type(uint256).max);
 
-        // Set feeRate = 10%
+        // Set feeRate = 10% — increase requires propose + execute (decentralization upgrade)
         vm.prank(owner);
         vault.setParam(0, 1e17);
+        vm.warp(block.timestamp + vault.PARAM_TIMELOCK_DELAY());
+        mockOracle(lastBtcPrice); // re-mock so warp doesn't stale the oracles
+        vm.prank(owner);
+        vault.executeParamChange(0);
     }
 
     // ─────────────────────────────────────────────────────────────

@@ -590,9 +590,12 @@ contract InvMockYieldStrategy is IYieldStrategy {
             mockStrategy.initializeVault(address(vault));
             loanManager.initializeVault(address(vault));
 
-            // Set fee rate
+            // Set fee rate — increase requires propose + execute (decentralization upgrade)
             vm.prank(owner);
             vault.setParam(0, 1e17); // 10% fee rate
+            vm.warp(block.timestamp + vault.PARAM_TIMELOCK_DELAY());
+            vm.prank(owner);
+            vault.executeParamChange(0);
 
             // Deploy handler
             handler = new ZenjiHandler(vault, IERC20(address(wbtc)));

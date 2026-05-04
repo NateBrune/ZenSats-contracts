@@ -5,8 +5,6 @@ import "forge-std/Script.sol";
 import "forge-std/console2.sol";
 
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
-import { VaultTracker } from "../src/VaultTracker.sol";
-// import {ZenjiRebalanceKeeper} from "../src/keepers/ZenjiRebalanceKeeper.sol";
 import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UsdtIporYieldStrategy } from "../src/strategies/UsdtIporYieldStrategy.sol";
@@ -90,11 +88,6 @@ contract DeployWbtc is Script {
             address(loanManager), address(strategy), address(swapper), owner, address(viewHelper)
         );
 
-        VaultTracker vaultTracker = new VaultTracker(address(vault));
-
-        // Optional: deploy Chainlink Automation receiver for rebalancing.
-        // ZenjiRebalanceKeeper rebalanceKeeper = new ZenjiRebalanceKeeper(address(vault), owner);
-
         loanManager.initializeVault(address(vault));
         strategy.initializeVault(address(vault));
         swapper.setVault(address(vault));
@@ -106,8 +99,6 @@ contract DeployWbtc is Script {
         console2.log("LoanManager", address(loanManager));
         console2.log("Strategy", address(strategy));
         console2.log("Vault", address(vault));
-        console2.log("VaultTracker", address(vaultTracker));
-        // console2.log("RebalanceKeeper", address(rebalanceKeeper));
     }
 
     function _envOrAddress(string memory key, address defaultValue)

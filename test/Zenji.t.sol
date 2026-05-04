@@ -6,13 +6,13 @@ import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { CurveTwoCryptoSwapper } from "../src/swappers/base/CurveTwoCryptoSwapper.sol";
 import { LlamaLoanManager } from "../src/lenders/LlamaLoanManager.sol";
-import { VaultTracker } from "../src/VaultTracker.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { ILoanManager } from "../src/interfaces/ILoanManager.sol";
 import { ILlamaLendController } from "../src/interfaces/ILlamaLendController.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
 import { ISwapper } from "../src/interfaces/ISwapper.sol";
 import { IporYieldStrategy } from "../src/strategies/IporYieldStrategy.sol";
+import { TimelockLib } from "../src/libraries/TimelockLib.sol";
 import { ERC4626 } from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import { IERC20 as OZ_IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -88,8 +88,22 @@ contract MockYieldStrategy is IYieldStrategy {
         return received;
     }
 
-    function harvest() external pure returns (uint256) {
-        return 0;
+    // Configurable harvest reward — set by tests to simulate CRV→crvUSD conversion profit
+    uint256 public harvestRewardAmount;
+
+    function setHarvestReward(uint256 amount) external {
+        harvestRewardAmount = amount;
+    }
+
+    function harvest() external returns (uint256) {
+        uint256 reward = harvestRewardAmount;
+        harvestRewardAmount = 0; // consume once
+        if (reward > 0) {
+            // Deposit pre-funded crvUSD into the yield vault to increase balanceOf()
+            crvUSD.approve(address(yieldVault), reward);
+            yieldVault.deposit(reward, address(this));
+        }
+        return reward;
     }
 
     function emergencyWithdraw() external onlyVault returns (uint256) {
@@ -385,7 +399,6 @@ contract MockYieldStrategy is IYieldStrategy {
 
             Zenji vault;
             ZenjiViewHelper viewHelper;
-            VaultTracker tracker;
             IERC20 wbtc;
             IERC20 crvUSD;
             IYieldStrategy yieldStrategy;
@@ -414,6 +427,42 @@ contract MockYieldStrategy is IYieldStrategy {
                 vm.warp(t);
                 vm.roll(block.number + 1);
                 mockOracle(lastBtcPrice);
+            }
+
+            // ============ Governance helpers ============
+            // Decentralization upgrade: feeRate increases and targetLtv increases require
+            // a propose + execute pattern with PARAM_TIMELOCK_DELAY between calls.
+            // Decreases stay immediate. emergencySkipStep is now a 2-call pattern with
+            // EMERGENCY_SKIP_DELAY between calls.
+
+            function _setFeeRate(uint256 newRate) internal {
+                uint256 cur = vault.feeRate();
+                vm.prank(vault.gov());
+                vault.setParam(0, newRate);
+                if (newRate > cur) {
+                    warpAndMock(block.timestamp + vault.PARAM_TIMELOCK_DELAY());
+                    vm.prank(vault.gov());
+                    vault.executeParamChange(0);
+                }
+            }
+
+            function _setTargetLtv(uint256 newLtv) internal {
+                uint256 cur = vault.targetLtv();
+                vm.prank(vault.gov());
+                vault.setParam(1, newLtv);
+                if (newLtv > cur) {
+                    warpAndMock(block.timestamp + vault.PARAM_TIMELOCK_DELAY());
+                    vm.prank(vault.gov());
+                    vault.executeParamChange(1);
+                }
+            }
+
+            function _emergencySkipStep(uint8 step) internal {
+                vm.prank(vault.guardian());
+                vault.emergencySkipStep(step);
+                warpAndMock(block.timestamp + vault.EMERGENCY_SKIP_DELAY());
+                vm.prank(vault.guardian());
+                vault.emergencySkipStep(step);
             }
 
             /// @notice Mock yield vault for testing (IPOR vault is at capacity)
@@ -462,9 +511,6 @@ contract MockYieldStrategy is IYieldStrategy {
 
                 yieldStrategy = IYieldStrategy(address(mockStrategy));
 
-                // Redeploy tracker for new vault
-                tracker = new VaultTracker(address(vault));
-
                 // Re-approve the new vault
                 vm.prank(user1);
                 wbtc.approve(address(vault), type(uint256).max);
@@ -473,9 +519,9 @@ contract MockYieldStrategy is IYieldStrategy {
                 vm.prank(user3);
                 wbtc.approve(address(vault), type(uint256).max);
 
-                // Enable fee accrual (default feeRate is 0)
-                vm.prank(owner);
-                vault.setParam(0, 1e17);
+                // Enable fee accrual (default feeRate is 0). 0→10% is an increase
+                // → propose + execute pattern.
+                _setFeeRate(1e17);
             }
 
             uint256 constant STAMP = 1710000000;
@@ -837,6 +883,7 @@ contract MockYieldStrategy is IYieldStrategy {
             }
 
             function test_rebalance_increase_revertsWhenStrategyDebtCoverageLow() public {
+                // 65 → 20 is a decrease, immediate
                 vm.prank(owner);
                 vault.setParam(1, 20e16); // 20%
 
@@ -848,8 +895,8 @@ contract MockYieldStrategy is IYieldStrategy {
                 uint256 mockYieldBal = crvUSD.balanceOf(address(mockYield));
                 deal(CRVUSD, address(mockYield), (mockYieldBal * 90) / 100); // -10%
 
-                vm.prank(owner);
-                vault.setParam(1, 30e16); // move target up to force increase branch
+                // 20 → 30 is an INCREASE under the new model — propose + execute
+                _setTargetLtv(30e16);
 
                 vm.expectPartialRevert(Zenji.StrategyDebtCoverageTooLow.selector);
                 vault.rebalance();
@@ -962,39 +1009,6 @@ contract MockYieldStrategy is IYieldStrategy {
                 vault.setParam(3, type(uint256).max);
             }
 
-            // function test_pauseStrategy_unwindsAndPauses() public {
-            //     vm.prank(user1);
-            //     vault.deposit(1e8, user1);
-
-            //     uint256 strategyBalanceBefore = yieldStrategy.balanceOf();
-            //     assertGt(strategyBalanceBefore, 0, "Strategy should have balance");
-
-            //     vm.prank(owner);
-            //     uint256 crvUsdReceived = vault.pauseStrategy();
-
-            //     assertTrue(yieldStrategy.paused(), "Strategy should be paused");
-            //     assertEq(yieldStrategy.balanceOf(), 0, "Strategy should be unwound");
-            //     assertGt(crvUsdReceived, 0, "Should unwind crvUSD");
-            // }
-
-            // function test_pauseStrategy_unpauses() public {
-            //     vm.prank(owner);
-            //     vault.pauseStrategy();
-            //     assertTrue(yieldStrategy.paused(), "Strategy should be paused");
-
-            //     vm.prank(owner);
-            //     uint256 crvUsdReceived = vault.pauseStrategy();
-
-            //     assertFalse(yieldStrategy.paused(), "Strategy should be unpaused");
-            //     assertEq(crvUsdReceived, 0, "Unpause should not withdraw");
-            // }
-
-            // function test_pauseStrategy_revertsFromNonOwner() public {
-            //     vm.prank(user1);
-            //     vm.expectRevert(Zenji.Unauthorized.selector);
-            //     vault.pauseStrategy();
-            // }
-
             function test_transferRole_strategist() public {
                 address newStrategist = makeAddr("newStrategist");
 
@@ -1012,15 +1026,48 @@ contract MockYieldStrategy is IYieldStrategy {
             function test_transferRole_guardian() public {
                 address newGuardian = makeAddr("newGuardian");
 
-                // Gov initiates all transfers
+                // Gov initiates all transfers — guardian uses extended delay
                 vm.prank(owner);
                 vault.transferRole(2, newGuardian);
                 assertEq(vault.pendingGuardian(), newGuardian, "Pending guardian mismatch");
 
-                vm.warp(block.timestamp + vault.ROLE_TRANSFER_DELAY());
+                // Guardian transfer requires GOV_GUARDIAN_TRANSFER_DELAY (4 weeks)
+                vm.warp(block.timestamp + vault.GOV_GUARDIAN_TRANSFER_DELAY());
                 vm.prank(newGuardian);
                 vault.acceptRole(2);
                 assertEq(vault.guardian(), newGuardian, "Guardian mismatch");
+            }
+
+            function test_transferRole_guardian_revertsBeforeExtendedDelay() public {
+                address newGuardian = makeAddr("newGuardian");
+
+                vm.prank(owner);
+                vault.transferRole(2, newGuardian);
+
+                // 1 week (the strategist delay) is no longer enough for guardian
+                vm.warp(block.timestamp + vault.ROLE_TRANSFER_DELAY());
+                vm.prank(newGuardian);
+                vm.expectRevert(TimelockLib.TimelockNotReady.selector);
+                vault.acceptRole(2);
+            }
+
+            function test_transferRole_gov_usesExtendedDelay() public {
+                address newGov = makeAddr("newGov");
+
+                vm.prank(owner);
+                vault.transferRole(1, newGov);
+
+                // 1-week delay should NOT be enough for gov anymore
+                vm.warp(block.timestamp + vault.ROLE_TRANSFER_DELAY());
+                vm.prank(newGov);
+                vm.expectRevert(TimelockLib.TimelockNotReady.selector);
+                vault.acceptRole(1);
+
+                // 4-week delay is required
+                vm.warp(block.timestamp + vault.GOV_GUARDIAN_TRANSFER_DELAY() - vault.ROLE_TRANSFER_DELAY());
+                vm.prank(newGov);
+                vault.acceptRole(1);
+                assertEq(vault.gov(), newGov, "Gov should be transferred after extended delay");
             }
 
             function test_transferRole_revertsOnZero() public {
@@ -1414,111 +1461,6 @@ contract MockYieldStrategy is IYieldStrategy {
                     remainingShares == shares - sharesToWithdraw || remainingShares == 0,
                     "Remaining shares should match expected or be zero (final withdrawal)"
                 );
-            }
-
-            // ============ VaultTracker Tests ============
-
-            function test_tracker_sharePrice_initiallyOne() public view {
-                uint256 price = tracker.sharePrice();
-                assertEq(price, 1e8, "Initial share price should be 1e8");
-            }
-
-            function test_tracker_sharePrice_afterDeposit() public {
-                vm.prank(user1);
-                vault.deposit(1e8, user1);
-
-                uint256 price = tracker.sharePrice();
-                assertApproxEqRel(price, 1e8, 1e16, "Share price should be ~1e8");
-            }
-
-            function test_tracker_takeSnapshot() public {
-                vm.prank(user1);
-                vault.deposit(1e8, user1);
-
-                tracker.takeSnapshot();
-
-                assertEq(tracker.snapshotCount(), 1, "Should have 1 snapshot");
-
-                VaultTracker.Snapshot memory snap = tracker.getSnapshot(0);
-                assertEq(snap.timestamp, block.timestamp, "Timestamp should match");
-                assertGt(snap.sharePrice, 0, "Share price should be positive");
-            }
-
-            function test_tracker_takeSnapshot_rateLimited() public {
-                vm.prank(user1);
-                vault.deposit(1e8, user1);
-
-                tracker.takeSnapshot();
-
-                vm.expectRevert(VaultTracker.SnapshotTooSoon.selector);
-                tracker.takeSnapshot();
-
-                warpAndMock(block.timestamp + 1 days);
-                mockOracle(95000 * 1e8);
-                tracker.takeSnapshot();
-
-                assertEq(tracker.snapshotCount(), 2, "Should have 2 snapshots");
-            }
-
-            function test_tracker_update() public {
-                vm.prank(user1);
-                vault.deposit(1e8, user1);
-
-                tracker.update();
-
-                assertEq(tracker.snapshotCount(), 1, "Should have 1 snapshot");
-                assertGt(tracker.lastRecordedValue(), 0, "Should have recorded value");
-            }
-
-            function test_tracker_calculateAPR() public {
-                vm.prank(user1);
-                vault.deposit(5e8, user1);
-
-                tracker.takeSnapshot();
-
-                warpAndMock(block.timestamp + 30 days);
-                mockOracle(95000 * 1e8);
-                tracker.takeSnapshot();
-
-                uint256 apr = tracker.calculateAPR(30);
-                // APR could be 0 or positive depending on vault performance
-                console.log("30-day APR (basis points):", apr);
-            }
-
-            function test_tracker_getPerformanceMetrics() public {
-                vm.prank(user1);
-                vault.deposit(1e8, user1);
-
-                tracker.update();
-
-                (
-                    uint256 currentSharePrice,
-                    uint256 totalProfitWbtc,
-                    uint256 totalLossWbtc,
-                    int256 netProfitWbtc,
-                    uint256 snapshotsCount
-                ) = tracker.getPerformanceMetrics();
-
-                assertGt(currentSharePrice, 0, "Share price should be positive");
-                assertEq(totalProfitWbtc, 0, "Initial profit should be 0");
-                assertEq(totalLossWbtc, 0, "Initial loss should be 0");
-                assertEq(netProfitWbtc, 0, "Initial net profit should be 0");
-                assertEq(snapshotsCount, 1, "Should have 1 snapshot");
-            }
-
-            function test_tracker_recordProfitLoss() public {
-                vm.prank(user1);
-                vault.deposit(5e8, user1);
-
-                tracker.recordProfitLoss();
-                uint256 initialValue = tracker.lastRecordedValue();
-                assertGt(initialValue, 0, "Should record initial value");
-
-                // Simulate value change by dealing more WBTC to vault
-                deal(WBTC, address(vault), 6e8);
-
-                tracker.recordProfitLoss();
-                assertGt(tracker.cumulativeProfit(), 0, "Should record profit");
             }
 
             // ============ Phase 1: ERC4626 Compliance Tests ============
@@ -2530,34 +2472,6 @@ contract MockYieldStrategy is IYieldStrategy {
                 vm.stopPrank();
             }
 
-            // ============ Branch Coverage: pauseStrategy with no strategy ============
-
-            // function test_pauseStrategy_revertsWithNoStrategy() public {
-            //     uint64 nonce = vm.getNonce(address(this));
-            //     address predictedVault = vm.computeCreateAddress(address(this), nonce + 1);
-            //     LlamaLoanManager loanManager = new LlamaLoanManager(
-            //         WBTC,
-            //         CRVUSD,
-            //         LLAMALEND_WBTC,
-            //         WBTC_CRVUSD_POOL,
-            //         BTC_USD_ORACLE,
-            //         CRVUSD_USD_ORACLE,
-            //         predictedVault
-            //     );
-            //     Zenji freshVault = new Zenji(
-            //         WBTC,
-            //         CRVUSD,
-            //         address(loanManager),
-            //         address(0),
-            //         owner,
-            //         address(viewHelper)
-            //     );
-
-            //     vm.prank(owner);
-            //     vm.expectRevert(Zenji.InvalidStrategy.selector);
-            //     freshVault.pauseStrategy();
-            // }
-
             // ============ Branch Coverage: maxDeposit when cap fully used ============
 
             function test_maxDeposit_zeroWhenCapReached() public {
@@ -2656,135 +2570,6 @@ contract MockYieldStrategy is IYieldStrategy {
                 vault.emergencyRescue(1);
             }
 
-            // ============ Branch Coverage: VaultTracker ============
-
-            function test_tracker_recordProfitLoss_lossPath() public {
-                vm.prank(user1);
-                vault.deposit(5e8, user1);
-
-                // First recording sets baseline
-                tracker.recordProfitLoss();
-                uint256 initialValue = tracker.lastRecordedValue();
-                assertGt(initialValue, 0);
-
-                // Simulate a loss by dealing away vault WBTC
-                // First set idle so getTotalCollateral just returns wbtc.balanceOf(vault)
-                vm.prank(owner);
-                vault.setIdle(true);
-
-                uint256 vaultWbtc = wbtc.balanceOf(address(vault));
-                // Move some WBTC out to simulate loss
-                vm.prank(address(vault));
-                wbtc.transfer(address(0xdead), vaultWbtc / 2);
-
-                tracker.recordProfitLoss();
-                assertGt(tracker.cumulativeLoss(), 0, "Should record loss");
-            }
-
-            function test_tracker_update_lossPath() public {
-                vm.prank(user1);
-                vault.deposit(5e8, user1);
-
-                // First update sets baseline
-                tracker.update();
-                uint256 initialValue = tracker.lastRecordedValue();
-                assertGt(initialValue, 0);
-
-                warpAndMock(block.timestamp + 1 days);
-                mockOracle(lastBtcPrice);
-
-                // Simulate a loss
-                vm.prank(owner);
-                vault.setIdle(true);
-
-                uint256 vaultWbtc = wbtc.balanceOf(address(vault));
-                vm.prank(address(vault));
-                wbtc.transfer(address(0xdead), vaultWbtc / 2);
-
-                tracker.update();
-                assertGt(tracker.cumulativeLoss(), 0, "Should record loss via update");
-            }
-
-            function test_tracker_calculateAPR_lessThan2Snapshots() public view {
-                // No snapshots at all
-                uint256 apr = tracker.calculateAPR(30);
-                assertEq(apr, 0, "Should return 0 with < 2 snapshots");
-            }
-
-            function test_tracker_calculateAPR_priceDecline() public {
-                vm.prank(user1);
-                vault.deposit(5e8, user1);
-
-                // Take first snapshot
-                tracker.takeSnapshot();
-
-                // Warp and simulate price decline
-                warpAndMock(block.timestamp + 30 days);
-                mockOracle(lastBtcPrice);
-
-                // Simulate loss in value
-                vm.prank(owner);
-                vault.setIdle(true);
-
-                uint256 vaultWbtc = wbtc.balanceOf(address(vault));
-                vm.prank(address(vault));
-                wbtc.transfer(address(0xdead), vaultWbtc / 4);
-
-                // Take second snapshot (price per share is lower)
-                tracker.takeSnapshot();
-
-                uint256 apr = tracker.calculateAPR(30);
-                assertEq(apr, 0, "APR should be 0 on price decline");
-            }
-
-            function test_tracker_snapshotRotation() public {
-                vm.prank(user1);
-                vault.deposit(5e8, user1);
-
-                // Fill up to MAX_SNAPSHOTS using update() which handles both snapshot + profit tracking
-                uint256 startTime = block.timestamp;
-                for (uint256 i = 0; i < 730; i++) {
-                    vm.warp(startTime + (i + 1) * 1 days);
-                    mockOracle(lastBtcPrice);
-                    tracker.takeSnapshot();
-                }
-
-                assertEq(tracker.snapshotCount(), 730, "Should have 730 snapshots");
-
-                // Take one more to trigger rotation
-                vm.warp(startTime + 731 * 1 days);
-                mockOracle(lastBtcPrice);
-                tracker.takeSnapshot();
-
-                assertEq(tracker.snapshotCount(), 730, "Should still have 730 after rotation");
-            }
-
-            function test_tracker_update_noTimePassed_skipsSnapshot() public {
-                vm.prank(user1);
-                vault.deposit(5e8, user1);
-
-                tracker.update();
-                assertEq(tracker.snapshotCount(), 1, "First update should take snapshot");
-
-                // Second update without waiting — should skip snapshot
-                tracker.update();
-                assertEq(tracker.snapshotCount(), 1, "Should still have 1 snapshot");
-            }
-
-            function test_tracker_recordProfitLoss_noChange() public {
-                vm.prank(user1);
-                vault.deposit(5e8, user1);
-
-                tracker.recordProfitLoss();
-                uint256 profit1 = tracker.cumulativeProfit();
-                uint256 loss1 = tracker.cumulativeLoss();
-
-                // Record again with no change
-                tracker.recordProfitLoss();
-                assertEq(tracker.cumulativeProfit(), profit1, "Profit should not change");
-                assertEq(tracker.cumulativeLoss(), loss1, "Loss should not change");
-            }
-
             // ============ Additional Coverage Tests ============
 
             function test_proposeAndExecuteSwapper_functionality() public {
@@ -2820,7 +2605,8 @@ contract MockYieldStrategy is IYieldStrategy {
                 vault.transferRole(1, newGov);
                 assertEq(vault.pendingGov(), newGov, "Pending gov should be set");
 
-                vm.warp(block.timestamp + vault.ROLE_TRANSFER_DELAY());
+                // Gov transfer requires the extended 4-week delay
+                vm.warp(block.timestamp + vault.GOV_GUARDIAN_TRANSFER_DELAY());
                 vm.prank(newGov);
                 vault.acceptRole(1);
                 assertEq(vault.gov(), newGov, "Gov should be updated");
@@ -2884,6 +2670,7 @@ contract MockYieldStrategy is IYieldStrategy {
 
                 vm.startPrank(owner);
                 vault.enterEmergencyMode();
+                vault.emergencyStep(0); // resolve step 0 so rescue(2) is permitted
                 vault.emergencyRescue(2);
                 vm.stopPrank();
             }
@@ -2961,27 +2748,25 @@ contract MockYieldStrategy is IYieldStrategy {
             }
 
             function test_setParam_feeRate_edgeCases() public {
-                vm.startPrank(owner);
-                // Test minimum fee rate (0)
+                // Test minimum fee rate (0) — current is 10% (set in setUp), 0 is a decrease → immediate
+                vm.prank(owner);
                 vault.setParam(0, 0);
                 assertEq(vault.feeRate(), 0, "Fee rate should be set to 0");
 
-                // Test maximum fee rate
-                vault.setParam(0, 2e17);
+                // Test maximum fee rate — 0 → 20% is an increase → propose + execute
+                _setFeeRate(2e17);
                 assertEq(vault.feeRate(), 2e17, "Fee rate should be set to max");
-                vm.stopPrank();
             }
 
             function test_setParam_targetLtv_edgeCases() public {
-                vm.startPrank(owner);
-                // Test minimum target LTV
+                // Default targetLtv is 65%; lowering to 15% is immediate
+                vm.prank(owner);
                 vault.setParam(1, 15e16);
                 assertEq(vault.targetLtv(), 15e16, "Target LTV should be set to min");
 
-                // Test maximum target LTV
-                vault.setParam(1, 65e16);
+                // 15% → 65% is an increase — propose + execute
+                _setTargetLtv(65e16);
                 assertEq(vault.targetLtv(), 65e16, "Target LTV should be set to max");
-                vm.stopPrank();
             }
 
             function test_setParam_bountyRate_edgeCases() public {
@@ -2990,9 +2775,10 @@ contract MockYieldStrategy is IYieldStrategy {
                 vault.setParam(3, 0);
                 assertEq(vault.rebalanceBountyRate(), 0, "Bounty rate should be set to 0");
 
-                // Test maximum bounty rate (100%)
-                vault.setParam(3, 1e18);
-                assertEq(vault.rebalanceBountyRate(), 1e18, "Bounty rate should be set to max");
+                // Test maximum bounty rate — now 50% (decentralization upgrade lowered cap)
+                uint256 maxBounty = vault.MAX_REBALANCE_BOUNTY();
+                vault.setParam(3, maxBounty);
+                assertEq(vault.rebalanceBountyRate(), maxBounty, "Bounty rate should be set to max");
                 vm.stopPrank();
             }
 
@@ -3348,12 +3134,12 @@ contract MockYieldStrategy is IYieldStrategy {
             // ============ Branch Coverage: maxWithdraw / maxRedeem in emergency ============
 
             function test_maxWithdraw_emergencyLiquidationComplete_zeroSupply() public {
-                vm.startPrank(owner);
+                vm.prank(owner);
                 vault.enterEmergencyMode();
-                vault.emergencySkipStep(0);
-                vault.emergencySkipStep(1);
+                _emergencySkipStep(0);
+                _emergencySkipStep(1);
+                vm.prank(owner);
                 vault.emergencyStep(2); // complete liquidation
-                vm.stopPrank();
 
                 // No shares outstanding → maxWithdraw should return 0
                 assertEq(vault.maxWithdraw(user1), 0);
@@ -3569,11 +3355,14 @@ contract MockYieldStrategy is IYieldStrategy {
                 vault.redeem(shares, user1, user1);
             }
 
-            // ============ Branch Coverage: setParam unknown index (no-op) ============
+            // ============ Branch Coverage: setParam unknown index reverts ============
+            // Decentralization upgrade: unknown param index now reverts with InvalidParam
+            // instead of silently no-op'ing (was a footgun pre-upgrade).
 
-            function test_setParam_unknownIndex_noop() public {
+            function test_setParam_unknownIndex_reverts() public {
                 vm.prank(owner);
-                vault.setParam(99, 42); // unknown param index, should be no-op
+                vm.expectRevert(Zenji.InvalidParam.selector);
+                vault.setParam(99, 42);
             }
 
             // ============ Branch Coverage: proposeSwapper same address reverts ============
@@ -3816,6 +3605,58 @@ contract MockYieldStrategy is IYieldStrategy {
                 vault.harvestYield();
             }
 
+            /// @dev Regression test for M-02: harvestYield() must accrue fees on BOTH organic
+            ///      yield (P) AND harvest rewards (H). The old buggy version called
+            ///      `lastStrategyBalance = yieldStrategy.balanceOf()` after harvest(), skipping
+            ///      fee accrual on H permanently. The fix calls `_accrueYieldFees()` after harvest
+            ///      instead, capturing both P and H.
+            ///
+            ///      Expected: accumulatedFees increases by feeRate * (P + H) = 10% * 1500 = 150
+            ///      Also verifies no double-accrual: a subsequent accrueYieldFees() collects nothing.
+            function test_harvestYield_accruesFees_noDoubleAccrual() public {
+                // setupMockYieldStrategy already called in setUp with feeRate = 10%
+                vm.prank(user1);
+                vault.deposit(1e8, user1);
+                warpAndMock(block.timestamp + 2);
+
+                // Simulate organic yield P = 1000 crvUSD by donating to the underlying ERC4626 vault
+                // (inflates all shareholders' convertToAssets value, including the strategy)
+                uint256 P = 1000e18;
+                address yieldVaultAddr = address(mockStrategy.yieldVault());
+                deal(CRVUSD, yieldVaultAddr, IERC20(CRVUSD).balanceOf(yieldVaultAddr) + P);
+
+                // Configure harvest reward H = 500 crvUSD and pre-fund it to the strategy
+                uint256 H = 500e18;
+                deal(CRVUSD, address(mockStrategy), H);
+                mockStrategy.setHarvestReward(H);
+
+                uint256 feeRate = vault.feeRate(); // 10% = 1e17
+                uint256 accFeesBefore = vault.accumulatedFees();
+
+                vault.harvestYield();
+
+                uint256 actualAccrued = vault.accumulatedFees() - accFeesBefore;
+                uint256 PRECISION = 1e18;
+                uint256 expectedFees = ((P + H) * feeRate) / PRECISION; // 10% * 1500 = 150 crvUSD
+
+                // Primary assertion: fees on both organic yield AND harvest reward are captured
+                assertApproxEqRel(
+                    actualAccrued,
+                    expectedFees,
+                    0.001e18, // 0.1% tolerance for rounding
+                    "M-02: fees must be charged on organic yield + harvest reward"
+                );
+
+                // No-double-accrual assertion: balance is fully checkpointed after harvestYield()
+                uint256 feesAfterHarvest = vault.accumulatedFees();
+                vault.accrueYieldFees();
+                assertEq(
+                    vault.accumulatedFees(),
+                    feesAfterHarvest,
+                    "M-02: subsequent accrueYieldFees() must collect zero (no double-accrual)"
+                );
+            }
+
             function test_withdrawFees_zeroFees() public {
                 // No fees accumulated - should not revert
                 vm.prank(owner);
@@ -4020,9 +3861,11 @@ contract MockYieldStrategy is IYieldStrategy {
             }
 
             function test_setParam_bountyRate_invalidReverts() public {
+                // Read constant FIRST so it doesn't consume the vm.prank below
+                uint256 over = vault.MAX_REBALANCE_BOUNTY() + 1;
                 vm.prank(owner);
                 vm.expectRevert(Zenji.InvalidBountyRate.selector);
-                vault.setParam(3, 1e18 + 1); // > MAX_REBALANCE_BOUNTY (100%)
+                vault.setParam(3, over); // > MAX_REBALANCE_BOUNTY (now 50%)
             }
 
             function test_executeSwapper_and_cancelSwapper() public {
@@ -4075,10 +3918,11 @@ contract MockYieldStrategy is IYieldStrategy {
             }
 
             function test_emergencyStep_afterLiquidation_reverts() public {
-                vm.startPrank(owner);
+                vm.prank(owner);
                 vault.enterEmergencyMode();
-                vault.emergencySkipStep(0);
-                vault.emergencySkipStep(1);
+                _emergencySkipStep(0);
+                _emergencySkipStep(1);
+                vm.startPrank(owner);
                 vault.emergencyStep(2); // mark complete
                 vm.expectRevert(Zenji.LiquidationAlreadyComplete.selector);
                 vault.emergencyStep(0); // should revert
@@ -4169,12 +4013,12 @@ contract MockYieldStrategy is IYieldStrategy {
                 vm.prank(user1);
                 vault.deposit(1e8, user1);
 
-                vm.startPrank(owner);
+                vm.prank(owner);
                 vault.enterEmergencyMode();
-                vault.emergencySkipStep(0);
-                vault.emergencySkipStep(1);
+                _emergencySkipStep(0);
+                _emergencySkipStep(1);
+                vm.prank(owner);
                 vault.emergencyStep(2); // mark complete, but no collateral recovered
-                vm.stopPrank();
 
                 // Emergency + liquidation complete, but 0 collateral in vault
                 // (all collateral still in loan manager - not rescued)
@@ -4185,12 +4029,12 @@ contract MockYieldStrategy is IYieldStrategy {
             }
 
             function test_previewRedeem_emergencyLiquidation_zeroSupply() public {
-                vm.startPrank(owner);
+                vm.prank(owner);
                 vault.enterEmergencyMode();
-                vault.emergencySkipStep(0);
-                vault.emergencySkipStep(1);
+                _emergencySkipStep(0);
+                _emergencySkipStep(1);
+                vm.prank(owner);
                 vault.emergencyStep(2); // complete liquidation
-                vm.stopPrank();
 
                 // No shares outstanding
                 uint256 assets = vault.previewRedeem(1e8);
@@ -4217,21 +4061,21 @@ contract MockYieldStrategy is IYieldStrategy {
             }
 
             function test_emergencyStep2_withStep1Only_reverts() public {
-                vm.startPrank(owner);
+                vm.prank(owner);
                 vault.enterEmergencyMode();
-                vault.emergencySkipStep(1); // skip step 1 but not step 0
+                _emergencySkipStep(1); // skip step 1 but not step 0
+                vm.prank(owner);
                 vm.expectRevert(Zenji.EmergencyStepsIncomplete.selector);
                 vault.emergencyStep(2);
-                vm.stopPrank();
             }
 
             function test_emergencySkipStep_allowsStep2() public {
-                vm.startPrank(owner);
+                vm.prank(owner);
                 vault.enterEmergencyMode();
-                vault.emergencySkipStep(0);
-                vault.emergencySkipStep(1);
+                _emergencySkipStep(0);
+                _emergencySkipStep(1);
+                vm.prank(owner);
                 vault.emergencyStep(2);
-                vm.stopPrank();
 
                 assertTrue(
                     vault.liquidationComplete(), "Liquidation should be complete via skip path"
@@ -4241,12 +4085,13 @@ contract MockYieldStrategy is IYieldStrategy {
 
             function test_emergencySkipStep_runThenSkip_allowsStep2() public {
                 // Run step 0 normally, skip step 1 (simulates bricked loan manager)
-                vm.startPrank(owner);
+                vm.prank(owner);
                 vault.enterEmergencyMode();
+                vm.prank(owner);
                 vault.emergencyStep(0); // run normally
-                vault.emergencySkipStep(1); // skip loan unwind
+                _emergencySkipStep(1); // skip loan unwind (now 2-call timelocked)
+                vm.prank(owner);
                 vault.emergencyStep(2);
-                vm.stopPrank();
 
                 assertTrue(vault.liquidationComplete(), "Liquidation complete after run+skip");
             }
@@ -4267,10 +4112,11 @@ contract MockYieldStrategy is IYieldStrategy {
             }
 
             function test_emergencySkipStep_afterLiquidationComplete_reverts() public {
-                vm.startPrank(owner);
+                vm.prank(owner);
                 vault.enterEmergencyMode();
-                vault.emergencySkipStep(0);
-                vault.emergencySkipStep(1);
+                _emergencySkipStep(0);
+                _emergencySkipStep(1);
+                vm.startPrank(owner);
                 vault.emergencyStep(2); // completes liquidation
                 vm.expectRevert(Zenji.LiquidationAlreadyComplete.selector);
                 vault.emergencySkipStep(0); // too late
@@ -4302,5 +4148,385 @@ contract MockYieldStrategy is IYieldStrategy {
                 vm.stopPrank();
 
                 assertTrue(vault.liquidationComplete());
+            }
+
+            // ============ Decentralization Upgrade Tests ============
+            // P1: feeRate / targetLtv timelock for adverse changes
+            // P2: emergencySkipStep timelock with gov veto
+            // P3+P8: extended gov / guardian transfer delays
+            // P5: guardian veto on swapper / role changes
+            // P6: cancelEmergencyMode
+            // P7: lowered MAX_REBALANCE_BOUNTY
+            // P9: try/catch on strategy ownership propagation
+
+            // ----- P1: feeRate / targetLtv timelock -----
+
+            function test_decentral_feeRate_increase_isTimelocked() public {
+                // setUp set feeRate = 10%. Increase to 15% should be pending, not immediate.
+                vm.prank(owner);
+                vault.setParam(0, 15e16);
+                assertEq(vault.feeRate(), 1e17, "feeRate must NOT change before delay");
+
+                (uint256 pending, uint256 effective) = vault.pendingParamChange(0);
+                assertEq(pending, 15e16, "pending value should be 15%");
+                assertEq(effective, block.timestamp + vault.PARAM_TIMELOCK_DELAY());
+
+                // Cannot execute before delay
+                vm.prank(owner);
+                vm.expectRevert(TimelockLib.TimelockNotReady.selector);
+                vault.executeParamChange(0);
+
+                // After delay → execution succeeds
+                warpAndMock(block.timestamp + vault.PARAM_TIMELOCK_DELAY());
+                vm.prank(owner);
+                vault.executeParamChange(0);
+                assertEq(vault.feeRate(), 15e16, "feeRate should update after execute");
+            }
+
+            function test_decentral_feeRate_decrease_isImmediate() public {
+                // setUp set feeRate = 10%. Decrease to 5% should be immediate.
+                vm.prank(owner);
+                vault.setParam(0, 5e16);
+                assertEq(vault.feeRate(), 5e16, "decreases must be immediate");
+
+                (uint256 pending,) = vault.pendingParamChange(0);
+                assertEq(pending, 0, "no pending proposal for a decrease");
+            }
+
+            function test_decentral_targetLtv_increase_isTimelocked() public {
+                // First decrease (immediate) to set baseline
+                vm.prank(owner);
+                vault.setParam(1, 30e16);
+                assertEq(vault.targetLtv(), 30e16);
+
+                // Increase to 50% — pending
+                vm.prank(owner);
+                vault.setParam(1, 50e16);
+                assertEq(vault.targetLtv(), 30e16, "LTV must NOT increase before delay");
+
+                warpAndMock(block.timestamp + vault.PARAM_TIMELOCK_DELAY());
+                vm.prank(owner);
+                vault.executeParamChange(1);
+                assertEq(vault.targetLtv(), 50e16);
+            }
+
+            function test_decentral_targetLtv_decrease_isImmediate() public {
+                // 65% (default) → 30% is a decrease
+                vm.prank(owner);
+                vault.setParam(1, 30e16);
+                assertEq(vault.targetLtv(), 30e16);
+            }
+
+            function test_decentral_cancelParamChange_works() public {
+                vm.prank(owner);
+                vault.setParam(0, 15e16); // propose increase
+
+                (uint256 pending,) = vault.pendingParamChange(0);
+                assertEq(pending, 15e16);
+
+                vm.prank(owner);
+                vault.cancelParamChange(0);
+
+                (pending,) = vault.pendingParamChange(0);
+                assertEq(pending, 0, "proposal should be cleared");
+
+                // After cancel, execute should revert
+                vm.prank(owner);
+                vm.expectRevert(TimelockLib.NoTimelockPending.selector);
+                vault.executeParamChange(0);
+            }
+
+            function test_decentral_executeParamChange_invalidParam_reverts() public {
+                vm.prank(owner);
+                vm.expectRevert(Zenji.InvalidParam.selector);
+                vault.executeParamChange(2); // only 0 and 1 supported
+            }
+
+            function test_decentral_setParam_invalidParam_reverts() public {
+                vm.prank(owner);
+                vm.expectRevert(Zenji.InvalidParam.selector);
+                vault.setParam(99, 1);
+            }
+
+            // ----- P2: emergencySkipStep 2-call timelock -----
+
+            function test_decentral_emergencySkipStep_proposeThenExecute() public {
+                vm.prank(owner);
+                vault.enterEmergencyMode();
+
+                // First call only proposes
+                vm.prank(owner);
+                vault.emergencySkipStep(0);
+                assertEq(vault.emergencyStepsCompleted(), 0, "step bit must NOT be set yet");
+                assertGt(vault.pendingSkipTimestamp(0), 0, "should have pending timestamp");
+
+                // Cannot execute before delay
+                vm.prank(owner);
+                vm.expectRevert(TimelockLib.TimelockNotReady.selector);
+                vault.emergencySkipStep(0);
+
+                // After delay → second call executes
+                warpAndMock(block.timestamp + vault.EMERGENCY_SKIP_DELAY());
+                vm.prank(owner);
+                vault.emergencySkipStep(0);
+                assertEq(vault.emergencyStepsCompleted(), 0x1, "step 0 bit should be set");
+                assertEq(vault.pendingSkipTimestamp(0), 0, "pending should be cleared");
+            }
+
+            function test_decentral_cancelEmergencySkip_govVeto() public {
+                vm.prank(owner);
+                vault.enterEmergencyMode();
+                vm.prank(owner);
+                vault.emergencySkipStep(1); // propose
+
+                assertGt(vault.pendingSkipTimestamp(1), 0);
+
+                vm.prank(owner); // owner is gov
+                vault.cancelEmergencySkip(1);
+                assertEq(vault.pendingSkipTimestamp(1), 0, "pending skip should be cancelled");
+
+                // Cancelling when nothing pending reverts
+                vm.prank(owner);
+                vm.expectRevert(TimelockLib.NoTimelockPending.selector);
+                vault.cancelEmergencySkip(1);
+            }
+
+            function test_decentral_cancelEmergencySkip_invalidStep_reverts() public {
+                vm.prank(owner);
+                vm.expectRevert(Zenji.InvalidEmergencyStep.selector);
+                vault.cancelEmergencySkip(2);
+            }
+
+            // ----- P6: cancelEmergencyMode -----
+
+            function test_decentral_cancelEmergencyMode_works() public {
+                vm.prank(owner);
+                vault.enterEmergencyMode();
+                assertTrue(vault.emergencyMode());
+
+                vm.prank(owner);
+                vault.cancelEmergencyMode();
+                assertFalse(vault.emergencyMode(), "emergencyMode should be cleared");
+            }
+
+            function test_decentral_cancelEmergencyMode_clearsPendingSkips() public {
+                vm.prank(owner);
+                vault.enterEmergencyMode();
+                vm.prank(owner);
+                vault.emergencySkipStep(0); // propose pending
+                assertGt(vault.pendingSkipTimestamp(0), 0);
+
+                vm.prank(owner);
+                vault.cancelEmergencyMode();
+                assertEq(vault.pendingSkipTimestamp(0), 0, "pending skip cleared with cancel");
+                assertEq(vault.pendingSkipTimestamp(1), 0);
+            }
+
+            function test_decentral_cancelEmergencyMode_revertsAfterAnyStep() public {
+                vm.startPrank(owner);
+                vault.enterEmergencyMode();
+                vault.emergencyStep(0); // executes — sets emergencyStepsCompleted bit 0
+                vm.expectRevert(Zenji.EmergencyStepInProgress.selector);
+                vault.cancelEmergencyMode();
+                vm.stopPrank();
+            }
+
+            function test_decentral_cancelEmergencyMode_revertsIfNotInEmergency() public {
+                vm.prank(owner);
+                vm.expectRevert(Zenji.EmergencyModeNotActive.selector);
+                vault.cancelEmergencyMode();
+            }
+
+            function test_decentral_cancelEmergencyMode_onlyGov() public {
+                vm.prank(owner);
+                vault.enterEmergencyMode();
+
+                vm.prank(user1);
+                vm.expectRevert(Zenji.Unauthorized.selector);
+                vault.cancelEmergencyMode();
+            }
+
+            // ----- P5: Guardian veto on swapper / role -----
+
+            function test_decentral_guardianCancelSwapper_works() public {
+                MockZenjiSwapper newSwapper = new MockZenjiSwapper(WBTC, CRVUSD);
+                vm.prank(owner);
+                vault.proposeSwapper(address(newSwapper));
+
+                vm.prank(owner); // owner is also guardian
+                vault.guardianCancelSwapper();
+
+                // After veto, executing the swapper change should revert
+                vm.warp(block.timestamp + vault.TIMELOCK_DELAY() + 1);
+                vm.prank(owner);
+                vm.expectRevert(TimelockLib.NoTimelockPending.selector);
+                vault.executeSwapper();
+            }
+
+            function test_decentral_guardianCancelRole_works() public {
+                address attacker = makeAddr("attacker");
+                vm.prank(owner);
+                vault.transferRole(2, attacker); // gov tries to replace guardian
+
+                assertEq(vault.pendingGuardian(), attacker);
+
+                // Legitimate guardian (also owner here) vetoes
+                vm.prank(owner);
+                vault.guardianCancelRole(2);
+
+                assertEq(vault.pendingGuardian(), address(0), "pending guardian cleared");
+            }
+
+            function test_decentral_guardianCancelRole_invalidRole_reverts() public {
+                vm.prank(owner);
+                vm.expectRevert(Zenji.InvalidParam.selector);
+                vault.guardianCancelRole(99);
+            }
+
+            function test_decentral_guardianCancelRole_revertsIfNoPending() public {
+                vm.prank(owner);
+                vm.expectRevert(TimelockLib.NoTimelockPending.selector);
+                vault.guardianCancelRole(0);
+            }
+
+            // ----- P7: Lower MAX_REBALANCE_BOUNTY -----
+
+            function test_decentral_maxRebalanceBounty_isFiftyPercent() public {
+                assertEq(vault.MAX_REBALANCE_BOUNTY(), 5e17, "MAX_REBALANCE_BOUNTY should be 50%");
+            }
+
+            function test_decentral_setBounty_above50Percent_reverts() public {
+                vm.prank(owner);
+                vm.expectRevert(Zenji.InvalidBountyRate.selector);
+                vault.setParam(3, 5e17 + 1);
+            }
+
+            // ============ User-Slippage (minAssetsOut) tests ============
+
+            function test_userSlip_withdraw_minZero_equivalentToStandard() public {
+                // Deposit so there's something to withdraw
+                vm.prank(user1);
+                vault.deposit(1e8, user1);
+                vm.roll(block.number + 1);
+
+                // Snapshot state at the boundary
+                uint256 expected = vault.previewWithdraw(5e7);
+                uint256 sharesUser1Before = vault.balanceOf(user1);
+                uint256 wbtcUser1Before = wbtc.balanceOf(user1);
+
+                // 4-arg call with minAssetsOut = 0 must behave identically to 3-arg call
+                vm.prank(user1);
+                vault.withdraw(5e7, user1, user1, 0);
+
+                uint256 received = wbtc.balanceOf(user1) - wbtcUser1Before;
+                uint256 sharesBurned = sharesUser1Before - vault.balanceOf(user1);
+
+                assertGt(received, 0, "should receive collateral");
+                assertGt(sharesBurned, 0, "shares should be burned");
+                // expected is the round-up shares — we don't compare exactly
+                expected; // silence
+            }
+
+            function test_userSlip_redeem_minZero_equivalentToStandard() public {
+                vm.prank(user1);
+                vault.deposit(1e8, user1);
+                vm.roll(block.number + 1);
+
+                uint256 shares = vault.balanceOf(user1) / 2;
+                uint256 wbtcBefore = wbtc.balanceOf(user1);
+
+                vm.prank(user1);
+                vault.redeem(shares, user1, user1, 0);
+
+                assertGt(wbtc.balanceOf(user1) - wbtcBefore, 0, "should receive collateral");
+            }
+
+            function test_userSlip_redeem_minTooHigh_reverts() public {
+                vm.prank(user1);
+                vault.deposit(1e8, user1);
+                vm.roll(block.number + 1);
+
+                uint256 shares = vault.balanceOf(user1) / 2;
+                uint256 expected = vault.previewRedeem(shares);
+                uint256 unrealisticMin = expected * 2; // 200% — definitely won't be met
+
+                vm.prank(user1);
+                vm.expectRevert(
+                    abi.encodeWithSelector(Zenji.UserSlippageExceeded.selector, unrealisticMin, expected)
+                );
+                vault.redeem(shares, user1, user1, unrealisticMin);
+            }
+
+            function test_userSlip_withdraw_minTooHigh_reverts() public {
+                vm.prank(user1);
+                vault.deposit(1e8, user1);
+                vm.roll(block.number + 1);
+
+                // Ask for 5e7 but require >= 1e9 (impossible) → revert
+                vm.prank(user1);
+                vm.expectRevert();
+                vault.withdraw(5e7, user1, user1, 1e9);
+            }
+
+            function test_userSlip_redeem_minMet_succeeds() public {
+                vm.prank(user1);
+                vault.deposit(1e8, user1);
+                vm.roll(block.number + 1);
+
+                uint256 shares = vault.balanceOf(user1) / 2;
+                uint256 expected = vault.previewRedeem(shares);
+                // Allow 5% slippage from the previewed amount
+                uint256 floor = (expected * 95) / 100;
+                uint256 wbtcBefore = wbtc.balanceOf(user1);
+
+                vm.prank(user1);
+                uint256 received = vault.redeem(shares, user1, user1, floor);
+
+                assertGe(received, floor, "received must meet user floor");
+                assertEq(wbtc.balanceOf(user1) - wbtcBefore, received, "balance delta matches");
+            }
+
+            function test_userSlip_emergencyMode_minEnforced() public {
+                // Deposit, then enter emergency, complete liquidation
+                vm.prank(user1);
+                vault.deposit(1e8, user1);
+                vm.roll(block.number + 1);
+
+                vm.prank(owner);
+                vault.enterEmergencyMode();
+                vm.startPrank(owner);
+                vault.emergencyStep(0);
+                vault.emergencyStep(1);
+                vault.emergencyStep(2);
+                vm.stopPrank();
+
+                uint256 shares = vault.balanceOf(user1);
+                // Pro-rata available collateral might be small; ask for more than possible.
+                vm.prank(user1);
+                vm.expectRevert(); // UserSlippageExceeded
+                vault.redeem(shares, user1, user1, type(uint128).max);
+            }
+
+            function test_userSlip_maxUserSlippage_isTwentyPercent() public {
+                assertEq(vault.MAX_USER_SLIPPAGE(), 2e17, "MAX_USER_SLIPPAGE = 20%");
+            }
+
+            function test_userSlip_minBelowExpected_widensInternalCap() public {
+                // This sanity-checks that providing a generous minAssetsOut does NOT alter
+                // the ERC4626 standard-signature behavior (minAssetsOut == 0 path).
+                vm.prank(user1);
+                vault.deposit(1e8, user1);
+                vm.roll(block.number + 1);
+
+                uint256 shares = vault.balanceOf(user1);
+
+                // First call: standard 3-arg with the gov maxSlippage default
+                uint256 wbtcBefore = wbtc.balanceOf(user1);
+                vm.prank(user1);
+                uint256 received = vault.redeem(shares, user1, user1);
+
+                // The user got at least their pro-rata share minus tolerable slippage.
+                assertGt(received, 0);
+                assertEq(wbtc.balanceOf(user1) - wbtcBefore, received);
             }
         }

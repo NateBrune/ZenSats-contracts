@@ -324,26 +324,15 @@ contract UsdtIporAaveStrategyTest is Test {
         assertGt(wbtc.balanceOf(address(vault)), 0, "Vault should recover collateral");
     }
 
-    // function test_strategy_pause_unwinds_to_usdt() public {
-    //     vm.prank(user);
-    //     vault.deposit(1e8, address(this));
-
-    //     vm.prank(owner);
-    //     vault.pauseStrategy();
-
-    //     assertTrue(strategy.paused(), "Strategy should be paused");
-    //     assertEq(usdt.balanceOf(address(strategy)), 0, "Strategy should not hold USDT");
-    // }
-
     function test_strategy_emergency_withdraw() public {
         vm.prank(user);
         vault.deposit(1e8, address(this));
 
-        vm.prank(owner);
+        vm.startPrank(owner);
         vault.enterEmergencyMode();
-
-        vm.prank(owner);
+        vault.emergencyStep(0); // resolve step 0 so rescue(2) is permitted
         vault.emergencyRescue(2);
+        vm.stopPrank();
 
         assertEq(usdt.balanceOf(address(strategy)), 0, "Strategy should not retain USDT");
     }

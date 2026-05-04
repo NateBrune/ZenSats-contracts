@@ -226,9 +226,12 @@ contract VerifyH3_StaleAccumulatedFees is Test {
 
         require(address(vault) == predictedVault, "Vault address prediction failed");
 
-        // Set feeRate to 10% (1e17)
+        // Set feeRate to 10% (1e17) — increase requires propose + execute
         vm.prank(owner);
         vault.setParam(0, 1e17);
+        vm.warp(block.timestamp + vault.PARAM_TIMELOCK_DELAY());
+        vm.prank(owner);
+        vault.executeParamChange(0);
 
         // Fund depositor
         collateral.mint(depositor, 100 * ONE_UNIT);
@@ -317,41 +320,42 @@ contract VerifyH3_StaleAccumulatedFees is Test {
         console.log("convertToShares (fresh)    :", convertToShares_fresh);
         console.log("previewDeposit (fresh)     :", previewDeposit_fresh);
 
-        // === PHASE 5: ASSERT BUG ===
+        // === PHASE 5: VERIFY FIX ===
 
-        // Un-accrued fees = 100e6 USDT
-        // In our mock, getDebtValue() returns 1:1 so the strategy contribution to
-        // totalAssets is directly in debt token units. The collateral denominator
-        // absorbs these debt units additively.
-        // Key assertion: stale totalAssets > fresh totalAssets
-        // (stale subtracts fewer fees from the strategy balance, inflating NAV)
+        // ZenjiViewHelper.getTotalCollateralValue() was fixed to compute pending (unaccrued)
+        // fees on-the-fly inside the view, so totalAssets() is always accurate regardless
+        // of whether _accrueYieldFees() has been called since the last yield event.
+        //
+        // Un-accrued fees = 100e6 USDT.  The view helper adds them dynamically, so the
+        // stale and fresh readings must be identical.
 
         uint256 navError = totalAssets_stale > totalAssets_fresh
             ? totalAssets_stale - totalAssets_fresh
             : 0;
 
-        console.log("=== BUG PROOF ===");
+        console.log("=== FIX PROOF ===");
         console.log("NAV overstatement (stale - fresh totalAssets):", navError);
         console.log("Un-accrued fee amount:", freshFees - feesAfterFirstCheckpoint);
 
-        assertTrue(
-            totalAssets_stale > totalAssets_fresh,
-            "BUG: totalAssets() overstates NAV when accumulatedFees is stale"
+        // FIX VERIFIED: view is accurate before and after explicit accrual
+        assertEq(
+            totalAssets_stale,
+            totalAssets_fresh,
+            "FIX VERIFIED: totalAssets() is accurate even when accumulatedFees is stale"
         );
 
-        // With fewer-subtracted fees: stale NAV is higher => convertToShares returns FEWER shares
-        // (the depositor gets less for the same deposit when NAV is inflated)
-        assertTrue(
-            convertToShares_stale <= convertToShares_fresh,
-            "BUG: convertToShares() undervalues depositor shares when fees are stale"
+        // FIX VERIFIED: share price is fair for depositors without needing explicit accrual
+        assertEq(
+            convertToShares_stale,
+            convertToShares_fresh,
+            "FIX VERIFIED: convertToShares() gives fair shares even when fees are stale"
         );
 
-        // NAV error should equal the un-accrued fee amount converted through getDebtValue
-        // In our 1:1 mock that is exactly 100e6 USDT reflected in the totalAssets delta.
+        // FIX VERIFIED: no NAV overstatement
         // Note: totalAssets is in collateral units (WBTC, 8 dec) while strategy contribution
         // passes through getDebtValue(). In our 1:1 mock these magnitudes will differ by
-        // the decimal difference (6 dec USDT vs 8 dec WBTC) but the direction is unambiguous.
-        assertGt(navError, 0, "NAV overstatement must be positive");
+        // the decimal difference (6 dec USDT vs 8 dec WBTC) but direction is unambiguous.
+        assertEq(navError, 0, "FIX VERIFIED: zero NAV overstatement when fees are stale");
     }
 
     /// @notice Control test: verify that state-mutating functions DO accrue fees first.
@@ -419,8 +423,9 @@ contract VerifyH3_StaleAccumulatedFees is Test {
         console.log("Fees at checkpoint :", feesAtCheckpoint);
         console.log("Fresh fees         :", vault.accumulatedFees());
 
-        // Large yield creates proportionally larger NAV error
-        assertTrue(totalAssets_stale > totalAssets_fresh, "Large yield: stale NAV still overstates");
-        assertGt(largeNavError, 0, "Large yield: NAV overstatement is non-zero");
+        // FIX VERIFIED: even large un-accrued yield produces zero NAV overstatement
+        // because the view helper computes pending fees on-the-fly.
+        assertEq(totalAssets_stale, totalAssets_fresh, "FIX VERIFIED: large yield produces no NAV overstatement");
+        assertEq(largeNavError, 0, "FIX VERIFIED: NAV overstatement is zero even with large stale yield");
     }
 }

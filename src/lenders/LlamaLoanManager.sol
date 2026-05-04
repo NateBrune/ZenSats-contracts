@@ -75,6 +75,12 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     uint256 public constant TWOCRYPTO_DEBT_INDEX = 0;
 
     /// @notice Debt flash lender for underwater position unwinding
+    /// @dev Hardcoded to the crvUSD FlashLender at deployment time.
+    ///      If this contract is deprecated or paused, emergency unwinding via
+    ///      flashloan will revert. Recovery paths:
+    ///        1. emergencySkipStep(1) — skip the flash-unwind step entirely
+    ///        2. emergencyRescue(2)   — gov sends collateral directly from the loan manager
+    ///      A swapper migration does NOT affect this address.
     address public constant DEBT_FLASH_LENDER = 0x26dE7861e213A5351F6ED767d00e0839930e9eE1;
     bytes32 private constant FLASH_LOAN_CALLBACK = keccak256("ERC3156FlashBorrower.onFlashLoan");
 
@@ -266,9 +272,43 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
         uint256 repayNow = debtToRepay < currentDebt ? debtToRepay : currentDebt;
         repayNow = repayNow < debtBalance ? repayNow : debtBalance;
 
+        // Dust-residual escalation: LlamaLend Controller's _calculate_debt_n1 asserts
+        // `y_effective > 0` when redistributing a partially-repaid position into bands.
+        // For tiny remaining (collateral, debt) pairs the calculation rounds to zero
+        // and the partial repay reverts with "Amount too low", which would otherwise
+        // lock remaining users' funds after a large depositor exits.
+        //
+        // We can't predict the rounding offline (it depends on AMM internals), so we
+        // attempt the partial repay and on revert escalate to a full close: repay all
+        // remaining debt (via flashloan if our balance is short), return all collateral
+        // to the vault, and let the vault re-price remaining shares against the now-idle
+        // collateral. The next deposit re-opens the LlamaLend position cleanly.
         if (repayNow > 0) {
             _ensureApprove(address(debtToken), address(llamaLend), repayNow);
-            llamaLend.repay(repayNow);
+            if (fullyClose || repayNow == currentDebt) {
+                // Either caller asked for a full close, or we happen to be repaying
+                // exactly the full debt. No band redistribution needed inside repay()
+                // — the position closes — so the rounding assertion can't fire.
+                llamaLend.repay(repayNow);
+            } else {
+                try llamaLend.repay(repayNow) {
+                    // partial repay succeeded
+                } catch {
+                    // Partial repay tripped LlamaLend's dust assertion. Escalate to
+                    // full close. If we hold enough debt token, repay all now;
+                    // otherwise leave repayNow=0 and let the flashloan path cover
+                    // the whole debt below.
+                    fullyClose = true;
+                    debtToRepay = currentDebt;
+                    if (debtBalance >= currentDebt) {
+                        repayNow = currentDebt;
+                        _ensureApprove(address(debtToken), address(llamaLend), repayNow);
+                        llamaLend.repay(repayNow);
+                    } else {
+                        repayNow = 0;
+                    }
+                }
+            }
         }
 
         // 4. Check remaining debt
@@ -276,8 +316,18 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
             llamaLend.loan_exists(address(this)) ? llamaLend.debt(address(this)) : 0;
 
         // For full close: flashloan if ANY debt remains (must cleanly close position).
-        // For partial: flashloan only if debt exceeds dust threshold.
-        bool needFlashloan = fullyClose ? (remainingDebt > 0) : !_isDustDebt(remainingDebt);
+        // For partial: never flashloan — a proportional debt repay maintains the LTV ratio,
+        // so remove_collateral(collateralNeeded) can succeed directly. Flashing the entire
+        // remaining debt (other depositors' share) causes unnecessarily large collateral swaps
+        // that routinely breach the oracle floor check.
+        bool needFlashloan = fullyClose && (remainingDebt > 0);
+
+        // Dust-residual escalation may have set fullyClose mid-flight. The caller
+        // passed a partial collateralNeeded; for a clean full close we must remove
+        // all remaining collateral, which requires the full-close paths below.
+        if (fullyClose && collateralNeeded != type(uint256).max) {
+            collateralNeeded = type(uint256).max;
+        }
 
         if (needFlashloan) {
             // 5. Debt remains → flashloan the shortfall (+ 0.5% buffer)
@@ -306,7 +356,46 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
                         uint256 toRemove =
                             collateralNeeded < collAvail ? collateralNeeded : collAvail;
                         if (toRemove > 0) {
-                            llamaLend.remove_collateral(toRemove);
+                            // Both health_calculator and remove_collateral internally
+                            // call _calculate_debt_n1, which asserts y_effective > 0.
+                            // For dust (collateral, debt) pairs after a large depositor
+                            // exited, that rounds to zero and either call reverts with
+                            // "Amount too low". On any such revert, escalate to a full
+                            // close: take a flashloan for the residual debt, repay it,
+                            // and let LlamaLend auto-return all collateral. The vault
+                            // re-prices remaining shares against the now-idle collateral;
+                            // next _deployCapital re-opens the position.
+                            bool escalate;
+                            try llamaLend.health_calculator(
+                                address(this), -int256(toRemove), 0, true
+                            ) returns (int256 projectedHealth) {
+                                if (projectedHealth < MIN_HEALTH) revert HealthTooLow();
+                            } catch {
+                                escalate = true;
+                            }
+                            if (!escalate) {
+                                try llamaLend.remove_collateral(toRemove) {
+                                    // success
+                                } catch {
+                                    escalate = true;
+                                }
+                            }
+                            if (escalate) {
+                                fullyClose = true;
+                                collateralNeeded = type(uint256).max;
+                                uint256 residual = llamaLend.debt(address(this));
+                                if (residual > 0) {
+                                    uint256 flashloanAmount = (residual * 10300) / 10000;
+                                    bytes memory dataEsc =
+                                        abi.encode(collateralNeeded, fullyClose);
+                                    IERC3156FlashLender(DEBT_FLASH_LENDER).flashLoan(
+                                        IERC3156FlashBorrower(address(this)),
+                                        address(debtToken),
+                                        flashloanAmount,
+                                        dataEsc
+                                    );
+                                }
+                            }
                         }
                     }
                 }

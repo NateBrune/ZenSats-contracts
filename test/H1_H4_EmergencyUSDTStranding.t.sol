@@ -183,6 +183,15 @@ contract H1_H4_EmergencyUSDTStranding is Test {
     uint256 constant COLLATERAL_DEPOSIT = 100e18;  // 100 units collateral
     uint256 constant USDT_IN_STRATEGY   = 65e6;    // 65 USDT deployed to yield strategy
 
+    /// @notice Helper for the new 2-call emergencySkipStep timelock pattern.
+    function _emergencySkipStep(uint8 step) internal {
+        vm.prank(vault.guardian());
+        vault.emergencySkipStep(step);
+        vm.warp(block.timestamp + vault.EMERGENCY_SKIP_DELAY());
+        vm.prank(vault.guardian());
+        vault.emergencySkipStep(step);
+    }
+
     function setUp() public {
         // Deploy tokens
         collateral = new MockERC20H1("WBTC", "WBTC", 18);
@@ -241,12 +250,12 @@ contract H1_H4_EmergencyUSDTStranding is Test {
         usdt.mint(address(vault), usdtStranded);
 
         // Run emergency sequence: skip step 0 and 1, complete liquidation
-        vm.startPrank(guardian);
+        vm.prank(guardian);
         vault.enterEmergencyMode();
-        vault.emergencySkipStep(0);
-        vault.emergencySkipStep(1);
+        _emergencySkipStep(0);
+        _emergencySkipStep(1);
+        vm.prank(guardian);
         vault.emergencyStep(2); // sets liquidationComplete = true
-        vm.stopPrank();
 
         assertTrue(vault.liquidationComplete(), "H4: liquidationComplete must be true");
 
@@ -323,8 +332,8 @@ contract H1_H4_EmergencyUSDTStranding is Test {
         // exceeds 5% (MIN_SWAP_OUT_BPS = 9500), the swapper reverts with
         // SwapperUnderperformed, causing the entire emergencyStep(1) to revert.
         // Guardian has no choice but to call emergencySkipStep(1).
-        vm.prank(guardian);
-        vault.emergencySkipStep(1);
+        // Now requires 2-call timelock pattern (decentralization upgrade).
+        _emergencySkipStep(1);
 
         assertEq(
             usdt.balanceOf(address(vault)),

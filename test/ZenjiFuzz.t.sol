@@ -428,7 +428,10 @@ contract FzYieldStrategy is IYieldStrategy {
             loanManager.initializeVault(address(vault));
 
             vm.prank(owner);
-            vault.setParam(0, 1e17); // 10% yield fee rate
+            vault.setParam(0, 1e17); // 10% yield fee rate — increase requires propose + execute
+            vm.warp(block.timestamp + vault.PARAM_TIMELOCK_DELAY());
+            vm.prank(owner);
+            vault.executeParamChange(0);
 
             for (uint256 i = 0; i < 4; i++) {
                 actors[i] = makeAddr(string(abi.encodePacked("fzactor", vm.toString(i))));

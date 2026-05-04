@@ -121,7 +121,7 @@ abstract contract ZenjiForkTestBase is Test {
 
     // ============ setUp ============
 
-    function setUp() public {
+    function setUp() public virtual {
         string memory rpcUrl = vm.envOr("MAINNET_RPC_URL", string(""));
         if (bytes(rpcUrl).length == 0) rpcUrl = vm.envOr("ETH_RPC_URL", string(""));
         if (bytes(rpcUrl).length > 0) {
@@ -204,6 +204,58 @@ abstract contract ZenjiForkTestBase is Test {
         for (uint256 i = 0; i < oracles.length; i++) {
             _mockOracle(oracles[i]);
         }
+    }
+
+    // ============ Governance helpers ============
+    // Decentralization upgrade: feeRate increases and targetLtv increases now require
+    // a propose + execute pattern with PARAM_TIMELOCK_DELAY between calls. Decreases
+    // remain immediate. These helpers handle both paths so test bodies stay readable.
+
+    /// @notice Set the fee rate, handling the timelock for adverse (increase) changes.
+    function _setFeeRate(uint256 newRate) internal {
+        uint256 cur = vault.feeRate();
+        vm.prank(vault.gov());
+        vault.setParam(0, newRate);
+        if (newRate > cur) {
+            // Adverse change is now pending — warp and execute
+            vm.warp(block.timestamp + vault.PARAM_TIMELOCK_DELAY());
+            // Re-mock oracles so the warp does not stale them
+            address[] memory oracles = _oracleList();
+            for (uint256 i = 0; i < oracles.length; i++) {
+                _mockOracle(oracles[i]);
+            }
+            vm.prank(vault.gov());
+            vault.executeParamChange(0);
+        }
+    }
+
+    /// @notice Set the target LTV, handling the timelock for adverse (increase) changes.
+    function _setTargetLtv(uint256 newLtv) internal {
+        uint256 cur = vault.targetLtv();
+        vm.prank(vault.gov());
+        vault.setParam(1, newLtv);
+        if (newLtv > cur) {
+            vm.warp(block.timestamp + vault.PARAM_TIMELOCK_DELAY());
+            address[] memory oracles = _oracleList();
+            for (uint256 i = 0; i < oracles.length; i++) {
+                _mockOracle(oracles[i]);
+            }
+            vm.prank(vault.gov());
+            vault.executeParamChange(1);
+        }
+    }
+
+    /// @notice Skip an emergency step, handling the new 2-call pattern with EMERGENCY_SKIP_DELAY.
+    function _emergencySkipStep(uint8 step) internal {
+        vm.prank(vault.guardian());
+        vault.emergencySkipStep(step);
+        vm.warp(block.timestamp + vault.EMERGENCY_SKIP_DELAY());
+        address[] memory oracles = _oracleList();
+        for (uint256 i = 0; i < oracles.length; i++) {
+            _mockOracle(oracles[i]);
+        }
+        vm.prank(vault.guardian());
+        vault.emergencySkipStep(step);
     }
 
     // ============ A. Value Accounting Tests ============
@@ -388,16 +440,16 @@ abstract contract ZenjiForkTestBase is Test {
 
     function test_rebalance_bountyPaid() public {
         _deployVault();
-        vm.startPrank(owner);
-        vault.setParam(1, 55e16);
-        vm.stopPrank();
+        // Lower targetLtv from 65% to 55% — decrease is immediate
+        _setTargetLtv(55e16);
 
         _depositAs(user1, _baseDeposit() * 2);
 
-        vm.startPrank(owner);
-        vault.setParam(0, 1e17);
+        // feeRate increase from 0 → 10% requires propose+execute (PARAM_TIMELOCK_DELAY)
+        _setFeeRate(1e17);
+        // bountyRate stays immediate (no timelock on this param)
+        vm.prank(owner);
         vault.setParam(3, 1e17);
-        vm.stopPrank();
 
         vm.warp(block.timestamp + 7 days);
         _syncAndMockOracles();
@@ -508,8 +560,8 @@ abstract contract ZenjiForkTestBase is Test {
     function test_feeAccrual_andWithdraw() public {
         _deployVault();
 
-        vm.prank(owner);
-        vault.setParam(0, 1e17);
+        // feeRate increase from 0 → 10% requires propose+execute
+        _setFeeRate(1e17);
 
         _depositAs(user1, _baseDeposit() * 2);
 
@@ -615,31 +667,40 @@ abstract contract ZenjiForkTestBase is Test {
     function test_setParam_boundaries() public {
         _deployVault();
 
-        vm.startPrank(owner);
-
+        // LTV: decrease (65 → 15) is immediate; increase back to max is timelocked.
+        vm.prank(owner);
         vault.setParam(1, 15e16);
         assertEq(vault.targetLtv(), 15e16, "Should accept min LTV");
 
-        vault.setParam(1, _maxTargetLtv());
+        _setTargetLtv(_maxTargetLtv()); // increase: propose + execute
         assertEq(vault.targetLtv(), _maxTargetLtv(), "Should accept max LTV");
 
+        vm.startPrank(owner);
         vm.expectRevert(Zenji.InvalidTargetLtv.selector);
         vault.setParam(1, 15e16 - 1);
 
         vm.expectRevert(Zenji.InvalidTargetLtv.selector);
         vault.setParam(1, _maxTargetLtv() + 1);
+        vm.stopPrank();
 
-        vault.setParam(0, 2e17);
+        // Fee rate: 0 → 20% is an increase (timelocked).
+        _setFeeRate(2e17);
         assertEq(vault.feeRate(), 2e17, "Should accept max fee rate");
 
+        // bountyRate is no longer 100%-capped; max is now 50% (decentralization upgrade).
+        // Read constants OUTSIDE startPrank/expectRevert so view calls don't consume them.
+        uint256 maxBounty = vault.MAX_REBALANCE_BOUNTY();
+        uint256 overBounty = maxBounty + 1;
+
+        vm.startPrank(owner);
         vm.expectRevert(Zenji.InvalidFeeRate.selector);
         vault.setParam(0, 2e17 + 1);
 
-        vault.setParam(3, 1e18);
-        assertEq(vault.rebalanceBountyRate(), 1e18, "Should accept max bounty");
+        vault.setParam(3, maxBounty);
+        assertEq(vault.rebalanceBountyRate(), maxBounty, "Should accept max bounty");
 
         vm.expectRevert(Zenji.InvalidBountyRate.selector);
-        vault.setParam(3, 1e18 + 1);
+        vault.setParam(3, overBounty);
 
         vault.setParam(2, 0);
         assertEq(vault.depositCap(), 0, "Should accept 0 cap");

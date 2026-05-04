@@ -9,7 +9,7 @@ import { ZenjiRebalanceKeeper } from "../src/keepers/ZenjiRebalanceKeeper.sol";
 import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { PmUsdCrvUsdStrategy } from "../src/strategies/PmUsdCrvUsdStrategy.sol";
+import { UsdtPmUsdCrvUsdStrategy } from "../src/strategies/UsdtPmUsdCrvUsdStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { ZenjiXautPmUsd } from "../src/implementations/ZenjiXautPmUsd.sol";
 
@@ -79,11 +79,8 @@ contract DeployPmUsdXaut is Script {
 
         int128 lpCrvUsdIndex = _lpCrvUsdIndex();
 
-        PmUsdCrvUsdStrategy strategy = new PmUsdCrvUsdStrategy(
+        UsdtPmUsdCrvUsdStrategy strategy = new UsdtPmUsdCrvUsdStrategy(
             USDT,
-            CRVUSD,
-            CRV,
-            PMUSD,
             address(0),
             gov,
             USDT_CRVUSD_POOL,

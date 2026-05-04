@@ -26,6 +26,7 @@ interface ISwapperSlippageConfig {
 
 contract Zenji is ERC20, IERC4626 {
     using TimelockLib for TimelockLib.AddressTimelockData;
+    using TimelockLib for TimelockLib.TimelockData;
     using SafeTransferLib for IERC20;
 
     // ============ Constants ============
@@ -37,10 +38,24 @@ contract Zenji is ERC20, IERC4626 {
     uint256 public constant MAX_FEE_RATE = 2e17; // 20%
     // VIRTUAL_SHARE_OFFSET is now a virtual function — see bottom of contract
     uint256 public constant COOLDOWN_BLOCKS = 1;
-    uint256 public constant MAX_REBALANCE_BOUNTY = 1e18; // 100%
+    uint256 public constant MAX_REBALANCE_BOUNTY = 5e17; // 50% (lowered from 100% — bounds gov-compromise fee-drain risk)
     uint256 public constant TIMELOCK_DELAY = 1 weeks;
     uint256 public constant MAX_VAULT_SLIPPAGE = 5e16; // 5% cap
     uint256 public constant ROLE_TRANSFER_DELAY = 1 weeks;
+    /// @notice Extended delay for gov and guardian transfers — these roles are the most powerful
+    /// and a compromised gov should not be able to short-circuit the guardian veto window.
+    uint256 public constant GOV_GUARDIAN_TRANSFER_DELAY = 4 weeks;
+    /// @notice Delay for adverse parameter changes (feeRate increases, targetLtv increases).
+    /// Decreases (user-favorable) remain immediate.
+    uint256 public constant PARAM_TIMELOCK_DELAY = 1 weeks;
+    /// @notice Delay for emergencySkipStep — gives gov a window to veto a malicious skip.
+    /// Funds in bricked components are still recoverable on the gov side during this window.
+    uint256 public constant EMERGENCY_SKIP_DELAY = 3 days;
+    /// @notice Hard ceiling on user-supplied withdraw slippage tolerance.
+    /// Even if a user passes a very low `minAssetsOut`, the protocol caps the
+    /// effective slippage applied to internal unwind steps at 20% to limit blast
+    /// radius from accidental zero/low minimums and to bound MEV-sandwich damage.
+    uint256 public constant MAX_USER_SLIPPAGE = 2e17; // 20%
 
     // ============ Immutables ============
 
@@ -88,6 +103,13 @@ contract Zenji is ERC20, IERC4626 {
 
     // Timelock state (using TimelockLib)
     TimelockLib.AddressTimelockData internal _swapperTimelock;
+    /// @notice Pending feeRate change (only used for adverse i.e. increasing changes)
+    TimelockLib.TimelockData internal _feeRateTimelock;
+    /// @notice Pending targetLtv change (only used for adverse i.e. increasing changes)
+    TimelockLib.TimelockData internal _targetLtvTimelock;
+    /// @notice Pending emergencySkipStep timestamps. Index 0 = step 0 (yield withdraw),
+    /// index 1 = step 1 (loan unwind). Zero means no pending skip.
+    uint256[2] public pendingSkipTimestamp;
 
     // ============ Events ============
 
@@ -118,6 +140,15 @@ contract Zenji is ERC20, IERC4626 {
     );
     event SwapperChangeCancelled(address indexed cancelledSwapper);
     // Fee/LTV change events use ParamUpdated above
+    event FeeRateChangeProposed(uint256 currentFeeRate, uint256 newFeeRate, uint256 effectiveTime);
+    event TargetLtvChangeProposed(uint256 currentLtv, uint256 newLtv, uint256 effectiveTime);
+    event FeeRateChangeCancelled(uint256 cancelledValue);
+    event TargetLtvChangeCancelled(uint256 cancelledValue);
+    event RoleTransferCancelled(uint8 indexed role, address indexed cancelledAddress);
+    event EmergencySkipStepProposed(uint8 indexed step, uint256 effectiveTime);
+    event EmergencySkipCancelled(uint8 indexed step);
+    event EmergencyModeCancelled();
+    event StrategyOwnerPropagationFailed(address indexed newOwner);
 
     // Strategy events
     error SwapperUnderperformed(uint256 expected, uint256 received);
@@ -163,6 +194,10 @@ contract Zenji is ERC20, IERC4626 {
     error InvalidSlippage();
     error StrategyDebtCoverageTooLow(uint256 currentRatio, uint256 minRatio);
     error ActionDelayActive();
+    error InvalidParam();
+    error EmergencyStepInProgress();
+    /// @notice Thrown when a user-supplied minAssetsOut floor is not met after unwind.
+    error UserSlippageExceeded(uint256 minOut, uint256 actual);
 
     // ============ Modifiers ============
 
@@ -361,11 +396,35 @@ contract Zenji is ERC20, IERC4626 {
         _deposit(assets, shareAmount, receiver);
     }
 
-    /// @notice ERC4626 withdraw - withdraw exact assets by burning shares
+    /// @notice ERC4626 withdraw - withdraw exact assets by burning shares.
+    /// @dev Uses the gov-set `maxSlippage` as the floor on internal unwind steps.
+    ///      Reverts if market conditions push slippage above `maxSlippage`. Power
+    ///      users who want a self-serve escape hatch under stress should use the
+    ///      overloaded variant with a `minAssetsOut` parameter.
     function withdraw(uint256 assets, address receiver, address owner_)
         external
         override
         nonReentrant
+        returns (uint256 shareAmount)
+    {
+        return _withdrawWithMin(assets, receiver, owner_, 0);
+    }
+
+    /// @notice Overloaded withdraw with caller-supplied minimum acceptable assets out.
+    /// @dev `minAssetsOut == 0` is the sentinel for "use gov-set maxSlippage" — identical
+    ///      to the standard ERC4626 signature. `minAssetsOut > 0` widens internal slippage
+    ///      caps up to the implied tolerance (capped at MAX_USER_SLIPPAGE) and enforces
+    ///      `actualOut >= minAssetsOut` via UserSlippageExceeded after the unwind.
+    function withdraw(uint256 assets, address receiver, address owner_, uint256 minAssetsOut)
+        external
+        nonReentrant
+        returns (uint256 shareAmount)
+    {
+        return _withdrawWithMin(assets, receiver, owner_, minAssetsOut);
+    }
+
+    function _withdrawWithMin(uint256 assets, address receiver, address owner_, uint256 minAssetsOut)
+        internal
         returns (uint256 shareAmount)
     {
         if (assets == 0) revert ZeroAmount();
@@ -395,10 +454,11 @@ contract Zenji is ERC20, IERC4626 {
             }
         }
 
-        (, shareAmount) = _redeem(shareAmount, receiver, owner_);
+        (, shareAmount) = _redeem(shareAmount, receiver, owner_, minAssetsOut);
     }
 
-    /// @notice ERC4626 redeem - redeem exact shares for assets
+    /// @notice ERC4626 redeem - redeem exact shares for assets.
+    /// @dev Uses gov-set `maxSlippage`. Use the overloaded variant for self-serve slippage.
     function redeem(uint256 shareAmount, address receiver, address owner_)
         external
         override
@@ -406,7 +466,17 @@ contract Zenji is ERC20, IERC4626 {
         returns (uint256 collateralAmount)
     {
         if (emergencyMode && !liquidationComplete) revert EmergencyModeActive();
-        (collateralAmount,) = _redeem(shareAmount, receiver, owner_);
+        (collateralAmount,) = _redeem(shareAmount, receiver, owner_, 0);
+    }
+
+    /// @notice Overloaded redeem with caller-supplied minimum acceptable assets out.
+    function redeem(uint256 shareAmount, address receiver, address owner_, uint256 minAssetsOut)
+        external
+        nonReentrant
+        returns (uint256 collateralAmount)
+    {
+        if (emergencyMode && !liquidationComplete) revert EmergencyModeActive();
+        (collateralAmount,) = _redeem(shareAmount, receiver, owner_, minAssetsOut);
     }
 
     // ============ Keeper Functions ============
@@ -569,7 +639,7 @@ contract Zenji is ERC20, IERC4626 {
                 loanManager.unwindPosition(type(uint256).max);
             }
 
-            _swapRemainingDebtToCollateral(true);
+            _swapRemainingDebtToCollateral(true, maxSlippage);
 
             idle = true;
             emit IdleModeEntered();
@@ -607,20 +677,29 @@ contract Zenji is ERC20, IERC4626 {
     // ============ Role Management (Gov-only) ============
 
     /// @notice Transfer role: 0=strategist, 1=gov, 2=guardian (only gov can initiate all transfers)
-    /// @dev Starts a 2-day timelock; new address must call acceptRole after the delay.
+    /// @dev Starts a timelock; new address must call acceptRole after the delay.
+    ///      Strategist uses ROLE_TRANSFER_DELAY (1 week). Gov and guardian use the
+    ///      extended GOV_GUARDIAN_TRANSFER_DELAY (4 weeks) — these roles are powerful
+    ///      enough that a compromised gov should not be able to short-circuit the
+    ///      veto window with a quick handover.
     function transferRole(uint8 role, address to) external onlyGov {
         if (to == address(0)) revert InvalidAddress();
+        // Gov and guardian transfers must be sequential — concurrent queuing would let a
+        // compromised gov force guardian to cancel two transfers simultaneously, shrinking
+        // the effective veto window. Each transfer must complete or be cancelled first.
+        if (role == 1 && pendingGuardianTimestamp != 0) revert ActionDelayActive();
+        if (role == 2 && pendingGovTimestamp != 0) revert ActionDelayActive();
         if (role == 0) {
             pendingStrategist = to;
             pendingStrategistTimestamp = block.timestamp + ROLE_TRANSFER_DELAY;
             emit StrategistTransferStarted(strategist, to);
         } else if (role == 1) {
             pendingGov = to;
-            pendingGovTimestamp = block.timestamp + ROLE_TRANSFER_DELAY;
+            pendingGovTimestamp = block.timestamp + GOV_GUARDIAN_TRANSFER_DELAY;
             emit GovernanceTransferStarted(gov, to);
         } else {
             pendingGuardian = to;
-            pendingGuardianTimestamp = block.timestamp + ROLE_TRANSFER_DELAY;
+            pendingGuardianTimestamp = block.timestamp + GOV_GUARDIAN_TRANSFER_DELAY;
             emit GuardianTransferStarted(guardian, to);
         }
     }
@@ -642,8 +721,14 @@ contract Zenji is ERC20, IERC4626 {
             pendingGov = address(0);
             pendingGovTimestamp = 0;
             emit GovernanceUpdated(msg.sender);
-            // Propagate to strategy if it supports vault-initiated ownership transfer
-            yieldStrategy.transferOwnerFromVault(msg.sender);
+            // Propagate to strategy if it supports vault-initiated ownership transfer.
+            // Wrapped in try/catch so a bricked or paused strategy can't block gov rotation.
+            // Operators can re-sync ownership later via the strategy's own admin path.
+            try yieldStrategy.transferOwnerFromVault(msg.sender) {
+                // success — strategy owner is now the new gov
+            } catch {
+                emit StrategyOwnerPropagationFailed(msg.sender);
+            }
         } else {
             if (msg.sender != pendingGuardian) revert Unauthorized();
             if (block.timestamp < pendingGuardianTimestamp) revert TimelockLib.TimelockNotReady();
@@ -656,16 +741,48 @@ contract Zenji is ERC20, IERC4626 {
 
     /// @notice Cancel a pending role transfer (Gov-only)
     function cancelRole(uint8 role) external onlyGov {
+        _cancelRole(role);
+    }
+
+    /// @notice Guardian veto on a pending role transfer.
+    /// @dev Allows guardian to block a malicious role transfer scheduled by a
+    ///      compromised gov. Without this, a compromised gov could schedule a
+    ///      guardian/strategist replacement and only gov could cancel it —
+    ///      meaning the legitimate guardian had no on-chain recourse.
+    function guardianCancelRole(uint8 role) external onlyGuardian {
+        _cancelRole(role);
+    }
+
+    function _cancelRole(uint8 role) internal {
+        address cancelled;
         if (role == 0) {
+            cancelled = pendingStrategist;
+            if (cancelled == address(0)) revert TimelockLib.NoTimelockPending();
             pendingStrategist = address(0);
             pendingStrategistTimestamp = 0;
         } else if (role == 1) {
+            cancelled = pendingGov;
+            if (cancelled == address(0)) revert TimelockLib.NoTimelockPending();
             pendingGov = address(0);
             pendingGovTimestamp = 0;
-        } else {
+        } else if (role == 2) {
+            cancelled = pendingGuardian;
+            if (cancelled == address(0)) revert TimelockLib.NoTimelockPending();
             pendingGuardian = address(0);
             pendingGuardianTimestamp = 0;
+        } else {
+            revert InvalidParam();
         }
+        emit RoleTransferCancelled(role, cancelled);
+    }
+
+    /// @notice Guardian veto on a pending swapper change.
+    /// @dev If gov is compromised, gov could propose a malicious swapper. Without
+    ///      this veto only gov could cancel it. Guardian can now block the change
+    ///      during the 1-week timelock window.
+    function guardianCancelSwapper() external onlyGuardian {
+        address cancelled = _swapperTimelock.cancelAddress();
+        emit SwapperChangeCancelled(cancelled);
     }
 
     /// @notice Withdraw accumulated strategy fees
@@ -724,13 +841,59 @@ contract Zenji is ERC20, IERC4626 {
     /// Use when a component (yield strategy or loan manager) is bricked and cannot be unwound.
     /// Guardian accepts that funds in the bricked component may be unrecoverable.
     /// After skipping step 1 (loan unwind), users can only redeem collateral already in the vault.
+    /// @dev Two-call pattern: the first call proposes the skip with a 3-day delay; the
+    ///      second call (after the delay) executes it. Gov can call cancelEmergencySkip
+    ///      during the window to veto a malicious skip. The 3-day window is acceptable
+    ///      because funds in a bricked component are inaccessible regardless of timing.
     /// @param step 0 (skip yield withdraw) or 1 (skip loan unwind)
     function emergencySkipStep(uint8 step) external nonReentrant onlyGuardian {
         if (!emergencyMode) revert EmergencyModeNotActive();
         if (liquidationComplete) revert LiquidationAlreadyComplete();
         if (step > 1) revert InvalidEmergencyStep();
-        emergencyStepsCompleted |= (step == 0 ? uint8(0x1) : uint8(0x2));
-        emit EmergencyStepSkipped(step);
+        // No-op if the step is already resolved (executed or previously skipped)
+        uint8 mask = step == 0 ? uint8(0x1) : uint8(0x2);
+        if (emergencyStepsCompleted & mask != 0) revert InvalidEmergencyStep();
+
+        uint256 pending = pendingSkipTimestamp[step];
+        if (pending == 0) {
+            // First call: propose with delay
+            pendingSkipTimestamp[step] = block.timestamp + EMERGENCY_SKIP_DELAY;
+            emit EmergencySkipStepProposed(step, pendingSkipTimestamp[step]);
+        } else {
+            // Second call: execute if delay has passed
+            if (block.timestamp < pending) revert TimelockLib.TimelockNotReady();
+            pendingSkipTimestamp[step] = 0;
+            emergencyStepsCompleted |= mask;
+            emit EmergencyStepSkipped(step);
+        }
+    }
+
+    /// @notice Gov veto on a pending emergencySkipStep proposal.
+    /// @dev Allows gov (multisig) to block a malicious or premature skip during the
+    ///      EMERGENCY_SKIP_DELAY window. After the skip is executed (bitmask set),
+    ///      this is a no-op for that step.
+    /// @param step 0 or 1
+    function cancelEmergencySkip(uint8 step) external onlyGov {
+        if (step > 1) revert InvalidEmergencyStep();
+        if (pendingSkipTimestamp[step] == 0) revert TimelockLib.NoTimelockPending();
+        pendingSkipTimestamp[step] = 0;
+        emit EmergencySkipCancelled(step);
+    }
+
+    /// @notice Cancel emergency mode entirely.
+    /// @dev Gov-only. Only valid before any emergency step has executed (or been skipped).
+    ///      Once steps begin (assets withdrawn from strategy/loan), the state is too
+    ///      dirty to safely return to normal operation. This is the gov veto for a
+    ///      malicious or premature `enterEmergencyMode()` call by a compromised guardian.
+    function cancelEmergencyMode() external onlyGov {
+        if (!emergencyMode) revert EmergencyModeNotActive();
+        if (emergencyStepsCompleted != 0) revert EmergencyStepInProgress();
+        if (liquidationComplete) revert LiquidationAlreadyComplete();
+        emergencyMode = false;
+        // Clear any pending skip proposals — they are meaningless outside emergency mode
+        pendingSkipTimestamp[0] = 0;
+        pendingSkipTimestamp[1] = 0;
+        emit EmergencyModeCancelled();
     }
 
     /// @notice Rescue stuck tokens from the vault (emergency mode only)
@@ -744,6 +907,9 @@ contract Zenji is ERC20, IERC4626 {
     /// @dev Guardian-only fallback when standard emergency steps fail.
     function emergencyRescue(uint8 action) external nonReentrant onlyGuardian {
         if (!emergencyMode) revert EmergencyModeNotActive();
+        // Action 2 (force-redeem yield strategy) requires step 0 to be resolved first,
+        // ensuring gov had the EMERGENCY_SKIP_DELAY window to veto the emergency.
+        if (action == 2 && (emergencyStepsCompleted & 0x1) == 0) revert EmergencyStepsIncomplete();
         (accumulatedFees, lastStrategyBalance) = ZenjiCoreLib.executeEmergencyRescue(
             action,
             collateralAsset,
@@ -758,12 +924,21 @@ contract Zenji is ERC20, IERC4626 {
 
     /// @notice Set vault parameter:
     /// 0=feeRate, 1=targetLtv, 2=depositCap, 3=bountyRate, 4=maxSlippage (propagates to strategy and swapper)
-    /// @dev Gov-only. All parameter changes take effect immediately.
+    /// @dev Gov-only. Adverse changes (feeRate increase, targetLtv increase) are timelocked
+    ///      and require executeParamChange after PARAM_TIMELOCK_DELAY. User-favorable
+    ///      changes (decreases) take effect immediately.
     function setParam(uint8 p, uint256 v) external onlyGov {
         if (p == 0) {
             if (v > MAX_FEE_RATE) revert InvalidFeeRate();
-            emit ParamUpdated(p, feeRate, v);
-            feeRate = v;
+            if (v > feeRate) {
+                // Adverse: increasing fees → timelock
+                _feeRateTimelock.propose(v, PARAM_TIMELOCK_DELAY);
+                emit FeeRateChangeProposed(feeRate, v, block.timestamp + PARAM_TIMELOCK_DELAY);
+            } else {
+                // User-favorable: decreasing or keeping fees → immediate
+                emit ParamUpdated(p, feeRate, v);
+                feeRate = v;
+            }
         } else if (p == 1) {
             if (v < MIN_TARGET_LTV || v > MAX_TARGET_LTV()) {
                 revert InvalidTargetLtv();
@@ -774,8 +949,15 @@ contract Zenji is ERC20, IERC4626 {
             if (lmMaxBps != type(uint256).max && v > lmMaxBps * 1e14) {
                 revert InvalidTargetLtv();
             }
-            emit ParamUpdated(p, targetLtv, v);
-            targetLtv = v;
+            if (v > targetLtv) {
+                // Adverse: increasing leverage → timelock
+                _targetLtvTimelock.propose(v, PARAM_TIMELOCK_DELAY);
+                emit TargetLtvChangeProposed(targetLtv, v, block.timestamp + PARAM_TIMELOCK_DELAY);
+            } else {
+                // User-favorable: decreasing leverage → immediate
+                emit ParamUpdated(p, targetLtv, v);
+                targetLtv = v;
+            }
         } else if (p == 2) {
             emit ParamUpdated(p, depositCap, v);
             depositCap = v;
@@ -789,7 +971,55 @@ contract Zenji is ERC20, IERC4626 {
             maxSlippage = v;
             yieldStrategy.setSlippage(v);
             if (address(swapper) != address(0)) ISwapperSlippageConfig(address(swapper)).setSlippage(v);
+        } else {
+            revert InvalidParam();
         }
+    }
+
+    /// @notice Execute a pending feeRate or targetLtv change after PARAM_TIMELOCK_DELAY.
+    /// @param p 0 = feeRate, 1 = targetLtv
+    function executeParamChange(uint8 p) external onlyGov {
+        if (p == 0) {
+            uint256 newFee = _feeRateTimelock.execute();
+            // Re-validate at execution time in case MAX_FEE_RATE semantics change.
+            if (newFee > MAX_FEE_RATE) revert InvalidFeeRate();
+            // Accrue any outstanding fees at the OLD rate before applying the new rate,
+            // so the increase doesn't retroactively tax the un-checkpointed delta.
+            _accrueYieldFees();
+            emit ParamUpdated(p, feeRate, newFee);
+            feeRate = newFee;
+        } else if (p == 1) {
+            uint256 newLtv = _targetLtvTimelock.execute();
+            // Re-validate against current loan manager cap (could have moved during the delay).
+            if (newLtv < MIN_TARGET_LTV || newLtv > MAX_TARGET_LTV()) revert InvalidTargetLtv();
+            uint256 lmMaxBps = loanManager.maxLtvBps();
+            if (lmMaxBps != type(uint256).max && newLtv > lmMaxBps * 1e14) revert InvalidTargetLtv();
+            emit ParamUpdated(p, targetLtv, newLtv);
+            targetLtv = newLtv;
+        } else {
+            revert InvalidParam();
+        }
+    }
+
+    /// @notice Cancel a pending feeRate or targetLtv proposal.
+    /// @param p 0 = feeRate, 1 = targetLtv
+    function cancelParamChange(uint8 p) external onlyGov {
+        if (p == 0) {
+            uint256 cancelled = _feeRateTimelock.cancel();
+            emit FeeRateChangeCancelled(cancelled);
+        } else if (p == 1) {
+            uint256 cancelled = _targetLtvTimelock.cancel();
+            emit TargetLtvChangeCancelled(cancelled);
+        } else {
+            revert InvalidParam();
+        }
+    }
+
+    /// @notice View pending feeRate / targetLtv proposal state.
+    function pendingParamChange(uint8 p) external view returns (uint256 newValue, uint256 effectiveTime) {
+        if (p == 0) return (_feeRateTimelock.pendingValue, _feeRateTimelock.timestamp);
+        if (p == 1) return (_targetLtvTimelock.pendingValue, _targetLtvTimelock.timestamp);
+        revert InvalidParam();
     }
 
     // ============ View Functions ============
@@ -822,7 +1052,10 @@ contract Zenji is ERC20, IERC4626 {
 
     /// @notice Swap debt asset in the vault to collateral using swapper (if set)
     /// @param force If true, swap any positive debt balance (used on full unwind/final exits)
-    function _swapRemainingDebtToCollateral(bool force) internal {
+    /// @param slippageOverride Per-call slippage tolerance to use instead of `maxSlippage`.
+    ///        Pass `maxSlippage` (or 0 sentinel) for default behavior; pass a higher value
+    ///        to widen the floor for user-opted-in withdrawals.
+    function _swapRemainingDebtToCollateral(bool force, uint256 slippageOverride) internal {
         if (address(swapper) == address(0)) return;
 
         uint256 debtBal = debtAsset.balanceOf(address(this));
@@ -838,16 +1071,17 @@ contract Zenji is ERC20, IERC4626 {
         uint256 collateralReceived = collateralAfter - collateralBefore;
         if (!allowZeroOut) {
             uint256 oracleExpected = loanManager.getDebtValue(debtBal);
-            // Floor = max(swapper.slippage, maxSlippage*2).
+            // Floor = max(swapper.slippage, slippageOverride*2).
             // The swapper.slippage() term ensures we never reject a swap that the
             // swapper itself considers valid (e.g. a cbBTC swapper configured at 5%
             // would be falsely penalised by a 2% vault floor).
-            // The maxSlippage*2 term preserves the original oracle-path divergence
+            // The slippageOverride*2 term preserves the oracle-path divergence
             // buffer: loanManager.getDebtValue uses a direct oracle feed while the
             // swapper traverses a multi-hop path, so the two prices can differ by up
-            // to ~2×maxSlippage even on a fair swap.
+            // to ~2×slippage even on a fair swap.
+            uint256 baseSlip = slippageOverride == 0 ? maxSlippage : slippageOverride;
             uint256 swapperSlippage = ISwapperSlippageConfig(address(swapper)).slippage();
-            uint256 effectiveSlippage = swapperSlippage > maxSlippage * 2 ? swapperSlippage : maxSlippage * 2;
+            uint256 effectiveSlippage = swapperSlippage > baseSlip * 2 ? swapperSlippage : baseSlip * 2;
             uint256 minOut = (oracleExpected * (PRECISION - effectiveSlippage)) / PRECISION;
             if (collateralReceived < minOut) {
                 revert SwapperUnderperformed(minOut, collateralReceived);
@@ -894,10 +1128,16 @@ contract Zenji is ERC20, IERC4626 {
         emit Deposit(msg.sender, receiver, assets, sharesToMint);
     }
 
-    /// @notice Internal redeem logic shared by withdraw(), redeem(), and legacy withdraw()
+    /// @notice Internal redeem logic shared by withdraw(), redeem(), and overloaded variants.
+    /// @param minAssetsOut User-supplied minimum acceptable collateral out. Pass 0 to use
+    ///        the gov-set `maxSlippage` (existing default behavior). When > 0, the call
+    ///        widens internal slippage caps to (1 - minAssetsOut/expected) up to
+    ///        MAX_USER_SLIPPAGE, and reverts UserSlippageExceeded if the final amount
+    ///        falls below `minAssetsOut`. Emergency redemption ignores `minAssetsOut`
+    ///        because it does not unwind — distribution is pure pro-rata of vault balance.
     /// @return collateralAmount Amount of collateral returned
     /// @return actualShareAmount Amount of shares actually burned
-    function _redeem(uint256 shareAmount, address receiver, address owner_)
+    function _redeem(uint256 shareAmount, address receiver, address owner_, uint256 minAssetsOut)
         internal
         returns (uint256 collateralAmount, uint256 actualShareAmount)
     {
@@ -908,10 +1148,14 @@ contract Zenji is ERC20, IERC4626 {
         }
         if (emergencyMode) {
             (collateralAmount, actualShareAmount) = _redeemEmergency(shareAmount, receiver, owner_);
+            // Honor minAssetsOut floor even in emergency to make the API behavior consistent
+            if (minAssetsOut > 0 && collateralAmount < minAssetsOut) {
+                revert UserSlippageExceeded(minAssetsOut, collateralAmount);
+            }
             return (collateralAmount, actualShareAmount);
         }
 
-        (collateralAmount, actualShareAmount) = _redeemStandard(shareAmount, receiver, owner_);
+        (collateralAmount, actualShareAmount) = _redeemStandard(shareAmount, receiver, owner_, minAssetsOut);
         return (collateralAmount, actualShareAmount);
     }
 
@@ -952,7 +1196,7 @@ contract Zenji is ERC20, IERC4626 {
         return (collateralAmount, actualShareAmount);
     }
 
-    function _redeemStandard(uint256 shareAmount, address receiver, address owner_)
+    function _redeemStandard(uint256 shareAmount, address receiver, address owner_, uint256 minAssetsOut)
         internal
         returns (uint256 collateralAmount, uint256 actualShareAmount)
     {
@@ -973,10 +1217,16 @@ contract Zenji is ERC20, IERC4626 {
         actualShareAmount = isFinalWithdraw ? balanceOf(owner_) : shareAmount;
         collateralAmount = _calculateCollateralForShares(actualShareAmount);
 
+        // Compute the effective slippage to pass to internal unwind steps.
+        // - minAssetsOut == 0 → use maxSlippage (existing default behavior)
+        // - minAssetsOut > 0 → derive from user's tolerance; never tighter than maxSlippage,
+        //   capped above at MAX_USER_SLIPPAGE.
+        uint256 effectiveSlippage = _computeEffectiveSlippage(collateralAmount, minAssetsOut);
+
         _burn(owner_, actualShareAmount);
 
         if (isFinalWithdraw) {
-            _unwindPosition(type(uint256).max);
+            _unwindPosition(type(uint256).max, effectiveSlippage);
             collateralAmount = collateralAsset.balanceOf(address(this));
 
             if (collateralAmount > 0) {
@@ -1003,9 +1253,7 @@ contract Zenji is ERC20, IERC4626 {
                     }
                 }
 
-                uint256 balanceBefore = collateralAsset.balanceOf(address(this));
-
-                _unwindPosition(needed);
+                _unwindPosition(needed, effectiveSlippage);
 
                 uint256 balanceAfter = collateralAsset.balanceOf(address(this));
 
@@ -1030,9 +1278,10 @@ contract Zenji is ERC20, IERC4626 {
                 uint256 totalAvailable = balanceAfter;
                 if (totalAvailable < collateralAmount) {
                     // Even after re-pricing, if vault balance is insufficient
-                    // (e.g. dust rounding), allow slippage-adjusted withdrawal.
+                    // (e.g. dust rounding), allow slippage-adjusted withdrawal
+                    // bounded by the effective slippage tolerance.
                     uint256 minAcceptable =
-                        (collateralAmount * (PRECISION - maxSlippage)) / PRECISION;
+                        (collateralAmount * (PRECISION - effectiveSlippage)) / PRECISION;
                     if (totalAvailable < minAcceptable) {
                         revert InsufficientCollateral();
                     }
@@ -1043,7 +1292,34 @@ contract Zenji is ERC20, IERC4626 {
             collateralAsset.safeTransfer(receiver, collateralAmount);
         }
 
+        // Final user-slippage check — only enforced when the user opted in by passing minAssetsOut > 0.
+        if (minAssetsOut > 0 && collateralAmount < minAssetsOut) {
+            revert UserSlippageExceeded(minAssetsOut, collateralAmount);
+        }
+
         emit Withdraw(msg.sender, receiver, owner_, collateralAmount, actualShareAmount);
+    }
+
+    /// @notice Compute the effective per-call slippage tolerance to pass to internal unwind steps.
+    /// @dev When `minAssetsOut == 0`, returns `maxSlippage` (current default behavior).
+    ///      When `minAssetsOut >= expectedAssets`, the user is asking for tighter-than-default;
+    ///      we still pass `maxSlippage` to internal steps because a tighter cap would arbitrarily
+    ///      revert intermediate operations — the user's tighter tolerance is enforced by the
+    ///      final `UserSlippageExceeded` check after the unwind completes.
+    ///      When `minAssetsOut < expectedAssets`, we derive the implied slippage and use it
+    ///      (capped at MAX_USER_SLIPPAGE) so that internal steps tolerate the full amount the
+    ///      user has agreed to absorb.
+    function _computeEffectiveSlippage(uint256 expectedAssets, uint256 minAssetsOut)
+        internal
+        view
+        returns (uint256)
+    {
+        if (minAssetsOut == 0) return maxSlippage;
+        if (expectedAssets == 0 || minAssetsOut >= expectedAssets) return maxSlippage;
+        uint256 implied = ((expectedAssets - minAssetsOut) * PRECISION) / expectedAssets;
+        if (implied < maxSlippage) return maxSlippage;
+        if (implied > MAX_USER_SLIPPAGE) return MAX_USER_SLIPPAGE;
+        return implied;
     }
 
     /// @notice Accrue fees from yield strategy profits using checkpoint delta
@@ -1091,7 +1367,13 @@ contract Zenji is ERC20, IERC4626 {
     }
 
     /// @notice Withdraw debt asset from yield strategy
-    function _withdrawFromYieldStrategy(uint256 debtNeeded) internal returns (uint256) {
+    /// @param slippageOverride Per-call slippage tolerance. Pass `maxSlippage` for default behavior;
+    ///        pass a higher value to widen the floor for user-opted-in withdrawals.
+    function _withdrawFromYieldStrategy(
+        uint256 debtNeeded,
+        uint256 minDebtReceived,
+        uint256 slippageOverride
+    ) internal returns (uint256) {
         if (address(yieldStrategy) == address(0)) return 0;
         uint256 strategyBalance = yieldStrategy.balanceOf();
         if (strategyBalance == 0) return 0;
@@ -1102,7 +1384,13 @@ contract Zenji is ERC20, IERC4626 {
         uint256 received = 0;
         if (toWithdraw > 0) {
             received = yieldStrategy.withdraw(toWithdraw);
-            uint256 minReceived = (toWithdraw * (PRECISION - maxSlippage)) / PRECISION;
+            uint256 effectiveSlippage = slippageOverride == 0 ? maxSlippage : slippageOverride;
+            // When strategy is underfunded (toWithdraw < minDebtReceived), cap the floor at
+            // toWithdraw — the shortfall is 5%-buffer drift, resolved by rebalance(), not slippage.
+            uint256 floorBase = (minDebtReceived == 0 || toWithdraw < minDebtReceived)
+                ? toWithdraw
+                : minDebtReceived;
+            uint256 minReceived = (floorBase * (PRECISION - effectiveSlippage)) / PRECISION;
             if (received < minReceived) revert InsufficientWithdrawal();
         }
         lastStrategyBalance = yieldStrategy.balanceOf();
@@ -1111,7 +1399,10 @@ contract Zenji is ERC20, IERC4626 {
 
     /// @notice Unified position unwind for both partial and full withdrawals
     /// @param collateralNeeded Amount of collateral to free, or type(uint256).max for full close
-    function _unwindPosition(uint256 collateralNeeded) internal {
+    /// @param effectiveSlippage Slippage tolerance to use for internal strategy withdraw and
+    ///        debt→collateral swap. Pass `maxSlippage` for default behavior; pass a higher value
+    ///        to widen the floor for user-opted-in withdrawals.
+    function _unwindPosition(uint256 collateralNeeded, uint256 effectiveSlippage) internal {
         bool fullyClose = (collateralNeeded >= type(uint256).max);
 
         // 1. Accrue yield fees
@@ -1138,7 +1429,7 @@ contract Zenji is ERC20, IERC4626 {
                     // (e.g. PmUsd: LP → crvUSD → USDT) need headroom to cover
                     // swap slippage so the loan manager can repay proportional debt.
                     uint256 debtNeeded = (debtToRepay * 105) / 100;
-                    _withdrawFromYieldStrategy(debtNeeded);
+                    _withdrawFromYieldStrategy(debtNeeded, debtToRepay, effectiveSlippage);
                 }
             }
             debtBalance = debtAsset.balanceOf(address(this));
@@ -1157,7 +1448,7 @@ contract Zenji is ERC20, IERC4626 {
         if (lmDebtBalance > 0) {
             loanManager.transferDebt(address(this), lmDebtBalance);
         }
-        _swapRemainingDebtToCollateral(fullyClose);
+        _swapRemainingDebtToCollateral(fullyClose, effectiveSlippage);
 
         emit CapitalUnwound(collateralNeeded, collateralAsset.balanceOf(address(this)));
     }

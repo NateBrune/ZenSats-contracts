@@ -158,6 +158,15 @@ contract VerifyCH2_AaveSkipStrategistDrain is Test {
     uint256 constant COLLATERAL_DEPOSIT = 100e18;
     uint256 constant USDT_IN_STRATEGY = 65e6;
 
+    /// @notice Helper for the new 2-call emergencySkipStep timelock pattern.
+    function _emergencySkipStep(uint8 step) internal {
+        vm.prank(vault.guardian());
+        vault.emergencySkipStep(step);
+        vm.warp(block.timestamp + vault.EMERGENCY_SKIP_DELAY());
+        vm.prank(vault.guardian());
+        vault.emergencySkipStep(step);
+    }
+
     function setUp() public {
         collateral = new MockERC20CH2("WBTC", "WBTC", 18);
         usdt = new MockERC20CH2("USDT", "USDT", 6);
@@ -181,9 +190,12 @@ contract VerifyCH2_AaveSkipStrategistDrain is Test {
         );
         require(address(vault) == expectedVault, "vault address mismatch");
 
-        // Set fee rate (gov = owner)
+        // Set fee rate (gov = owner) — increase requires propose + execute
         vm.prank(owner);
         vault.setParam(0, 1e17); // 10% fee rate
+        vm.warp(block.timestamp + vault.PARAM_TIMELOCK_DELAY());
+        vm.prank(owner);
+        vault.executeParamChange(0);
 
         // Set idle so collateral stays in vault
         vm.prank(owner);
@@ -246,9 +258,9 @@ contract VerifyCH2_AaveSkipStrategistDrain is Test {
         console.log("Vault USDT after step 0:", vaultUsdtAfterStep0);
         assertGt(vaultUsdtAfterStep0, 0, "vault holds USDT from strategy withdrawal");
 
-        // Skip step 1 (WBTC stranded)
-        vault.emergencySkipStep(1);
         vm.stopPrank();
+        // Skip step 1 (WBTC stranded) — now requires 2-call timelock pattern
+        _emergencySkipStep(1);
 
         // ===== ATTACK: Strategist tries to drain USDT =====
         uint256 recipientBefore = usdt.balanceOf(feeRecipient);
@@ -305,11 +317,11 @@ contract VerifyCH2_AaveSkipStrategistDrain is Test {
         assertLe(feeDrained, feesBeforeEmergency, "can only take accumulatedFees");
 
         // Now continue emergency
-        vm.startPrank(owner);
+        vm.prank(owner);
         vault.emergencyStep(0);
-        vault.emergencySkipStep(1);
+        _emergencySkipStep(1);
+        vm.prank(owner);
         vault.emergencyStep(2);
-        vm.stopPrank();
 
         uint256 vaultUsdtForUsers = usdt.balanceOf(address(vault));
         uint256 totalRecovered = vaultUsdtForUsers + feeDrained;

@@ -105,6 +105,12 @@ contract ZenjiViewHelper {
         if (address(strategy) != address(0)) {
             uint256 strategyBalance = strategy.balanceOf();
             uint256 accFees = v.accumulatedFees();
+            // Include pending (unaccrued) fees so view stays accurate between accruals
+            uint256 lastBalance = v.lastStrategyBalance();
+            if (strategyBalance > lastBalance) {
+                accFees += (strategyBalance - lastBalance) * v.feeRate() / v.PRECISION();
+            }
+            if (accFees > strategyBalance) accFees = strategyBalance;
             if (strategyBalance > accFees) {
                 totalValue += lm.getDebtValue(strategyBalance - accFees);
             }
@@ -153,6 +159,12 @@ contract ZenjiViewHelper {
         if (address(strategy) != address(0)) {
             uint256 strategyBalance = strategy.balanceOf();
             uint256 accFees = v.accumulatedFees();
+            // Include pending (unaccrued) fees so view stays accurate between accruals
+            uint256 lastBalance = v.lastStrategyBalance();
+            if (strategyBalance > lastBalance) {
+                accFees += (strategyBalance - lastBalance) * v.feeRate() / v.PRECISION();
+            }
+            if (accFees > strategyBalance) accFees = strategyBalance;
             if (strategyBalance > accFees) {
                 totalValue += strategyBalance - accFees;
             }

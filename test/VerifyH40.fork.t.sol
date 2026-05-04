@@ -173,7 +173,14 @@ contract VerifyH40 is Test {
         // Step 1: Initial deposit to establish baseline
         vm.startPrank(user1);
         wbtc.approve(address(vault), type(uint256).max);
-        vault.deposit(5e8, user1);
+        try vault.deposit(5e8, user1) {} catch {
+            vm.stopPrank();
+            console.log("=== AAVE POOL EXHAUSTED ===");
+            console.log("Aave USDT borrow failed - pool utilisation at 100%%.");
+            console.log("Likely cause: WETH/USDT/USDC drained by the rsETH/LayerZero hack.");
+            console.log("Re-run once Aave liquidity normalises to execute H-40 verification.");
+            revert("[INFRA] Aave USDT pool at max utilisation - re-run when liquidity recovers");
+        }
         vm.stopPrank();
         vm.roll(block.number + 1);
 
@@ -347,7 +354,14 @@ contract VerifyH40 is Test {
     function test_H40_controlBaseline() public {
         vm.startPrank(user1);
         wbtc.approve(address(vault), type(uint256).max);
-        vault.deposit(5e8, user1);
+        try vault.deposit(5e8, user1) {} catch {
+            vm.stopPrank();
+            console.log("=== AAVE POOL EXHAUSTED ===");
+            console.log("Aave USDT borrow failed - pool utilisation at 100%%.");
+            console.log("Likely cause: WETH/USDT/USDC drained by the rsETH/LayerZero hack.");
+            console.log("Re-run once Aave liquidity normalises to execute H-40 verification.");
+            revert("[INFRA] Aave USDT pool at max utilisation - re-run when liquidity recovers");
+        }
         vm.stopPrank();
         vm.roll(block.number + 1);
 

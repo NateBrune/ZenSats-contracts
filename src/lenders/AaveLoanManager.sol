@@ -53,6 +53,11 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
     // Timelock state
     TimelockLib.AddressTimelockData internal _swapperTimelock;
 
+    // Reentrancy guard
+    uint256 private _status;
+    uint256 private constant _NOT_ENTERED = 1;
+    uint256 private constant _ENTERED = 2;
+
     // Aave risk params (basis points)
     uint256 public immutable maxLtvBps;
     uint256 public immutable liquidationThresholdBps;
@@ -77,6 +82,13 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
     modifier onlyVault() {
         if (msg.sender != vault) revert Unauthorized();
         _;
+    }
+
+    modifier nonReentrant() {
+        if (_status == _ENTERED) revert Unauthorized();
+        _status = _ENTERED;
+        _;
+        _status = _NOT_ENTERED;
     }
 
     // ============ Constructor ============
@@ -126,6 +138,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         if (_emodeCategory > 0) {
             aavePool.setUserEMode(_emodeCategory);
         }
+        _status = _NOT_ENTERED;
     }
 
     /// @notice Initializes the vault address exactly once.
@@ -279,7 +292,17 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
             if (variableDebtToken.balanceOf(address(this)) > 0) revert DebtNotFullyRepaid();
             aavePool.withdraw(address(collateralToken), type(uint256).max, vault);
         } else if (collateralNeeded > 0) {
-            aavePool.withdraw(address(collateralToken), collateralNeeded, vault);
+            // Cap at actual aToken balance: the vault sizes collateralNeeded from
+            // oracle-priced shares, which under price drift or rounding can exceed
+            // the LoanManager's real aToken position. Aave reverts with
+            // NotEnoughAvailableUserBalance (0x47bc4b2c) when amount > userBalance.
+            // Clamping returns whatever we actually have; the vault's re-pricing
+            // logic (Zenji._redeem) absorbs the shortfall against remaining shares.
+            uint256 available = aToken.balanceOf(address(this));
+            uint256 toWithdraw = collateralNeeded > available ? available : collateralNeeded;
+            if (toWithdraw > 0) {
+                aavePool.withdraw(address(collateralToken), toWithdraw, vault);
+            }
         }
 
         uint256 idleAfter = collateralToken.balanceOf(address(this));
@@ -295,7 +318,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         uint256 premium,
         address initiator,
         bytes calldata data
-    ) external override returns (bool) {
+    ) external override nonReentrant returns (bool) {
         // ── Access control ──
         if (msg.sender != address(aavePool)) revert Unauthorized();
         if (initiator != address(this)) revert Unauthorized();
@@ -349,7 +372,13 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         if (fullyClose) {
             aavePool.withdraw(address(collateralToken), type(uint256).max, address(this));
         } else if (collateralNeeded > 0) {
-            aavePool.withdraw(address(collateralToken), collateralNeeded, address(this));
+            // See clamp rationale in unwindPosition: Aave reverts with
+            // NotEnoughAvailableUserBalance (0x47bc4b2c) if amount > aToken balance.
+            uint256 available = aToken.balanceOf(address(this));
+            uint256 toWithdraw = collateralNeeded > available ? available : collateralNeeded;
+            if (toWithdraw > 0) {
+                aavePool.withdraw(address(collateralToken), toWithdraw, address(this));
+            }
         }
 
         // ── Step 3: Ensure we can repay the flash loan ──

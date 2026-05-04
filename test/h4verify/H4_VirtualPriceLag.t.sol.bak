@@ -165,7 +165,7 @@ contract H4_VirtualPriceLagTest is Test {
     MockRewardVaultH4 rewardVault;
     MockCrvSwapperH4 crvSwapper;
 
-    PmUsdCrvUsdStrategy strategy;
+    UsdtPmUsdCrvUsdStrategy strategy;
 
     address vaultAddr;
 

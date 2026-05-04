@@ -2,7 +2,7 @@
 pragma solidity ^0.8.33;
 
 import { Test } from "forge-std/Test.sol";
-import { PmUsdCrvUsdStrategy } from "../src/strategies/PmUsdCrvUsdStrategy.sol";
+import { UsdtPmUsdCrvUsdStrategy } from "../src/strategies/UsdtPmUsdCrvUsdStrategy.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { IAavePool } from "../src/interfaces/IAavePool.sol";
 import { IFlashLoanSimpleReceiver } from "../src/interfaces/IFlashLoanSimpleReceiver.sol";
@@ -165,16 +165,28 @@ contract H4_VirtualPriceLagTest is Test {
     MockRewardVaultH4 rewardVault;
     MockCrvSwapperH4 crvSwapper;
 
-    PmUsdCrvUsdStrategy strategy;
+    UsdtPmUsdCrvUsdStrategy strategy;
 
     address vaultAddr;
 
     function setUp() public {
-        usdt    = new MockERC20H4("USDT",  "USDT",  6);
-        crvUSD  = new MockERC20H4("crvUSD","crvUSD",18);
-        crv     = new MockERC20H4("CRV",   "CRV",   18);
-        pmUSD   = new MockERC20H4("pmUSD", "pmUSD", 18);
-        lpToken = new MockERC20H4("LP",    "LP",    18);
+        usdt    = new MockERC20H4("USDT", "USDT", 6);
+        lpToken = new MockERC20H4("LP",   "LP",   18);
+
+        // BasePmUsdCrvUsdStrategy declares crv, pmUSD, and CRVUSD as `public constant`
+        // singleton addresses rather than constructor parameters. The same three mainnet
+        // tokens are shared across all deployed strategy instances and are never expected
+        // to differ between deployments, so baking them in avoids 3 extra storage slots
+        // and eliminates misconfiguration risk. Unit tests that run without a mainnet fork
+        // must etch mock ERC20 bytecode at those addresses so calls like crv.balanceOf()
+        // don't revert with "call to non-contract". See UsdtPmUsdCrvUsdStrategy.t.sol.
+        bytes memory erc20Code = address(new MockERC20H4("x", "x", 18)).code;
+        vm.etch(0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E, erc20Code); // CRVUSD
+        vm.etch(0xD533a949740bb3306d119CC777fa900bA034cd52, erc20Code); // CRV
+        vm.etch(0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF, erc20Code); // pmUSD
+        crvUSD = MockERC20H4(0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E);
+        crv    = MockERC20H4(0xD533a949740bb3306d119CC777fa900bA034cd52);
+        pmUSD  = MockERC20H4(0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF);
 
         crvUsdOracle = new MockOracleH4(1e8); // $1.00
         usdtOracle   = new MockOracleH4(1e8); // $1.00
@@ -189,11 +201,8 @@ contract H4_VirtualPriceLagTest is Test {
         // Use address(this) as the vault for simplicity
         vaultAddr = address(this);
 
-        strategy = new PmUsdCrvUsdStrategy(
+        strategy = new UsdtPmUsdCrvUsdStrategy(
             address(usdt),
-            address(crvUSD),
-            address(crv),
-            address(pmUSD),
             vaultAddr,
             address(this),
             address(usdtCrvUsdPool),

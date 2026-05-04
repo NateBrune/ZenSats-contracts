@@ -390,7 +390,9 @@ library ZenjiCoreLib {
         if (strategyBalance > 0) {
             uint256 toWithdraw = toRepay > strategyBalance ? strategyBalance : toRepay;
             if (toWithdraw > 0) {
-                uint256 received = yieldStrategy.withdraw(toWithdraw);
+                uint256 withdrawRequest = (toWithdraw * 105) / 100;
+                if (withdrawRequest > strategyBalance) withdrawRequest = strategyBalance;
+                uint256 received = yieldStrategy.withdraw(withdrawRequest);
                 uint256 minReceived = (toWithdraw * (precision - maxSlippage)) / precision;
                 if (received < minReceived) revert InsufficientWithdrawal();
             }

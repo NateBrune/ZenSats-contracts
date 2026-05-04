@@ -4,7 +4,7 @@ pragma solidity ^0.8.33;
 import { Test, console } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
-import { PmUsdCrvUsdStrategy } from "../src/strategies/PmUsdCrvUsdStrategy.sol";
+import { UsdtPmUsdCrvUsdStrategy } from "../src/strategies/UsdtPmUsdCrvUsdStrategy.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { ILoanManager } from "../src/interfaces/ILoanManager.sol";
 import { ISwapper } from "../src/interfaces/ISwapper.sol";
@@ -583,7 +583,7 @@ contract PmUsdHandler is Test {
     IERC20 public wbtc;
     PmMockAccountant public accountant;
     PmMockLoanManager public loanManager;
-    PmUsdCrvUsdStrategy public strategy;
+    UsdtPmUsdCrvUsdStrategy public strategy;
 
     address[] public actors;
     uint256 public constant NUM_ACTORS = 4;
@@ -606,7 +606,7 @@ contract PmUsdHandler is Test {
         IERC20 _wbtc,
         PmMockAccountant _accountant,
         PmMockLoanManager _loanManager,
-        PmUsdCrvUsdStrategy _strategy
+        UsdtPmUsdCrvUsdStrategy _strategy
     ) {
         vault = _vault;
         wbtc = _wbtc;
@@ -762,7 +762,7 @@ contract PmUsdCrvUsdInvariantTest is Test {
     PmMockAccountant accountant;
     PmMockCrvSwapper crvSwapper;
 
-    PmUsdCrvUsdStrategy strategy;
+    UsdtPmUsdCrvUsdStrategy strategy;
     PmMockLoanManager loanManager;
     PmMockSwapper swapper;
 
@@ -809,11 +809,8 @@ contract PmUsdCrvUsdInvariantTest is Test {
         //               crvSwapper, gauge, usdtIndex, crvUsdIndex, lpCrvUsdIndex,
         //               crvUsdOracle, usdtOracle, crvOracle)
         // vault = address(0) for deferred initialization
-        strategy = new PmUsdCrvUsdStrategy(
+        strategy = new UsdtPmUsdCrvUsdStrategy(
             address(usdt),
-            address(crvUSD),
-            address(crv),
-            address(pmUsd),
             address(0), // deferred vault init
             owner,
             address(usdtCrvUsdPool),
@@ -844,9 +841,12 @@ contract PmUsdCrvUsdInvariantTest is Test {
         strategy.initializeVault(address(vault));
         loanManager.initializeVault(address(vault));
 
-        // Set fee rate
+        // Set fee rate — increase requires propose + execute (decentralization upgrade)
         vm.prank(owner);
         vault.setParam(0, 1e17); // 10% fee rate
+        vm.warp(block.timestamp + vault.PARAM_TIMELOCK_DELAY());
+        vm.prank(owner);
+        vault.executeParamChange(0);
 
         // Deploy handler
         handler = new PmUsdHandler(vault, IERC20(address(wbtc)), accountant, loanManager, strategy);

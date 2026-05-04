@@ -5,12 +5,11 @@ import "forge-std/Script.sol";
 import "forge-std/console2.sol";
 
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
-import { VaultTracker } from "../src/VaultTracker.sol";
 import { ZenjiRebalanceKeeper } from "../src/keepers/ZenjiRebalanceKeeper.sol";
 import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { PmUsdCrvUsdStrategy } from "../src/strategies/PmUsdCrvUsdStrategy.sol";
+import { UsdtPmUsdCrvUsdStrategy } from "../src/strategies/UsdtPmUsdCrvUsdStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { ZenjiWbtcPmUsd } from "../src/implementations/ZenjiWbtcPmUsd.sol";
 
@@ -74,11 +73,8 @@ contract DeployPmUsdWbtc is Script {
 
         int128 lpCrvUsdIndex = _lpCrvUsdIndex();
 
-        PmUsdCrvUsdStrategy strategy = new PmUsdCrvUsdStrategy(
+        UsdtPmUsdCrvUsdStrategy strategy = new UsdtPmUsdCrvUsdStrategy(
             USDT,
-            CRVUSD,
-            CRV,
-            PMUSD,
             address(0),
             gov,
             USDT_CRVUSD_POOL,
@@ -114,8 +110,6 @@ contract DeployPmUsdWbtc is Script {
             address(loanManager), address(strategy), address(swapper), owner, address(viewHelper)
         );
 
-        //VaultTracker vaultTracker = new VaultTracker(address(vault));
-
         ZenjiRebalanceKeeper rebalanceKeeper = new ZenjiRebalanceKeeper(address(vault), owner);
 
         loanManager.initializeVault(address(vault));
@@ -130,7 +124,6 @@ contract DeployPmUsdWbtc is Script {
         console2.log("LoanManager", address(loanManager));
         console2.log("Strategy", address(strategy));
         console2.log("Vault", address(vault));
-        //console2.log("VaultTracker", address(vaultTracker));
         console2.log("RebalanceKeeper", address(rebalanceKeeper));
     }
 

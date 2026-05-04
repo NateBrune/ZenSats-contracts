@@ -24,6 +24,14 @@ contract CurveTwoCryptoSwapper is BaseSwapper, ISwapper {
 
     uint256 public constant MAX_COLLATERAL_ORACLE_STALENESS = 3600;
     uint256 public constant MAX_DEBT_ORACLE_STALENESS = 90000;
+    /// @notice Maximum tolerated deviation between the pool quote and the oracle price.
+    ///         Accommodates collateral-asset discounts (e.g. WBTC vs BTC), Curve pool fees,
+    ///         bid/ask spread, and the ~6% natural gap between the Chainlink-based WstEthOracle
+    ///         and the LLAMMA AMM's EMA oracle (which lags real-time Chainlink by design).
+    ///         This is defense-in-depth: LlamaLoanManager enforces a tighter 95% output guard
+    ///         post-swap, which is the primary manipulation barrier.
+    ///         Above this threshold, the pool is likely manipulated or severely imbalanced.
+    uint256 public constant MAX_ORACLE_DEVIATION = 1e17; // 10%
 
     constructor(
         address _gov,
@@ -65,9 +73,8 @@ contract CurveTwoCryptoSwapper is BaseSwapper, ISwapper {
     {
         if (collateralAmount == 0) return 0;
         uint256 expectedOut = pool.get_dy(collateralIndex, debtIndex, collateralAmount);
-        uint256 minOut = (expectedOut * (PRECISION - slippage)) / PRECISION;
 
-        // Oracle floor
+        // Validate pool quote is within MAX_ORACLE_DEVIATION of oracle — revert if pool is far below oracle
         uint256 oracleExpected = OracleLib.getCollateralValue(
             collateralAmount,
             collateralOracle,
@@ -77,8 +84,11 @@ contract CurveTwoCryptoSwapper is BaseSwapper, ISwapper {
             collateralToken,
             debtToken
         );
-        uint256 oracleMinOut = (oracleExpected * (PRECISION - slippage)) / PRECISION;
-        if (oracleMinOut > minOut) minOut = oracleMinOut;
+        uint256 oracleFloor = (oracleExpected * (PRECISION - MAX_ORACLE_DEVIATION)) / PRECISION;
+        if (expectedOut < oracleFloor) revert SlippageExceeded();
+
+        // Use pool quote as minOut basis (front-run protection only)
+        uint256 minOut = (expectedOut * (PRECISION - slippage)) / PRECISION;
 
         collateralToken.ensureApproval(address(pool), collateralAmount);
         debtReceived =
@@ -92,9 +102,8 @@ contract CurveTwoCryptoSwapper is BaseSwapper, ISwapper {
     {
         if (debtAmount == 0) return 0;
         uint256 expectedOut = pool.get_dy(debtIndex, collateralIndex, debtAmount);
-        uint256 minOut = (expectedOut * (PRECISION - slippage)) / PRECISION;
 
-        // Oracle floor
+        // Validate pool quote is within MAX_ORACLE_DEVIATION of oracle — revert if pool is far below oracle
         uint256 oracleExpected = OracleLib.getDebtValue(
             debtAmount,
             collateralOracle,
@@ -104,8 +113,11 @@ contract CurveTwoCryptoSwapper is BaseSwapper, ISwapper {
             collateralToken,
             debtToken
         );
-        uint256 oracleMinOut = (oracleExpected * (PRECISION - slippage)) / PRECISION;
-        if (oracleMinOut > minOut) minOut = oracleMinOut;
+        uint256 oracleFloor = (oracleExpected * (PRECISION - MAX_ORACLE_DEVIATION)) / PRECISION;
+        if (expectedOut < oracleFloor) revert SlippageExceeded();
+
+        // Use pool quote as minOut basis (front-run protection only)
+        uint256 minOut = (expectedOut * (PRECISION - slippage)) / PRECISION;
 
         debtToken.ensureApproval(address(pool), debtAmount);
         collateralReceived =

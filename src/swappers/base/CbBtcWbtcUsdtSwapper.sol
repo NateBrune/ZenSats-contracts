@@ -88,7 +88,11 @@ contract CbBtcWbtcUsdtSwapper is BaseSwapper, ISwapper {
         if (collateralAmount == 0) return 0;
 
         uint256 expectedWbtc = _safeGetDyTwo(cbBtcIndex, wbtcIndex, collateralAmount);
-        uint256 minWbtc = expectedWbtc > 0 ? _applySlippageDown(expectedWbtc) : 0;
+        // When get_dy reverts (dust below pool quote threshold), the exchange would
+        // also revert. Skip rather than throw — vault's residual-swap paths tolerate
+        // a no-op swap and the dust input simply remains as collateral token.
+        if (expectedWbtc == 0) return 0;
+        uint256 minWbtc = _applySlippageDown(expectedWbtc);
         collateralToken.ensureApproval(address(cbBtcPool), collateralAmount);
         uint256 wbtcBefore = wbtcToken.balanceOf(address(this));
         _exchangeTwo(cbBtcIndex, wbtcIndex, collateralAmount, minWbtc, address(this));
@@ -140,7 +144,11 @@ contract CbBtcWbtcUsdtSwapper is BaseSwapper, ISwapper {
         if (wbtcReceived == 0) return 0;
 
         uint256 expectedCbBtc = _safeGetDyTwo(wbtcIndex, cbBtcIndex, wbtcReceived);
-        uint256 minCbBtc = expectedCbBtc > 0 ? _applySlippageDown(expectedCbBtc) : 0;
+        // Same dust-skip rationale as swapCollateralForDebt: if the pool can't
+        // quote the amount, the exchange will revert. WBTC stays in the swapper
+        // and is swept by the next operation.
+        if (expectedCbBtc == 0) return 0;
+        uint256 minCbBtc = _applySlippageDown(expectedCbBtc);
 
         // Oracle floor (end-to-end check across both hops)
         uint256 oracleExpected = OracleLib.getDebtValue(
