@@ -2,7 +2,7 @@
 pragma solidity ^0.8.33;
 
 import { Test } from "forge-std/Test.sol";
-import { UsdtPmUsdCrvUsdStrategy } from "../../src/strategies/UsdtPmUsdCrvUsdStrategy.sol";
+import { UsdtPmUsdCrvUsdStakeDaoStrategy } from "../../src/strategies/lp/UsdtPmUsdCrvUsdStakeDaoStrategy.sol";
 import { IERC20 } from "../../src/interfaces/IERC20.sol";
 import { IAavePool } from "../../src/interfaces/IAavePool.sol";
 import { IFlashLoanSimpleReceiver } from "../../src/interfaces/IFlashLoanSimpleReceiver.sol";
@@ -165,7 +165,7 @@ contract H4_VirtualPriceLagTest is Test {
     MockRewardVaultH4 rewardVault;
     MockCrvSwapperH4 crvSwapper;
 
-    UsdtPmUsdCrvUsdStrategy strategy;
+    UsdtPmUsdCrvUsdStakeDaoStrategy strategy;
 
     address vaultAddr;
 
@@ -179,7 +179,7 @@ contract H4_VirtualPriceLagTest is Test {
         // to differ between deployments, so baking them in avoids 3 extra storage slots
         // and eliminates misconfiguration risk. Unit tests that run without a mainnet fork
         // must etch mock ERC20 bytecode at those addresses so calls like crv.balanceOf()
-        // don't revert with "call to non-contract". See UsdtPmUsdCrvUsdStrategy.t.sol.
+        // don't revert with "call to non-contract". See UsdtPmUsdCrvUsdStakeDaoStrategy.t.sol.
         bytes memory erc20Code = address(new MockERC20H4("x", "x", 18)).code;
         vm.etch(0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E, erc20Code); // CRVUSD
         vm.etch(0xD533a949740bb3306d119CC777fa900bA034cd52, erc20Code); // CRV
@@ -201,7 +201,7 @@ contract H4_VirtualPriceLagTest is Test {
         // Use address(this) as the vault for simplicity
         vaultAddr = address(this);
 
-        strategy = new UsdtPmUsdCrvUsdStrategy(
+        strategy = new UsdtPmUsdCrvUsdStakeDaoStrategy(
             address(usdt),
             vaultAddr,
             address(this),

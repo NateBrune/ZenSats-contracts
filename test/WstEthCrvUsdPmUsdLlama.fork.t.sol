@@ -2,15 +2,15 @@
 pragma solidity ^0.8.33;
 
 import { console } from "forge-std/Test.sol";
-import { ZenjiForkTestBase } from "./base/ZenjiForkTestBase.sol";
-import { ZenjiWstEthCrvUsdPmUsd } from "../src/implementations/ZenjiWstEthCrvUsdPmUsd.sol";
+import { LlamaSecurityTestMixin } from "./base/LlamaSecurityTestMixin.sol";
+import { ZenjiWstEthLlamaStakeDao } from "../src/implementations/stakedao/ZenjiWstEthLlamaStakeDao.sol";
 import { LlamaLoanManager } from "../src/lenders/LlamaLoanManager.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { WstEthOracle } from "../src/WstEthOracle.sol";
 import { UniswapMixedCurveSwapper } from "../src/swappers/base/UniswapMixedCurveSwapper.sol";
 import { ICurveTriCrypto } from "../src/interfaces/ICurveTriCrypto.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
-import { PmUsdCrvUsdStrategy } from "../src/strategies/PmUsdCrvUsdStrategy.sol";
+import { PmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/PmUsdCrvUsdStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
@@ -20,7 +20,7 @@ import { Zenji } from "../src/Zenji.sol";
 
 /// @title WstEthCrvUsdPmUsdLlama
 /// @notice Fork tests for wstETH + crvUSD + pmUSD/crvUSD (Stake DAO) strategy on LlamaLend
-contract WstEthCrvUsdPmUsdLlama is ZenjiForkTestBase {
+contract WstEthCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
     address constant WSTETH = 0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0;
     address constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
     address constant CRV = 0xD533a949740bb3306d119CC777fa900bA034cd52;
@@ -50,7 +50,7 @@ contract WstEthCrvUsdPmUsdLlama is ZenjiForkTestBase {
     WstEthOracle public wstEthOracle;
     UniswapMixedCurveSwapper public swapper;
     CrvToCrvUsdSwapper public crvSwapper;
-    PmUsdCrvUsdStrategy public strategy;
+    PmUsdCrvUsdStakeDaoStrategy public strategy;
     LlamaLoanManager public llamaManager;
 
     // ============ Abstract implementations ============
@@ -64,7 +64,7 @@ contract WstEthCrvUsdPmUsdLlama is ZenjiForkTestBase {
     }
 
     function _tinyDeposit() internal pure override returns (uint256) {
-        return 3e15; // 0.003 wstETH — matches ZenjiWstEthCrvUsdPmUsd.MIN_DEPOSIT
+        return 3e15; // 0.003 wstETH — matches ZenjiWstEthLlamaStakeDao.MIN_DEPOSIT
     }
 
     function _oracleList() internal pure override returns (address[] memory) {
@@ -123,6 +123,10 @@ contract WstEthCrvUsdPmUsdLlama is ZenjiForkTestBase {
         }
     }
 
+    function setUp() public override {
+        super.setUp();
+    }
+
     function _deployVaultContracts() internal override {
         uint256 startNonce = vm.getNonce(address(this));
         // Deploy order: wstEthOracle(+0), crvSwapper(+1), swapper(+2),
@@ -153,7 +157,7 @@ contract WstEthCrvUsdPmUsdLlama is ZenjiForkTestBase {
             3600 // wstETH/USD oracle max staleness: 1 hour
         );
 
-        strategy = new PmUsdCrvUsdStrategy(
+        strategy = new PmUsdCrvUsdStakeDaoStrategy(
             CRVUSD,
             address(0), // vault initialised separately via initializeVault
             owner,
@@ -177,7 +181,7 @@ contract WstEthCrvUsdPmUsdLlama is ZenjiForkTestBase {
             address(0) // vault initialised separately via initializeVault
         );
 
-        ZenjiWstEthCrvUsdPmUsd vault_ = new ZenjiWstEthCrvUsdPmUsd(
+        ZenjiWstEthLlamaStakeDao vault_ = new ZenjiWstEthLlamaStakeDao(
             address(llamaManager), address(strategy), address(swapper), owner, address(viewHelper)
         );
         require(address(vault_) == expectedVaultAddress, "Vault address mismatch");
@@ -379,7 +383,7 @@ contract WstEthCrvUsdPmUsdLlama is ZenjiForkTestBase {
         _depositAs(user1, _unit());
 
         assertGt(strategy.balanceOf(), 0, "Strategy should report balance");
-        uint256 rvShares = strategy.rewardVault().balanceOf(address(strategy));
+        uint256 rvShares = strategy.stakingVault().balanceOf(address(strategy));
         assertGt(rvShares, 0, "Reward vault should hold shares");
     }
 

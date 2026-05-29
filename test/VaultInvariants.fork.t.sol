@@ -3,10 +3,10 @@ pragma solidity ^0.8.33;
 
 import { Test, console } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
-import { ZenjiWbtcPmUsd } from "../src/implementations/ZenjiWbtcPmUsd.sol";
+import { ZenjiWbtcAaveStakeDao } from "../src/implementations/stakedao/ZenjiWbtcAaveStakeDao.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { UsdtPmUsdCrvUsdStrategy } from "../src/strategies/UsdtPmUsdCrvUsdStrategy.sol";
+import { UsdtPmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/UsdtPmUsdCrvUsdStakeDaoStrategy.sol";
 import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
@@ -149,7 +149,7 @@ contract VaultInvariants is Test {
             lpCrvUsdIndex = (coin0 == CRVUSD) ? int128(0) : int128(1);
         }
 
-        UsdtPmUsdCrvUsdStrategy strat = new UsdtPmUsdCrvUsdStrategy(
+        UsdtPmUsdCrvUsdStakeDaoStrategy strat = new UsdtPmUsdCrvUsdStakeDaoStrategy(
             address(IERC20(USDT)), address(0), owner,
             USDT_CRVUSD_POOL, PMUSD_CRVUSD_POOL,
             STAKE_DAO_VAULT, address(crvSwapper),
@@ -169,7 +169,7 @@ contract VaultInvariants is Test {
             3600
         );
 
-        ZenjiWbtcPmUsd v = new ZenjiWbtcPmUsd(
+        ZenjiWbtcAaveStakeDao v = new ZenjiWbtcAaveStakeDao(
             address(lm), address(strat), address(swapper), owner, address(viewHelper)
         );
 

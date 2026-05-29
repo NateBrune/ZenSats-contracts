@@ -6,7 +6,7 @@ import { ZenjiForkTestBase } from "./base/ZenjiForkTestBase.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { CbBtcWbtcUsdtSwapper } from "../src/swappers/base/CbBtcWbtcUsdtSwapper.sol";
-import { UsdtIporYieldStrategy } from "../src/strategies/UsdtIporYieldStrategy.sol";
+import { UsdtIporStrategy } from "../src/strategies/vault/UsdtIporStrategy.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { SafeTransferLib } from "../src/libraries/SafeTransferLib.sol";
 import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
@@ -41,7 +41,7 @@ contract M11_CbBtcWbtcUsdtSwapper_multi_hop_slippage is ZenjiForkTestBase {
     address constant CURVE_USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
 
     CbBtcWbtcUsdtSwapper public swapper;
-    UsdtIporYieldStrategy public strategy;
+    UsdtIporStrategy public strategy;
 
     function _collateral() internal pure override returns (address) {
         return CBBTC;
@@ -52,7 +52,8 @@ contract M11_CbBtcWbtcUsdtSwapper_multi_hop_slippage is ZenjiForkTestBase {
     }
 
     function _tinyDeposit() internal pure override returns (uint256) {
-        return 1e6;
+        // 0.1 BTC — the 2-hop cbBTC/WBTC pool rejects dust amounts below this threshold
+        return 1e7;
     }
 
     function _oracleList() internal pure override returns (address[] memory) {
@@ -121,7 +122,7 @@ contract M11_CbBtcWbtcUsdtSwapper_multi_hop_slippage is ZenjiForkTestBase {
             3600
         );
 
-        strategy = new UsdtIporYieldStrategy(
+        strategy = new UsdtIporStrategy(
             USDT,
             CRVUSD,
             address(0),

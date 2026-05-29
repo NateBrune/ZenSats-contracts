@@ -11,9 +11,9 @@ import { CurveThreeCryptoSwapper } from "../src/swappers/base/CurveThreeCryptoSw
 import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { BaseSwapper } from "../src/swappers/base/BaseSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
-import { UsdtIporYieldStrategy } from "../src/strategies/UsdtIporYieldStrategy.sol";
-import { IporYieldStrategy } from "../src/strategies/IporYieldStrategy.sol";
-import { UsdtPmUsdCrvUsdStrategy } from "../src/strategies/UsdtPmUsdCrvUsdStrategy.sol";
+import { UsdtIporStrategy } from "../src/strategies/vault/UsdtIporStrategy.sol";
+import { CrvUsdIporStrategy } from "../src/strategies/vault/CrvUsdIporStrategy.sol";
+import { UsdtPmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/UsdtPmUsdCrvUsdStakeDaoStrategy.sol";
 import { ILoanManager } from "../src/interfaces/ILoanManager.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
@@ -189,7 +189,7 @@ contract ProtocolSmokeTests is Test {
         );
 
         // Deploy yield strategy
-        UsdtIporYieldStrategy strategy = new UsdtIporYieldStrategy(
+        UsdtIporStrategy strategy = new UsdtIporStrategy(
             USDT,
             CRVUSD,
             expectedVaultAddress,
@@ -311,7 +311,7 @@ contract ProtocolSmokeTests is Test {
             3_600
         );
 
-        UsdtPmUsdCrvUsdStrategy strategy = new UsdtPmUsdCrvUsdStrategy(
+        UsdtPmUsdCrvUsdStakeDaoStrategy strategy = new UsdtPmUsdCrvUsdStakeDaoStrategy(
             USDT,
             expectedVaultAddress,
             owner,
@@ -423,8 +423,8 @@ contract ProtocolSmokeTests is Test {
         );
 
         // Deploy yield strategy
-        IporYieldStrategy strategy =
-            new IporYieldStrategy(CRVUSD, expectedVaultAddress, IPOR_PLASMA_VAULT);
+        CrvUsdIporStrategy strategy =
+            new CrvUsdIporStrategy(CRVUSD, expectedVaultAddress, IPOR_PLASMA_VAULT);
 
         // Deploy loan manager
         LlamaLoanManager loanManager = new LlamaLoanManager(
@@ -512,8 +512,8 @@ contract ProtocolSmokeTests is Test {
             owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE
         );
 
-        IporYieldStrategy strategy =
-            new IporYieldStrategy(CRVUSD, expectedVaultAddress, IPOR_PLASMA_VAULT);
+        CrvUsdIporStrategy strategy =
+            new CrvUsdIporStrategy(CRVUSD, expectedVaultAddress, IPOR_PLASMA_VAULT);
 
         LlamaLoanManager loanManager = new LlamaLoanManager(
             WBTC,
@@ -572,8 +572,8 @@ contract ProtocolSmokeTests is Test {
             owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE
         );
 
-        IporYieldStrategy strategy =
-            new IporYieldStrategy(CRVUSD, expectedVaultAddress, IPOR_PLASMA_VAULT);
+        CrvUsdIporStrategy strategy =
+            new CrvUsdIporStrategy(CRVUSD, expectedVaultAddress, IPOR_PLASMA_VAULT);
 
         LlamaLoanManager loanManager = new LlamaLoanManager(
             WBTC,

@@ -11,7 +11,7 @@ import { ILoanManager } from "../src/interfaces/ILoanManager.sol";
 import { ILlamaLendController } from "../src/interfaces/ILlamaLendController.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
 import { ISwapper } from "../src/interfaces/ISwapper.sol";
-import { IporYieldStrategy } from "../src/strategies/IporYieldStrategy.sol";
+import { CrvUsdIporStrategy } from "../src/strategies/vault/CrvUsdIporStrategy.sol";
 import { TimelockLib } from "../src/libraries/TimelockLib.sol";
 import { ERC4626 } from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -463,6 +463,25 @@ contract MockYieldStrategy is IYieldStrategy {
                 warpAndMock(block.timestamp + vault.EMERGENCY_SKIP_DELAY());
                 vm.prank(vault.guardian());
                 vault.emergencySkipStep(step);
+            }
+
+            function _setRescueRecipient(address addr) internal {
+                vm.prank(vault.gov());
+                vault.proposeRescueRecipient(addr);
+                warpAndMock(block.timestamp + vault.TIMELOCK_DELAY());
+                vm.prank(vault.gov());
+                vault.executeRescueRecipient();
+            }
+
+            function _setBountyRate(uint256 newRate) internal {
+                uint256 cur = vault.rebalanceBountyRate();
+                vm.prank(vault.gov());
+                vault.setParam(3, newRate);
+                if (newRate > cur) {
+                    warpAndMock(block.timestamp + vault.PARAM_TIMELOCK_DELAY());
+                    vm.prank(vault.gov());
+                    vault.executeParamChange(3);
+                }
             }
 
             /// @notice Mock yield vault for testing (IPOR vault is at capacity)
@@ -1287,6 +1306,7 @@ contract MockYieldStrategy is IYieldStrategy {
             }
 
             function test_rescueAssets_revertsOnZeroRecipient() public {
+                _setRescueRecipient(owner);
                 vm.prank(owner);
                 vault.enterEmergencyMode();
 
@@ -2420,6 +2440,8 @@ contract MockYieldStrategy is IYieldStrategy {
                 warpAndMock(block.timestamp + 2);
                 mockOracle(85000e8);
 
+                _setRescueRecipient(owner);
+
                 vm.startPrank(owner);
                 vault.enterEmergencyMode();
                 vault.emergencyStep(0);
@@ -2438,6 +2460,8 @@ contract MockYieldStrategy is IYieldStrategy {
 
                 warpAndMock(block.timestamp + 2);
                 mockOracle(85000e8);
+
+                _setRescueRecipient(owner);
 
                 vm.startPrank(owner);
                 vault.enterEmergencyMode();
@@ -2714,6 +2738,8 @@ contract MockYieldStrategy is IYieldStrategy {
                 address USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
                 deal(USDT, address(vault), 1000e6);
 
+                _setRescueRecipient(owner);
+
                 vm.startPrank(owner);
                 vault.enterEmergencyMode();
 
@@ -2728,6 +2754,8 @@ contract MockYieldStrategy is IYieldStrategy {
             function test_rescueAssets_revertsForDebtAsset() public {
                 deal(CRVUSD, address(vault), 1000e18);
 
+                _setRescueRecipient(owner);
+
                 vm.startPrank(owner);
                 vault.enterEmergencyMode();
 
@@ -2738,6 +2766,8 @@ contract MockYieldStrategy is IYieldStrategy {
 
             function test_rescueAssets_revertsForCollateralAsset() public {
                 deal(WBTC, address(vault), 1e8);
+
+                _setRescueRecipient(owner);
 
                 vm.startPrank(owner);
                 vault.enterEmergencyMode();
@@ -2770,16 +2800,15 @@ contract MockYieldStrategy is IYieldStrategy {
             }
 
             function test_setParam_bountyRate_edgeCases() public {
-                vm.startPrank(owner);
-                // Test zero bounty rate
+                vm.prank(owner);
+                // Test zero bounty rate — decrease from default 0 is a no-op, immediate
                 vault.setParam(3, 0);
                 assertEq(vault.rebalanceBountyRate(), 0, "Bounty rate should be set to 0");
 
-                // Test maximum bounty rate — now 50% (decentralization upgrade lowered cap)
+                // Test maximum bounty rate — increase requires timelock
                 uint256 maxBounty = vault.MAX_REBALANCE_BOUNTY();
-                vault.setParam(3, maxBounty);
+                _setBountyRate(maxBounty);
                 assertEq(vault.rebalanceBountyRate(), maxBounty, "Bounty rate should be set to max");
-                vm.stopPrank();
             }
 
             function test_getTotalCollateral_idleMode() public {
@@ -3673,6 +3702,8 @@ contract MockYieldStrategy is IYieldStrategy {
                 // Deploy a random token
                 address randomToken = address(new MockYieldVault(CRVUSD));
 
+                _setRescueRecipient(owner);
+
                 vm.startPrank(owner);
                 vault.enterEmergencyMode();
                 vault.rescueAssets(randomToken, owner);
@@ -4239,7 +4270,7 @@ contract MockYieldStrategy is IYieldStrategy {
             function test_decentral_executeParamChange_invalidParam_reverts() public {
                 vm.prank(owner);
                 vm.expectRevert(Zenji.InvalidParam.selector);
-                vault.executeParamChange(2); // only 0 and 1 supported
+                vault.executeParamChange(5); // 0-4 are valid params; 5+ is invalid
             }
 
             function test_decentral_setParam_invalidParam_reverts() public {

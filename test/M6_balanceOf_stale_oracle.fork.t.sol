@@ -7,7 +7,7 @@ import { Zenji } from "../src/Zenji.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
-import { UsdtPmUsdCrvUsdStrategy } from "../src/strategies/UsdtPmUsdCrvUsdStrategy.sol";
+import { UsdtPmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/UsdtPmUsdCrvUsdStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
@@ -17,7 +17,7 @@ import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
 /// @title M6_balanceOf_stale_oracle
 /// @notice PoC for M6: balanceOf() reverts on stale oracle (USDT variant only)
 /// @dev Demonstrates that when the USDT/USD or crvUSD/USD oracle goes stale,
-///      UsdtPmUsdCrvUsdStrategy.balanceOf() reverts with StaleOrInvalidOracle(),
+///      UsdtPmUsdCrvUsdStakeDaoStrategy.balanceOf() reverts with StaleOrInvalidOracle(),
 ///      breaking vault withdraw() and external consumers.
 contract M6_balanceOf_stale_oracle is ZenjiForkTestBase {
     using SafeTransferLib for IERC20;
@@ -47,7 +47,7 @@ contract M6_balanceOf_stale_oracle is ZenjiForkTestBase {
 
     UniversalRouterV3SingleHopSwapper public swapper;
     CrvToCrvUsdSwapper public crvSwapper;
-    UsdtPmUsdCrvUsdStrategy public strategy;
+    UsdtPmUsdCrvUsdStakeDaoStrategy public strategy;
 
     // ============ Abstract implementations ============
 
@@ -114,7 +114,7 @@ contract M6_balanceOf_stale_oracle is ZenjiForkTestBase {
             3_600
         );
 
-        strategy = new UsdtPmUsdCrvUsdStrategy(
+        strategy = new UsdtPmUsdCrvUsdStakeDaoStrategy(
             USDT,
             expectedVaultAddress,
             owner,

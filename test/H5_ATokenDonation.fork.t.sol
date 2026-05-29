@@ -6,7 +6,7 @@ import { ZenjiForkTestBase } from "./base/ZenjiForkTestBase.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
-import { UsdtIporYieldStrategy } from "../src/strategies/UsdtIporYieldStrategy.sol";
+import { UsdtIporStrategy } from "../src/strategies/vault/UsdtIporStrategy.sol";
 import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { IAavePool } from "../src/interfaces/IAavePool.sol";
@@ -78,7 +78,7 @@ contract H5_ATokenDonation is ZenjiForkTestBase {
             owner, WBTC, USDT, UNIVERSAL_ROUTER, WBTC_USDT_V3_FEE, BTC_USD_ORACLE, USDT_USD_ORACLE, 3_600
         );
 
-        UsdtIporYieldStrategy strategy = new UsdtIporYieldStrategy(
+        UsdtIporStrategy strategy = new UsdtIporStrategy(
             USDT,
             CRVUSD,
             expectedVaultAddress,

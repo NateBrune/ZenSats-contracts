@@ -2,7 +2,7 @@
 pragma solidity ^0.8.33;
 
 import { Test, console } from "forge-std/Test.sol";
-import { UsdtPmUsdCrvUsdStrategy } from "../src/strategies/UsdtPmUsdCrvUsdStrategy.sol";
+import { UsdtPmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/UsdtPmUsdCrvUsdStakeDaoStrategy.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { ERC4626 } from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -303,7 +303,7 @@ contract StratMockCrvSwapper {
 // ============ Handler ============
 
 contract PmUsdStrategyHandler is Test {
-    UsdtPmUsdCrvUsdStrategy public strategy;
+    UsdtPmUsdCrvUsdStakeDaoStrategy public strategy;
     StratMockUSDT public usdt;
     StratMockAccountant public accountant;
     StratMockRewardVault public rewardVault;
@@ -325,7 +325,7 @@ contract PmUsdStrategyHandler is Test {
     uint256 public calls_setSlippage;
 
     constructor(
-        UsdtPmUsdCrvUsdStrategy _strategy,
+        UsdtPmUsdCrvUsdStakeDaoStrategy _strategy,
         StratMockUSDT _usdt,
         StratMockAccountant _accountant,
         StratMockRewardVault _rewardVault,
@@ -446,7 +446,7 @@ contract PmUsdCrvUsdStrategyInvariantTest is Test {
     StratMockAccountant accountant;
     StratMockCrvSwapper crvSwapper;
 
-    UsdtPmUsdCrvUsdStrategy strategy;
+    UsdtPmUsdCrvUsdStakeDaoStrategy strategy;
     PmUsdStrategyHandler handler;
 
     function setUp() public {
@@ -473,8 +473,8 @@ contract PmUsdCrvUsdStrategyInvariantTest is Test {
         // Deploy mock Stake DAO reward vault
         rewardVault = new StratMockRewardVault(address(lpToken), address(accountant));
 
-        // Deploy real PmUsdCrvUsdStrategy with mockVault as vault
-        strategy = new UsdtPmUsdCrvUsdStrategy(
+        // Deploy real PmUsdCrvUsdStakeDaoStrategy with mockVault as vault
+        strategy = new UsdtPmUsdCrvUsdStakeDaoStrategy(
             address(usdt),
             mockVault,
             address(this),

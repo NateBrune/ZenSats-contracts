@@ -39,7 +39,7 @@ import { Test } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { UsdtPmUsdCrvUsdStrategy } from "../src/strategies/UsdtPmUsdCrvUsdStrategy.sol";
+import { UsdtPmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/UsdtPmUsdCrvUsdStakeDaoStrategy.sol";
 import { IAavePool } from "../src/interfaces/IAavePool.sol";
 import { IFlashLoanSimpleReceiver } from "../src/interfaces/IFlashLoanSimpleReceiver.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
@@ -367,7 +367,7 @@ contract VerifyH7_CrvOracleDoS is Test {
     H7MockAavePool aavePool;
 
     AaveLoanManager loanManager;
-    UsdtPmUsdCrvUsdStrategy strategy;
+    UsdtPmUsdCrvUsdStakeDaoStrategy strategy;
     Zenji vault;
     ZenjiViewHelper viewHelper;
 
@@ -392,7 +392,7 @@ contract VerifyH7_CrvOracleDoS is Test {
         // to differ between deployments, so baking them in avoids 3 extra storage slots
         // and eliminates misconfiguration risk. Unit tests that run without a mainnet fork
         // must etch mock ERC20 bytecode at those addresses so calls like crv.balanceOf()
-        // don't revert with "call to non-contract". See UsdtPmUsdCrvUsdStrategy.t.sol.
+        // don't revert with "call to non-contract". See UsdtPmUsdCrvUsdStakeDaoStrategy.t.sol.
         bytes memory erc20Code = address(new H7MockERC20("x", "x", 18)).code;
         vm.etch(0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E, erc20Code); // CRVUSD
         vm.etch(0xD533a949740bb3306d119CC777fa900bA034cd52, erc20Code); // CRV
@@ -447,7 +447,7 @@ contract VerifyH7_CrvOracleDoS is Test {
             3600
         );
 
-        strategy = new UsdtPmUsdCrvUsdStrategy(
+        strategy = new UsdtPmUsdCrvUsdStakeDaoStrategy(
             address(usdt),
             predictedVault,
             owner,

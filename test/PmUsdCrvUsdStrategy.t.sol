@@ -5,7 +5,7 @@ import { Test } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { PmUsdCrvUsdStrategy } from "../src/strategies/PmUsdCrvUsdStrategy.sol";
+import { PmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/PmUsdCrvUsdStakeDaoStrategy.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
 import { IAavePool } from "../src/interfaces/IAavePool.sol";
 import { IFlashLoanSimpleReceiver } from "../src/interfaces/IFlashLoanSimpleReceiver.sol";
@@ -286,7 +286,7 @@ contract MockAavePool is IAavePool {
 
 // ============ Test Contract ============
 
-/// @notice Unit tests for crvUSD-native PmUsdCrvUsdStrategy (no USDT swap layer)
+/// @notice Unit tests for crvUSD-native PmUsdCrvUsdStakeDaoStrategy (no USDT swap layer)
 contract PmUsdCrvUsdStrategyTest is Test {
     // Tokens
     MockERC20 wbtc;
@@ -310,7 +310,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
 
     // Protocol contracts
     AaveLoanManager loanManager;
-    PmUsdCrvUsdStrategy strategy;
+    PmUsdCrvUsdStakeDaoStrategy strategy;
     Zenji vault;
     ZenjiViewHelper viewHelper;
 
@@ -380,7 +380,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
             3600
         );
 
-        strategy = new PmUsdCrvUsdStrategy(
+        strategy = new PmUsdCrvUsdStakeDaoStrategy(
             address(crvUSD), // _crvUsd
             predictedVault, // _vault
             owner, // _owner
@@ -661,7 +661,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
 
     function test_constructor_zero_owner_reverts() public {
         vm.expectRevert();
-        new PmUsdCrvUsdStrategy(
+        new PmUsdCrvUsdStakeDaoStrategy(
             address(crvUSD),
             address(lpPool),  // vault (any non-zero)
             address(0),       // owner = 0 → should revert

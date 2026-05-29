@@ -4,7 +4,7 @@ pragma solidity ^0.8.33;
 import { Test, console } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
-import { UsdtPmUsdCrvUsdStrategy } from "../src/strategies/UsdtPmUsdCrvUsdStrategy.sol";
+import { UsdtPmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/UsdtPmUsdCrvUsdStakeDaoStrategy.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { ILoanManager } from "../src/interfaces/ILoanManager.sol";
 import { ISwapper } from "../src/interfaces/ISwapper.sol";
@@ -583,7 +583,7 @@ contract PmUsdHandler is Test {
     IERC20 public wbtc;
     PmMockAccountant public accountant;
     PmMockLoanManager public loanManager;
-    UsdtPmUsdCrvUsdStrategy public strategy;
+    UsdtPmUsdCrvUsdStakeDaoStrategy public strategy;
 
     address[] public actors;
     uint256 public constant NUM_ACTORS = 4;
@@ -606,7 +606,7 @@ contract PmUsdHandler is Test {
         IERC20 _wbtc,
         PmMockAccountant _accountant,
         PmMockLoanManager _loanManager,
-        UsdtPmUsdCrvUsdStrategy _strategy
+        UsdtPmUsdCrvUsdStakeDaoStrategy _strategy
     ) {
         vault = _vault;
         wbtc = _wbtc;
@@ -734,8 +734,8 @@ contract PmUsdHandler is Test {
 // ============ Invariant Test Contract ============
 
 /// @title PmUsdCrvUsdInvariantTest
-/// @notice Fork-free stateful fuzz testing for Zenji vault with PmUsdCrvUsdStrategy.
-/// Uses the real PmUsdCrvUsdStrategy against mock Curve pools, Stake DAO vault,
+/// @notice Fork-free stateful fuzz testing for Zenji vault with PmUsdCrvUsdStakeDaoStrategy.
+/// Uses the real PmUsdCrvUsdStakeDaoStrategy against mock Curve pools, Stake DAO vault,
 /// and oracle contracts. Verifies deposit, withdraw, rebalance, and harvest
 /// invariants across random operation sequences by multiple concurrent users.
 contract PmUsdCrvUsdInvariantTest is Test {
@@ -762,7 +762,7 @@ contract PmUsdCrvUsdInvariantTest is Test {
     PmMockAccountant accountant;
     PmMockCrvSwapper crvSwapper;
 
-    UsdtPmUsdCrvUsdStrategy strategy;
+    UsdtPmUsdCrvUsdStakeDaoStrategy strategy;
     PmMockLoanManager loanManager;
     PmMockSwapper swapper;
 
@@ -804,12 +804,12 @@ contract PmUsdCrvUsdInvariantTest is Test {
         wbtc.mint(address(swapper), 1e20);
         usdt.mint(address(swapper), 1e20);
 
-        // Deploy real PmUsdCrvUsdStrategy
+        // Deploy real PmUsdCrvUsdStakeDaoStrategy
         // Constructor: (usdt, crvUsd, crv, pmUsd, vault, usdtCrvUsdPool, lpPool, rewardVault,
         //               crvSwapper, gauge, usdtIndex, crvUsdIndex, lpCrvUsdIndex,
         //               crvUsdOracle, usdtOracle, crvOracle)
         // vault = address(0) for deferred initialization
-        strategy = new UsdtPmUsdCrvUsdStrategy(
+        strategy = new UsdtPmUsdCrvUsdStakeDaoStrategy(
             address(usdt),
             address(0), // deferred vault init
             owner,

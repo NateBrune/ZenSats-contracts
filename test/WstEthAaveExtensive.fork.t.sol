@@ -1,19 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import { ZenjiForkTestBase } from "./base/ZenjiForkTestBase.sol";
+import { IporVaultStrategyTestBase } from "./base/IporVaultStrategyTestBase.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UniswapV3TwoHopSwapper } from "../src/swappers/base/UniswapV3TwoHopSwapper.sol";
-import { BaseSwapper } from "../src/swappers/base/BaseSwapper.sol";
 import { WstEthOracle } from "../src/WstEthOracle.sol";
-import { UsdtIporYieldStrategy } from "../src/strategies/UsdtIporYieldStrategy.sol";
-import { TimelockLib } from "../src/libraries/TimelockLib.sol";
+import { UsdtIporStrategy } from "../src/strategies/vault/UsdtIporStrategy.sol";
 import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
 
 /// @title WstEthAaveExtensive
 /// @notice Fork tests for wstETH + USDT + IPOR (Aave) vault configuration
-contract WstEthAaveExtensive is ZenjiForkTestBase {
+contract WstEthAaveExtensive is IporVaultStrategyTestBase {
     address constant WSTETH = 0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0;
     address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     address constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
@@ -22,7 +20,6 @@ contract WstEthAaveExtensive is ZenjiForkTestBase {
     address constant AAVE_A_WSTETH = 0x0B925eD163218f6662a35e0f0371Ac234f9E9371;
     address constant AAVE_VAR_DEBT_USDT = 0x6df1C1E379bC5a00a7b4C6e67A203333772f45A8;
 
-    address constant IPOR_PLASMA_VAULT = 0xbfA9d6EC0E04B6691fCAE5F8b48838C3918eC117;
     address constant USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
 
     address constant UNISWAP_ROUTER = 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45;
@@ -31,13 +28,10 @@ contract WstEthAaveExtensive is ZenjiForkTestBase {
 
     address constant STETH_ETH_ORACLE = 0x86392dC19c0b719886221c78AB11eb8Cf5c52812;
     address constant ETH_USD_ORACLE = 0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419;
-    address constant USDT_USD_ORACLE = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
-    address constant CRVUSD_USD_ORACLE = 0xEEf0C605546958c1f899b6fB336C20671f9cD49F;
-
     UniswapV3TwoHopSwapper public swapper;
     WstEthOracle public wstEthOracle;
 
-    // ============ Abstract implementations ============
+    // ============ ZenjiForkTestBase hook implementations ============
 
     function _collateral() internal pure override returns (address) {
         return WSTETH;
@@ -76,8 +70,6 @@ contract WstEthAaveExtensive is ZenjiForkTestBase {
         return 25e18;
     }
 
-    // ============ Vault deployment ============
-
     function _deployVaultContracts() internal override {
         wstEthOracle = new WstEthOracle(WSTETH, STETH_ETH_ORACLE, ETH_USD_ORACLE);
 
@@ -85,53 +77,25 @@ contract WstEthAaveExtensive is ZenjiForkTestBase {
         address expectedVaultAddress = computeCreateAddress(address(this), startNonce + 3);
 
         swapper = new UniswapV3TwoHopSwapper(
-            owner,
-            WSTETH,
-            USDT,
-            WETH,
-            UNISWAP_ROUTER,
-            FEE_WSTETH_WETH,
-            FEE_WETH_USDT,
-            address(wstEthOracle),
-            USDT_USD_ORACLE,
-            3_600
+            owner, WSTETH, USDT, WETH, UNISWAP_ROUTER, FEE_WSTETH_WETH, FEE_WETH_USDT,
+            address(wstEthOracle), USDT_USD_ORACLE, 3_600
         );
 
-        UsdtIporYieldStrategy strategy = new UsdtIporYieldStrategy(
-            USDT,
-            CRVUSD,
-            expectedVaultAddress,
-            USDT_CRVUSD_POOL,
-            IPOR_PLASMA_VAULT,
-            0,
-            1,
-            CRVUSD_USD_ORACLE,
-            USDT_USD_ORACLE
+        UsdtIporStrategy strategy = new UsdtIporStrategy(
+            USDT, CRVUSD, expectedVaultAddress, USDT_CRVUSD_POOL, IPOR_PLASMA_VAULT, 0, 1,
+            CRVUSD_USD_ORACLE, USDT_USD_ORACLE
         );
+        strategy.transferOwner(owner);
 
         loanManager = new AaveLoanManager(
-            WSTETH,
-            USDT,
-            AAVE_A_WSTETH,
-            AAVE_VAR_DEBT_USDT,
-            AAVE_POOL,
-            address(wstEthOracle),
-            USDT_USD_ORACLE,
-            address(swapper),
-            7100,
-            7600,
-            expectedVaultAddress,
+            WSTETH, USDT, AAVE_A_WSTETH, AAVE_VAR_DEBT_USDT, AAVE_POOL, address(wstEthOracle),
+            USDT_USD_ORACLE, address(swapper), 7100, 7600, expectedVaultAddress,
             0, // eMode: disabled
             3600
         );
 
         vault = new Zenji(
-            WSTETH,
-            USDT,
-            address(loanManager),
-            address(strategy),
-            address(swapper),
-            owner,
+            WSTETH, USDT, address(loanManager), address(strategy), address(swapper), owner,
             address(viewHelper)
         );
         require(address(vault) == expectedVaultAddress, "Vault address mismatch");
@@ -141,75 +105,50 @@ contract WstEthAaveExtensive is ZenjiForkTestBase {
         yieldStrategy = strategy;
     }
 
-    // ============ Swapper-Specific Tests ============
+    // ============ ZenjiStrategyTestBase hook implementations ============
 
-    function test_swapperTimelock() public {
-        _deployVault();
-        _depositAs(user1, _baseDeposit());
-
-        UniswapV3TwoHopSwapper newSwapper = new UniswapV3TwoHopSwapper(
-            owner,
-            WSTETH,
-            USDT,
-            WETH,
-            UNISWAP_ROUTER,
-            FEE_WSTETH_WETH,
-            FEE_WETH_USDT,
-            address(wstEthOracle),
-            USDT_USD_ORACLE,
-            3_600
+    function _newSwapper() internal override returns (address) {
+        return address(
+            new UniswapV3TwoHopSwapper(
+                owner, WSTETH, USDT, WETH, UNISWAP_ROUTER, FEE_WSTETH_WETH, FEE_WETH_USDT,
+                address(wstEthOracle), USDT_USD_ORACLE, 3_600
+            )
         );
-
-        vm.prank(vault.gov());
-        vault.proposeSwapper(address(newSwapper));
-
-        vm.prank(vault.gov());
-        vm.expectRevert(TimelockLib.TimelockNotReady.selector);
-        vault.executeSwapper();
-
-        vm.warp(block.timestamp + 1 weeks + 1);
-        _syncAndMockOracles();
-
-        vm.prank(vault.gov());
-        vault.executeSwapper();
-        assertEq(address(vault.swapper()), address(newSwapper), "Swapper should be updated");
-
-        UniswapV3TwoHopSwapper anotherSwapper = new UniswapV3TwoHopSwapper(
-            owner,
-            WSTETH,
-            USDT,
-            WETH,
-            UNISWAP_ROUTER,
-            FEE_WSTETH_WETH,
-            FEE_WETH_USDT,
-            address(wstEthOracle),
-            USDT_USD_ORACLE,
-            3_600
-        );
-        vm.prank(vault.gov());
-        vault.proposeSwapper(address(anotherSwapper));
-
-        vm.prank(vault.gov());
-        vault.cancelSwapper();
-
-        vm.prank(vault.gov());
-        vm.expectRevert(TimelockLib.NoTimelockPending.selector);
-        vault.executeSwapper();
     }
 
-    function test_setSlippage() public {
-        _deployVault();
+    function _initialSwapperSlippage() internal pure override returns (uint256) {
+        return 1e16;
+    }
 
-        assertEq(swapper.slippage(), 1e16, "Initial slippage should be 1%");
+    function _largeDepositAmount() internal pure override returns (uint256) {
+        return 50e18; // 50 wstETH
+    }
 
-        // Unauthorized caller cannot set slippage
-        vm.prank(makeAddr("stranger"));
-        vm.expectRevert(BaseSwapper.Unauthorized.selector);
-        swapper.setSlippage(10e16);
+    function _oneMillionAmount() internal pure override returns (uint256) {
+        return 250e18; // 250 wstETH ~ $1M
+    }
 
-        // Gov can set slippage directly
-        vm.prank(owner);
-        swapper.setSlippage(10e16);
-        assertEq(swapper.slippage(), 10e16, "Slippage should be 10%");
+    function _oneMillionLabel() internal pure override returns (string memory) {
+        return "250 wstETH (~$1M)";
+    }
+
+    function _ratioTestSmallAmount() internal pure override returns (uint256) {
+        return 1e17; // 0.1 wstETH
+    }
+
+    function _tvlChunk() internal pure override returns (uint256) {
+        return 50e18; // 50 wstETH
+    }
+
+    function _tvlMinChunk() internal pure override returns (uint256) {
+        return 1e17; // 0.1 wstETH
+    }
+
+    function _tvlIterCap() internal pure override returns (uint256) {
+        return 200;
+    }
+
+    function _tvlLabel() internal pure override returns (string memory) {
+        return "wstETH Aave TVL(USDT 6d)=";
     }
 }

@@ -95,7 +95,9 @@ contract CbBtcWbtcUsdtSwapper is BaseSwapper, ISwapper {
         uint256 minWbtc = _applySlippageDown(expectedWbtc);
         collateralToken.ensureApproval(address(cbBtcPool), collateralAmount);
         uint256 wbtcBefore = wbtcToken.balanceOf(address(this));
-        _exchangeTwo(cbBtcIndex, wbtcIndex, collateralAmount, minWbtc, address(this));
+        if (!_exchangeTwo(cbBtcIndex, wbtcIndex, collateralAmount, minWbtc, address(this))) {
+            return 0;
+        }
         uint256 wbtcAfter = wbtcToken.balanceOf(address(this));
         uint256 wbtcReceived = wbtcAfter > wbtcBefore ? wbtcAfter - wbtcBefore : 0;
 
@@ -104,7 +106,8 @@ contract CbBtcWbtcUsdtSwapper is BaseSwapper, ISwapper {
         uint256 expectedUsdt = _safeGetDyThree(triWbtcIndex, triUsdtIndex, wbtcReceived);
         uint256 minUsdt = expectedUsdt > 0 ? _applySlippageDown(expectedUsdt) : 0;
 
-        // Oracle floor (end-to-end check across both hops)
+        // Oracle floor: apply slippage twice — once per hop — so the 2-hop compound
+        // loss (≈ (1-s)^2) is accommodated rather than the 1-hop (1-s) floor.
         uint256 oracleExpected = OracleLib.getCollateralValue(
             collateralAmount,
             collateralOracle,
@@ -115,6 +118,7 @@ contract CbBtcWbtcUsdtSwapper is BaseSwapper, ISwapper {
             debtToken
         );
         uint256 oracleMinOut = (oracleExpected * (PRECISION - slippage)) / PRECISION;
+        oracleMinOut = (oracleMinOut * (PRECISION - slippage)) / PRECISION;
         if (oracleMinOut > minUsdt) minUsdt = oracleMinOut;
 
         wbtcToken.ensureApproval(address(triCryptoPool), wbtcReceived);
@@ -150,7 +154,8 @@ contract CbBtcWbtcUsdtSwapper is BaseSwapper, ISwapper {
         if (expectedCbBtc == 0) return 0;
         uint256 minCbBtc = _applySlippageDown(expectedCbBtc);
 
-        // Oracle floor (end-to-end check across both hops)
+        // Oracle floor: apply slippage twice — once per hop — so the 2-hop compound
+        // loss (≈ (1-s)^2) is accommodated rather than the 1-hop (1-s) floor.
         uint256 oracleExpected = OracleLib.getDebtValue(
             debtAmount,
             collateralOracle,
@@ -161,11 +166,14 @@ contract CbBtcWbtcUsdtSwapper is BaseSwapper, ISwapper {
             debtToken
         );
         uint256 oracleMinOut = (oracleExpected * (PRECISION - slippage)) / PRECISION;
+        oracleMinOut = (oracleMinOut * (PRECISION - slippage)) / PRECISION;
         if (oracleMinOut > minCbBtc) minCbBtc = oracleMinOut;
 
         wbtcToken.ensureApproval(address(cbBtcPool), wbtcReceived);
         uint256 cbBtcBefore = collateralToken.balanceOf(address(this));
-        _exchangeTwo(wbtcIndex, cbBtcIndex, wbtcReceived, minCbBtc, address(this));
+        if (!_exchangeTwo(wbtcIndex, cbBtcIndex, wbtcReceived, minCbBtc, address(this))) {
+            return 0; // WBTC stays as residual in swapper, swept on next operation
+        }
         uint256 cbBtcAfter = collateralToken.balanceOf(address(this));
         collateralReceived = cbBtcAfter > cbBtcBefore ? cbBtcAfter - cbBtcBefore : 0;
         if (collateralReceived > 0) {
@@ -218,19 +226,23 @@ contract CbBtcWbtcUsdtSwapper is BaseSwapper, ISwapper {
         amountOut = abi.decode(data, (uint256));
     }
 
+    /// @return ok true if the exchange succeeded; false if it failed (dust below pool minimum).
+    ///         Callers MUST check the return value — a false return means the input tokens
+    ///         were NOT consumed (EVM atomicity: exchange reverted before transfer completed).
     function _exchangeTwo(uint256 i, uint256 j, uint256 dx, uint256 minOut, address receiver)
         private
+        returns (bool ok)
     {
         try cbBtcPool.exchange(i, j, dx, minOut, receiver) {
-            return;
-        } catch {
-            try ICurveTwoCryptoInt128(address(cbBtcPool))
-                .exchange(int128(int256(i)), int128(int256(j)), dx, minOut, receiver) {
-                return;
-            } catch {
-                revert TransferFailed();
-            }
-        }
+            return true;
+        } catch { }
+        try ICurveTwoCryptoInt128(address(cbBtcPool))
+            .exchange(int128(int256(i)), int128(int256(j)), dx, minOut, receiver) {
+            return true;
+        } catch { }
+        // Both selectors failed (e.g. dust below pool minimum precision). Tokens were NOT
+        // transferred — EVM reverted before any transfer. Caller treats as a no-op.
+        return false;
     }
 
     function _exchangeThree(

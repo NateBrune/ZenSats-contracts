@@ -3,7 +3,7 @@ pragma solidity ^0.8.33;
 
 import { Test, console } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
-import { ZenjiWbtcPmUsd } from "../src/implementations/ZenjiWbtcPmUsd.sol";
+import { ZenjiWbtcAaveStakeDao } from "../src/implementations/stakedao/ZenjiWbtcAaveStakeDao.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
 import { ILoanManager } from "../src/interfaces/ILoanManager.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
@@ -90,7 +90,7 @@ contract SlippageSocialization is Test {
         vm.stopPrank();
     }
 
-    /// @notice Deploy a fresh ZenjiWbtcPmUsd with local (modified) code
+    /// @notice Deploy a fresh ZenjiWbtcAaveStakeDao with local (modified) code
     ///         and etch its runtime bytecode onto the deployed vault address.
     ///         Storage slots are preserved so existing strategy/LM state works.
     function _patchVaultCode() internal {
@@ -108,8 +108,8 @@ contract SlippageSocialization is Test {
             abi.encode(address(0))
         );
 
-        // Deploy modified ZenjiWbtcPmUsd at a temporary address
-        ZenjiWbtcPmUsd patched = new ZenjiWbtcPmUsd(
+        // Deploy modified ZenjiWbtcAaveStakeDao at a temporary address
+        ZenjiWbtcAaveStakeDao patched = new ZenjiWbtcAaveStakeDao(
             _lm, _strat, _swapper, _owner, _viewHelper
         );
 

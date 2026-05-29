@@ -19,6 +19,20 @@ interface ISwapperSlippageConfig {
     function slippage() external view returns (uint256);
 }
 
+/// @dev Minimal accessor for strategy owner. Defined inline so we don't widen IYieldStrategy
+///      (which would require updating every mock in the test tree).
+interface IStrategyOwner {
+    function owner() external view returns (address);
+}
+
+/// @dev Minimal swapper-rotation surface on the loan manager. Same rationale: keep ILoanManager
+///      stable and avoid mock churn.
+interface ILoanManagerSwapperRotation {
+    function proposeSwapper(address newSwapper) external;
+    function executeSwapper() external;
+    function cancelSwapper() external;
+}
+
 
 /// @title Zenji
 /// @notice ERC4626-compliant conservative collateral yield vault using loan managers and yield strategies
@@ -107,6 +121,22 @@ contract Zenji is ERC20, IERC4626 {
     TimelockLib.TimelockData internal _feeRateTimelock;
     /// @notice Pending targetLtv change (only used for adverse i.e. increasing changes)
     TimelockLib.TimelockData internal _targetLtvTimelock;
+    /// @notice Pending bountyRate / depositCap / maxSlippage increases (adverse changes).
+    /// Decreases (or depositCap → 0 which is user-favourable in the pause sense) remain immediate.
+    TimelockLib.TimelockData internal _bountyRateTimelock;
+    TimelockLib.TimelockData internal _depositCapTimelock;
+    TimelockLib.TimelockData internal _maxSlippageTimelock;
+    /// @notice Pending change to `rescueRecipient` (gov-set, timelocked address).
+    TimelockLib.AddressTimelockData internal _rescueRecipientTimelock;
+
+    /// @notice Guardian-set flag that blocks NEW deposits but leaves withdrawals open.
+    /// Separate from `emergencyMode` (one-way liquidation) and `depositCap=0` (overloaded with TVL cap).
+    bool public depositsPaused;
+
+    /// @notice Pre-set recipient for guardian-triggered `rescueAssets`. Setting this
+    /// removes the "guardian picks where stuck funds go" surface. Gov-managed with 1-week timelock.
+    /// Zero is sentinel for "not configured" — rescueAssets reverts until gov initialises.
+    address public rescueRecipient;
     /// @notice Pending emergencySkipStep timestamps. Index 0 = step 0 (yield withdraw),
     /// index 1 = step 1 (loan unwind). Zero means no pending skip.
     uint256[2] public pendingSkipTimestamp;
@@ -142,8 +172,23 @@ contract Zenji is ERC20, IERC4626 {
     // Fee/LTV change events use ParamUpdated above
     event FeeRateChangeProposed(uint256 currentFeeRate, uint256 newFeeRate, uint256 effectiveTime);
     event TargetLtvChangeProposed(uint256 currentLtv, uint256 newLtv, uint256 effectiveTime);
+    event BountyRateChangeProposed(uint256 currentRate, uint256 newRate, uint256 effectiveTime);
+    event DepositCapChangeProposed(uint256 currentCap, uint256 newCap, uint256 effectiveTime);
+    event MaxSlippageChangeProposed(
+        uint256 currentSlippage, uint256 newSlippage, uint256 effectiveTime
+    );
+    event DepositsPaused();
+    event DepositsResumed();
+    event RescueRecipientChangeProposed(
+        address indexed currentRecipient, address indexed newRecipient, uint256 effectiveTime
+    );
+    event RescueRecipientUpdated(address indexed oldRecipient, address indexed newRecipient);
+    event RescueRecipientChangeCancelled(address indexed cancelledRecipient);
     event FeeRateChangeCancelled(uint256 cancelledValue);
     event TargetLtvChangeCancelled(uint256 cancelledValue);
+    event BountyRateChangeCancelled(uint256 cancelledValue);
+    event DepositCapChangeCancelled(uint256 cancelledValue);
+    event MaxSlippageChangeCancelled(uint256 cancelledValue);
     event RoleTransferCancelled(uint8 indexed role, address indexed cancelledAddress);
     event EmergencySkipStepProposed(uint8 indexed step, uint256 effectiveTime);
     event EmergencySkipCancelled(uint8 indexed step);
@@ -195,6 +240,8 @@ contract Zenji is ERC20, IERC4626 {
     error StrategyDebtCoverageTooLow(uint256 currentRatio, uint256 minRatio);
     error ActionDelayActive();
     error InvalidParam();
+    error DepositsArePaused();
+    error RescueRecipientNotSet();
     error EmergencyStepInProgress();
     /// @notice Thrown when a user-supplied minAssetsOut floor is not met after unwind.
     error UserSlippageExceeded(uint256 minOut, uint256 actual);
@@ -267,6 +314,15 @@ contract Zenji is ERC20, IERC4626 {
         if (stratVault != address(0) && stratVault != address(this)) {
             revert InvalidStrategy();
         }
+        // NOTE: enforcing `strategy.owner == _owner` at construction would close the
+        // "two different keys" risk on the strategy-side governance surface (LP exit-discount
+        // knob, rescueERC20) — but it requires every deployment script and test fixture to
+        // call `strategy.transferOwner(_owner)` before this constructor runs. That's a
+        // larger migration than the other operational fixes in this change set. The check
+        // is preserved as a view (`verifyStrategyOwnership()` below) for operational
+        // monitoring; production deployments should call it post-deploy and alert on
+        // mismatch. A future PR can promote this to a hard revert once all deploy paths
+        // are updated to transfer ownership pre-vault.
         yieldStrategy = IYieldStrategy(_yieldStrategy);
         strategist = _owner;
         gov = _owner;
@@ -281,6 +337,20 @@ contract Zenji is ERC20, IERC4626 {
         _status = _NOT_ENTERED;
 
         // Loan manager is provided externally and immutable for this vault
+    }
+
+    /// @notice Returns true iff `yieldStrategy.owner() == gov`. Off-chain monitoring should
+    ///         call this post-deploy and on any role transfer; a `false` result means the
+    ///         strategy-side governance surface (LP exit-discount knob, rescueERC20) is
+    ///         controlled by a key different from `vault.gov` — a single-point-of-failure
+    ///         that defeats the multi-role guarantee. Returns false on revert (strategy
+    ///         without `owner()`) so callers do not need to wrap in try/catch.
+    function verifyStrategyOwnership() external view returns (bool) {
+        try IStrategyOwner(address(yieldStrategy)).owner() returns (address stratOwner) {
+            return stratOwner == gov;
+        } catch {
+            return false;
+        }
     }
 
     // ============ ERC4626 Required Functions ============
@@ -652,25 +722,31 @@ contract Zenji is ERC20, IERC4626 {
 
     // ============ Gov Functions ============
 
-    /// @notice Propose a new swapper contract (requires timelock)
-    /// @dev Gov-only. 1-week timelock for critical infrastructure changes.
+    /// @notice Propose a new swapper contract (requires timelock).
+    /// @dev Gov-only. 1-week timelock for critical infrastructure changes. The proposal
+    ///      is mirrored on the loan manager so that the loan-manager-side swapper
+    ///      (used by the Aave flash-unwind path) stays in lockstep with the vault.
     function proposeSwapper(address newSwapper) external onlyGov {
         if (newSwapper == address(0)) revert InvalidAddress();
         if (newSwapper == address(swapper)) revert InvalidAddress();
         _swapperTimelock.proposeAddress(newSwapper, TIMELOCK_DELAY);
+        ILoanManagerSwapperRotation(address(loanManager)).proposeSwapper(newSwapper);
         emit SwapperChangeProposed(address(swapper), newSwapper, _swapperTimelock.timestamp);
     }
 
-    /// @notice Execute pending swapper change after timelock
+    /// @notice Execute pending swapper change after timelock. Updates both the vault's
+    ///         own swapper reference and the loan manager's reference atomically.
     function executeSwapper() external onlyGov {
         address oldSwapper = address(swapper);
         swapper = ISwapper(_swapperTimelock.executeAddress());
+        ILoanManagerSwapperRotation(address(loanManager)).executeSwapper();
         emit SwapperUpdated(oldSwapper, address(swapper));
     }
 
-    /// @notice Cancel pending swapper change
+    /// @notice Cancel pending swapper change (cancels both vault and loan manager).
     function cancelSwapper() external onlyGov {
         address cancelled = _swapperTimelock.cancelAddress();
+        ILoanManagerSwapperRotation(address(loanManager)).cancelSwapper();
         emit SwapperChangeCancelled(cancelled);
     }
 
@@ -782,6 +858,7 @@ contract Zenji is ERC20, IERC4626 {
     ///      during the 1-week timelock window.
     function guardianCancelSwapper() external onlyGuardian {
         address cancelled = _swapperTimelock.cancelAddress();
+        ILoanManagerSwapperRotation(address(loanManager)).cancelSwapper();
         emit SwapperChangeCancelled(cancelled);
     }
 
@@ -896,10 +973,61 @@ contract Zenji is ERC20, IERC4626 {
         emit EmergencyModeCancelled();
     }
 
-    /// @notice Rescue stuck tokens from the vault (emergency mode only)
-    /// @dev Cannot rescue collateral after liquidation — that belongs to shareholders
+    // ============ Deposit pause (guardian fast, gov slow) ============
+
+    /// @notice Guardian-set flag that blocks new deposits without entering emergency mode.
+    ///         Withdrawals continue normally. Provides a non-permanent "pause" lever for
+    ///         security incidents that do not require full liquidation.
+    function pauseDeposits() external onlyGuardian {
+        if (depositsPaused) return;
+        depositsPaused = true;
+        emit DepositsPaused();
+    }
+
+    /// @notice Gov clears the pause. Asymmetric authority by design — fast set, slow clear
+    ///         means a compromised guardian can grief deposits but cannot drain anything,
+    ///         and gov retains the final say on resumption.
+    function resumeDeposits() external onlyGov {
+        if (!depositsPaused) return;
+        depositsPaused = false;
+        emit DepositsResumed();
+    }
+
+    // ============ Rescue recipient (gov, timelocked) ============
+
+    /// @notice Propose a new pre-set recipient for guardian-triggered `rescueAssets`.
+    ///         Timelocked (TIMELOCK_DELAY = 1 week) so a compromised gov cannot redirect
+    ///         rescued funds without observability. Setting to a fresh address is required
+    ///         before `rescueAssets` becomes usable.
+    function proposeRescueRecipient(address newRecipient) external onlyGov {
+        if (newRecipient == address(0)) revert InvalidAddress();
+        _rescueRecipientTimelock.proposeAddress(newRecipient, TIMELOCK_DELAY);
+        emit RescueRecipientChangeProposed(
+            rescueRecipient, newRecipient, _rescueRecipientTimelock.timestamp
+        );
+    }
+
+    function executeRescueRecipient() external onlyGov {
+        address oldRecipient = rescueRecipient;
+        rescueRecipient = _rescueRecipientTimelock.executeAddress();
+        emit RescueRecipientUpdated(oldRecipient, rescueRecipient);
+    }
+
+    function cancelRescueRecipient() external onlyGov {
+        address cancelled = _rescueRecipientTimelock.cancelAddress();
+        emit RescueRecipientChangeCancelled(cancelled);
+    }
+
+    /// @notice Rescue stuck tokens from the vault (emergency mode only).
+    /// @dev Cannot rescue collateral or debt assets — those belong to shareholders.
+    ///      The `recipient` argument must equal the pre-set, gov-timelocked
+    ///      `rescueRecipient`. This removes the "guardian picks the destination"
+    ///      attack surface while keeping the function signature backwards-compatible.
+    ///      Gov must call propose/executeRescueRecipient before this is usable.
     function rescueAssets(address token, address recipient) external onlyGuardian {
         if (!emergencyMode) revert EmergencyModeNotActive();
+        if (rescueRecipient == address(0)) revert RescueRecipientNotSet();
+        if (recipient != rescueRecipient) revert InvalidAddress();
         ZenjiCoreLib.executeRescueAssets(token, recipient, collateralAsset, debtAsset);
     }
 
@@ -959,25 +1087,51 @@ contract Zenji is ERC20, IERC4626 {
                 targetLtv = v;
             }
         } else if (p == 2) {
-            emit ParamUpdated(p, depositCap, v);
-            depositCap = v;
+            // depositCap: raising the cap is user-favourable (more room); lowering it is
+            // adverse to depositors who counted on the headroom and is the same surface
+            // that depositsPaused targets. Timelock the decrease, keep increase instant.
+            if (v < depositCap) {
+                _depositCapTimelock.propose(v, PARAM_TIMELOCK_DELAY);
+                emit DepositCapChangeProposed(depositCap, v, block.timestamp + PARAM_TIMELOCK_DELAY);
+            } else {
+                emit ParamUpdated(p, depositCap, v);
+                depositCap = v;
+            }
         } else if (p == 3) {
             if (v > MAX_REBALANCE_BOUNTY) revert InvalidBountyRate();
-            emit ParamUpdated(p, rebalanceBountyRate, v);
-            rebalanceBountyRate = v;
+            if (v > rebalanceBountyRate) {
+                // Adverse: raising the bounty siphons more from rebalance — timelock.
+                _bountyRateTimelock.propose(v, PARAM_TIMELOCK_DELAY);
+                emit BountyRateChangeProposed(
+                    rebalanceBountyRate, v, block.timestamp + PARAM_TIMELOCK_DELAY
+                );
+            } else {
+                emit ParamUpdated(p, rebalanceBountyRate, v);
+                rebalanceBountyRate = v;
+            }
         } else if (p == 4) {
             if (v == 0 || v > MAX_VAULT_SLIPPAGE) revert InvalidSlippage();
-            emit ParamUpdated(p, maxSlippage, v);
-            maxSlippage = v;
-            yieldStrategy.setSlippage(v);
-            if (address(swapper) != address(0)) ISwapperSlippageConfig(address(swapper)).setSlippage(v);
+            if (v > maxSlippage) {
+                // Adverse: raising slippage exposes the next withdraw to more loss.
+                _maxSlippageTimelock.propose(v, PARAM_TIMELOCK_DELAY);
+                emit MaxSlippageChangeProposed(
+                    maxSlippage, v, block.timestamp + PARAM_TIMELOCK_DELAY
+                );
+            } else {
+                emit ParamUpdated(p, maxSlippage, v);
+                maxSlippage = v;
+                yieldStrategy.setSlippage(v);
+                if (address(swapper) != address(0)) {
+                    ISwapperSlippageConfig(address(swapper)).setSlippage(v);
+                }
+            }
         } else {
             revert InvalidParam();
         }
     }
 
-    /// @notice Execute a pending feeRate or targetLtv change after PARAM_TIMELOCK_DELAY.
-    /// @param p 0 = feeRate, 1 = targetLtv
+    /// @notice Execute a pending param change after PARAM_TIMELOCK_DELAY.
+    /// @param p 0=feeRate, 1=targetLtv, 2=depositCap, 3=bountyRate, 4=maxSlippage
     function executeParamChange(uint8 p) external onlyGov {
         if (p == 0) {
             uint256 newFee = _feeRateTimelock.execute();
@@ -996,13 +1150,30 @@ contract Zenji is ERC20, IERC4626 {
             if (lmMaxBps != type(uint256).max && newLtv > lmMaxBps * 1e14) revert InvalidTargetLtv();
             emit ParamUpdated(p, targetLtv, newLtv);
             targetLtv = newLtv;
+        } else if (p == 2) {
+            uint256 newCap = _depositCapTimelock.execute();
+            emit ParamUpdated(p, depositCap, newCap);
+            depositCap = newCap;
+        } else if (p == 3) {
+            uint256 newBounty = _bountyRateTimelock.execute();
+            if (newBounty > MAX_REBALANCE_BOUNTY) revert InvalidBountyRate();
+            emit ParamUpdated(p, rebalanceBountyRate, newBounty);
+            rebalanceBountyRate = newBounty;
+        } else if (p == 4) {
+            uint256 newSlip = _maxSlippageTimelock.execute();
+            if (newSlip == 0 || newSlip > MAX_VAULT_SLIPPAGE) revert InvalidSlippage();
+            emit ParamUpdated(p, maxSlippage, newSlip);
+            maxSlippage = newSlip;
+            yieldStrategy.setSlippage(newSlip);
+            if (address(swapper) != address(0)) {
+                ISwapperSlippageConfig(address(swapper)).setSlippage(newSlip);
+            }
         } else {
             revert InvalidParam();
         }
     }
 
-    /// @notice Cancel a pending feeRate or targetLtv proposal.
-    /// @param p 0 = feeRate, 1 = targetLtv
+    /// @notice Cancel a pending param proposal.
     function cancelParamChange(uint8 p) external onlyGov {
         if (p == 0) {
             uint256 cancelled = _feeRateTimelock.cancel();
@@ -1010,15 +1181,27 @@ contract Zenji is ERC20, IERC4626 {
         } else if (p == 1) {
             uint256 cancelled = _targetLtvTimelock.cancel();
             emit TargetLtvChangeCancelled(cancelled);
+        } else if (p == 2) {
+            uint256 cancelled = _depositCapTimelock.cancel();
+            emit DepositCapChangeCancelled(cancelled);
+        } else if (p == 3) {
+            uint256 cancelled = _bountyRateTimelock.cancel();
+            emit BountyRateChangeCancelled(cancelled);
+        } else if (p == 4) {
+            uint256 cancelled = _maxSlippageTimelock.cancel();
+            emit MaxSlippageChangeCancelled(cancelled);
         } else {
             revert InvalidParam();
         }
     }
 
-    /// @notice View pending feeRate / targetLtv proposal state.
+    /// @notice View pending param proposal state.
     function pendingParamChange(uint8 p) external view returns (uint256 newValue, uint256 effectiveTime) {
         if (p == 0) return (_feeRateTimelock.pendingValue, _feeRateTimelock.timestamp);
         if (p == 1) return (_targetLtvTimelock.pendingValue, _targetLtvTimelock.timestamp);
+        if (p == 2) return (_depositCapTimelock.pendingValue, _depositCapTimelock.timestamp);
+        if (p == 3) return (_bountyRateTimelock.pendingValue, _bountyRateTimelock.timestamp);
+        if (p == 4) return (_maxSlippageTimelock.pendingValue, _maxSlippageTimelock.timestamp);
         revert InvalidParam();
     }
 
@@ -1113,6 +1296,7 @@ contract Zenji is ERC20, IERC4626 {
         if (assets < MIN_DEPOSIT()) revert AmountTooSmall();
         if (sharesToMint == 0) revert AmountTooSmall();
         if (emergencyMode) revert EmergencyModeActive();
+        if (depositsPaused) revert DepositsArePaused();
         if (depositCap > 0 && getTotalCollateral() + assets > depositCap) {
             revert DepositCapExceeded();
         }

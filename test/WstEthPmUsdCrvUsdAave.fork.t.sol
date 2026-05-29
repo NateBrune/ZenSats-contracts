@@ -2,13 +2,13 @@
 pragma solidity ^0.8.33;
 
 import { console } from "forge-std/Test.sol";
-import { ZenjiForkTestBase } from "./base/ZenjiForkTestBase.sol";
+import { AaveSecurityTestMixin } from "./base/AaveSecurityTestMixin.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UniswapMixedTwoHopSwapper } from "../src/swappers/base/UniswapMixedTwoHopSwapper.sol";
 import { WstEthOracle } from "../src/WstEthOracle.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
-import { UsdtPmUsdCrvUsdStrategy } from "../src/strategies/UsdtPmUsdCrvUsdStrategy.sol";
+import { UsdtPmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/UsdtPmUsdCrvUsdStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { BaseSwapper } from "../src/swappers/base/BaseSwapper.sol";
@@ -17,7 +17,7 @@ import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
 
 /// @title WstEthPmUsdCrvUsdAave
 /// @notice Fork tests for wstETH + USDT + pmUSD/crvUSD (Stake DAO) strategy on Aave
-contract WstEthPmUsdCrvUsdAave is ZenjiForkTestBase {
+contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
     address constant WSTETH = 0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0;
     address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     address constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
@@ -48,7 +48,7 @@ contract WstEthPmUsdCrvUsdAave is ZenjiForkTestBase {
     UniswapMixedTwoHopSwapper public swapper;
     CrvToCrvUsdSwapper public crvSwapper;
     WstEthOracle public wstEthOracle;
-    UsdtPmUsdCrvUsdStrategy public strategy;
+    UsdtPmUsdCrvUsdStakeDaoStrategy public strategy;
 
     // ============ Abstract implementations ============
 
@@ -147,7 +147,7 @@ contract WstEthPmUsdCrvUsdAave is ZenjiForkTestBase {
             3_600
         );
 
-        strategy = new UsdtPmUsdCrvUsdStrategy(
+        strategy = new UsdtPmUsdCrvUsdStakeDaoStrategy(
             USDT,
             expectedVaultAddress,
             owner,
@@ -452,7 +452,7 @@ contract WstEthPmUsdCrvUsdAave is ZenjiForkTestBase {
         _depositAs(user1, _unit());
 
         assertGt(strategy.balanceOf(), 0, "Strategy should report balance");
-        uint256 rvShares = strategy.rewardVault().balanceOf(address(strategy));
+        uint256 rvShares = strategy.stakingVault().balanceOf(address(strategy));
         assertGt(rvShares, 0, "Reward vault should hold shares");
     }
 

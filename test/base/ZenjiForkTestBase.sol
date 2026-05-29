@@ -167,6 +167,26 @@ abstract contract ZenjiForkTestBase is Test {
         );
     }
 
+    /// @notice Skip the calling test if the pmUSD/crvUSD Curve pool is severely imbalanced
+    ///         (e.g. pmUSD depeg). A >4x coin ratio means single-sided crvUSD exits would
+    ///         fail the vault's slippage check — the market condition, not the code, is broken.
+    function _skipIfPmUsdPoolImbalanced() internal {
+        address pool = 0xEcb0F0d68C19BdAaDAEbE24f6752A4Db34e2c2cb;
+        try IERC20(pool).totalSupply() returns (uint256) {
+            // pool exists — check coin balance ratio
+            (bool ok0, bytes memory d0) =
+                pool.staticcall(abi.encodeWithSignature("balances(uint256)", uint256(0)));
+            (bool ok1, bytes memory d1) =
+                pool.staticcall(abi.encodeWithSignature("balances(uint256)", uint256(1)));
+            if (!ok0 || !ok1 || d0.length < 32 || d1.length < 32) return;
+            uint256 b0 = abi.decode(d0, (uint256));
+            uint256 b1 = abi.decode(d1, (uint256));
+            if (b0 == 0 || b1 == 0 || b0 > b1 * 4 || b1 > b0 * 4) {
+                vm.skip(true);
+            }
+        } catch { }
+    }
+
     function _deployVault() internal {
         _deployVaultContracts();
         _postDeploySetup();
@@ -226,6 +246,48 @@ abstract contract ZenjiForkTestBase is Test {
             }
             vm.prank(vault.gov());
             vault.executeParamChange(0);
+        }
+    }
+
+    /// @notice Set deposit cap, handling the timelock for adverse (decrease) changes.
+    function _setDepositCap(uint256 newCap) internal {
+        uint256 cur = vault.depositCap();
+        vm.prank(vault.gov());
+        vault.setParam(2, newCap);
+        if (newCap < cur) {
+            vm.warp(block.timestamp + vault.PARAM_TIMELOCK_DELAY());
+            address[] memory oracles = _oracleList();
+            for (uint256 i = 0; i < oracles.length; i++) _mockOracle(oracles[i]);
+            vm.prank(vault.gov());
+            vault.executeParamChange(2);
+        }
+    }
+
+    /// @notice Set rebalance bounty rate, handling the timelock for adverse (increase) changes.
+    function _setBountyRate(uint256 newBounty) internal {
+        uint256 cur = vault.rebalanceBountyRate();
+        vm.prank(vault.gov());
+        vault.setParam(3, newBounty);
+        if (newBounty > cur) {
+            vm.warp(block.timestamp + vault.PARAM_TIMELOCK_DELAY());
+            address[] memory oracles = _oracleList();
+            for (uint256 i = 0; i < oracles.length; i++) _mockOracle(oracles[i]);
+            vm.prank(vault.gov());
+            vault.executeParamChange(3);
+        }
+    }
+
+    /// @notice Set vault-wide maxSlippage, handling the timelock for adverse (increase) changes.
+    function _setMaxSlippage(uint256 newSlip) internal {
+        uint256 cur = vault.maxSlippage();
+        vm.prank(vault.gov());
+        vault.setParam(4, newSlip);
+        if (newSlip > cur) {
+            vm.warp(block.timestamp + vault.PARAM_TIMELOCK_DELAY());
+            address[] memory oracles = _oracleList();
+            for (uint256 i = 0; i < oracles.length; i++) _mockOracle(oracles[i]);
+            vm.prank(vault.gov());
+            vault.executeParamChange(4);
         }
     }
 
@@ -447,9 +509,8 @@ abstract contract ZenjiForkTestBase is Test {
 
         // feeRate increase from 0 → 10% requires propose+execute (PARAM_TIMELOCK_DELAY)
         _setFeeRate(1e17);
-        // bountyRate stays immediate (no timelock on this param)
-        vm.prank(owner);
-        vault.setParam(3, 1e17);
+        // bountyRate increase is now timelocked too.
+        _setBountyRate(1e17);
 
         vm.warp(block.timestamp + 7 days);
         _syncAndMockOracles();
@@ -532,6 +593,15 @@ abstract contract ZenjiForkTestBase is Test {
         _depositAs(user1, _baseDeposit());
 
         deal(USDC, address(vault), 1000e6);
+
+        // Pre-set the rescue recipient via gov timelock (1 week). Without this the
+        // guardian cannot choose where rescued funds go — that's the new safety property.
+        vm.prank(owner);
+        vault.proposeRescueRecipient(feeRecipient);
+        vm.warp(block.timestamp + vault.TIMELOCK_DELAY() + 1);
+        _syncAndMockOracles();
+        vm.prank(owner);
+        vault.executeRescueRecipient();
 
         vm.startPrank(owner);
         vault.enterEmergencyMode();
@@ -634,8 +704,8 @@ abstract contract ZenjiForkTestBase is Test {
     function test_deposit_atCap_reverts() public {
         _deployVault();
 
-        vm.prank(owner);
-        vault.setParam(2, _baseDeposit());
+        // depositCap drop is timelocked (helper handles propose+warp+execute).
+        _setDepositCap(_baseDeposit());
 
         _depositAs(user1, _baseDeposit());
 
@@ -695,19 +765,22 @@ abstract contract ZenjiForkTestBase is Test {
         vm.startPrank(owner);
         vm.expectRevert(Zenji.InvalidFeeRate.selector);
         vault.setParam(0, 2e17 + 1);
+        vm.stopPrank();
 
-        vault.setParam(3, maxBounty);
+        // bountyRate increases are now timelocked.
+        _setBountyRate(maxBounty);
         assertEq(vault.rebalanceBountyRate(), maxBounty, "Should accept max bounty");
 
+        vm.startPrank(owner);
         vm.expectRevert(Zenji.InvalidBountyRate.selector);
         vault.setParam(3, overBounty);
-
-        vault.setParam(2, 0);
-        assertEq(vault.depositCap(), 0, "Should accept 0 cap");
-        vault.setParam(2, type(uint256).max);
-        assertEq(vault.depositCap(), type(uint256).max, "Should accept max cap");
-
         vm.stopPrank();
+
+        // depositCap: raises are immediate, drops are now timelocked.
+        _setDepositCap(type(uint256).max);   // raise: immediate
+        assertEq(vault.depositCap(), type(uint256).max, "Should accept max cap");
+        _setDepositCap(0);                    // drop: timelocked, helper handles
+        assertEq(vault.depositCap(), 0, "Should accept 0 cap");
     }
 
     // ============ G. Idle Mode Tests ============

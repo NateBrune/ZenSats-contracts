@@ -5,7 +5,7 @@ import { Test } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { UsdtPmUsdCrvUsdStrategy } from "../src/strategies/UsdtPmUsdCrvUsdStrategy.sol";
+import { UsdtPmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/UsdtPmUsdCrvUsdStakeDaoStrategy.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
 import { IAavePool } from "../src/interfaces/IAavePool.sol";
 import { IFlashLoanSimpleReceiver } from "../src/interfaces/IFlashLoanSimpleReceiver.sol";
@@ -386,7 +386,7 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
     MockCrvSwapper crvSwapper;
 
     AaveLoanManager loanManager;
-    UsdtPmUsdCrvUsdStrategy strategy;
+    UsdtPmUsdCrvUsdStakeDaoStrategy strategy;
     Zenji vault;
     ZenjiViewHelper viewHelper;
 
@@ -452,7 +452,7 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
             3600
         );
 
-        strategy = new UsdtPmUsdCrvUsdStrategy(
+        strategy = new UsdtPmUsdCrvUsdStakeDaoStrategy(
             address(usdt),
             predictedVault,
             owner,
@@ -618,8 +618,12 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
     }
 
     function test_setParam4_slippage_forwardedByOwner() public {
+        // 3% > 1% default — increase is timelocked, must execute after delay
         vm.prank(owner);
         vault.setParam(4, 3e16);
+        vm.warp(block.timestamp + vault.PARAM_TIMELOCK_DELAY());
+        vm.prank(owner);
+        vault.executeParamChange(4);
         assertEq(strategy.slippageTolerance(), 3e16);
     }
 
@@ -877,7 +881,7 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
 
     function test_constructor_zeroCrvSwapper_reverts() public {
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
-        new UsdtPmUsdCrvUsdStrategy(
+        new UsdtPmUsdCrvUsdStakeDaoStrategy(
             address(usdt),
             address(vault),
             makeAddr("owner"),
@@ -899,7 +903,7 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
 
     function test_constructor_zeroUsdtCrvUsdPool_reverts() public {
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
-        new UsdtPmUsdCrvUsdStrategy(
+        new UsdtPmUsdCrvUsdStakeDaoStrategy(
             address(usdt),
             address(vault),
             makeAddr("owner"),
@@ -919,7 +923,7 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
 
     function test_constructor_zeroLpPool_reverts() public {
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
-        new UsdtPmUsdCrvUsdStrategy(
+        new UsdtPmUsdCrvUsdStakeDaoStrategy(
             address(usdt),
             address(vault),
             makeAddr("owner"),
@@ -939,7 +943,7 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
 
     function test_constructor_zeroGauge_reverts() public {
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
-        new UsdtPmUsdCrvUsdStrategy(
+        new UsdtPmUsdCrvUsdStakeDaoStrategy(
             address(usdt),
             address(vault),
             makeAddr("owner"),
@@ -959,7 +963,7 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
 
     function test_constructor_zeroCrvUsdOracle_reverts() public {
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
-        new UsdtPmUsdCrvUsdStrategy(
+        new UsdtPmUsdCrvUsdStakeDaoStrategy(
             address(usdt),
             address(vault),
             makeAddr("owner"),
@@ -979,7 +983,7 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
 
     function test_constructor_zeroUsdtOracle_reverts() public {
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
-        new UsdtPmUsdCrvUsdStrategy(
+        new UsdtPmUsdCrvUsdStakeDaoStrategy(
             address(usdt),
             address(vault),
             makeAddr("owner"),
@@ -999,7 +1003,7 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
 
     function test_constructor_zeroCrvOracle_reverts() public {
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
-        new UsdtPmUsdCrvUsdStrategy(
+        new UsdtPmUsdCrvUsdStakeDaoStrategy(
             address(usdt),
             address(vault),
             makeAddr("owner"),

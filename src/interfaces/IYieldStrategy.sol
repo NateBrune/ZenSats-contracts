@@ -19,6 +19,7 @@ interface IYieldStrategy {
     error SlippageExceeded();
     error TransferFailed();
     error InvalidAddress();
+    error ReentrancyError();
 
     // ============ Core Functions ============
 

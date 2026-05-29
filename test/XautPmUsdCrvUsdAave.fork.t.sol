@@ -2,13 +2,13 @@
 pragma solidity ^0.8.33;
 
 import { console } from "forge-std/Test.sol";
-import { ZenjiForkTestBase } from "./base/ZenjiForkTestBase.sol";
+import { AaveSecurityTestMixin } from "./base/AaveSecurityTestMixin.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { IAavePool } from "../src/interfaces/IAavePool.sol";
 import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
-import { UsdtPmUsdCrvUsdStrategy } from "../src/strategies/UsdtPmUsdCrvUsdStrategy.sol";
+import { UsdtPmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/UsdtPmUsdCrvUsdStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { BaseSwapper } from "../src/swappers/base/BaseSwapper.sol";
@@ -19,7 +19,7 @@ import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
 /// @notice Fork tests for XAUT/USDT + pmUSD/crvUSD (Stake DAO) strategy on Aave with eMode 43
 /// @dev XAUT has 6 decimals. Aave eMode category 43 ("XAUt USDC USDT GHO") is activated,
 ///      but the vault is conservatively configured at 65% LTV.
-contract XautPmUsdCrvUsdAave is ZenjiForkTestBase {
+contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
     address constant XAUT = 0x68749665FF8D2d112Fa859AA293F07A622782F38;
     address constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
     address constant CRV = 0xD533a949740bb3306d119CC777fa900bA034cd52;
@@ -47,7 +47,7 @@ contract XautPmUsdCrvUsdAave is ZenjiForkTestBase {
 
     UniversalRouterV3SingleHopSwapper public swapper;
     CrvToCrvUsdSwapper public crvSwapper;
-    UsdtPmUsdCrvUsdStrategy public strategy;
+    UsdtPmUsdCrvUsdStakeDaoStrategy public strategy;
 
     // ============ Abstract implementations ============
 
@@ -150,7 +150,7 @@ contract XautPmUsdCrvUsdAave is ZenjiForkTestBase {
             90_000 // XAU/USD heartbeat is 24h
         );
 
-        strategy = new UsdtPmUsdCrvUsdStrategy(
+        strategy = new UsdtPmUsdCrvUsdStakeDaoStrategy(
             USDT,
             expectedVaultAddress,
             owner,
@@ -936,7 +936,7 @@ contract XautPmUsdCrvUsdAave is ZenjiForkTestBase {
         uint256 crvUsdPrice8,  // crvUSD/USD 8-dec
         uint256 slippage       // 1e16 = 1%
     ) internal view {
-        uint256 LP_SLIPPAGE = 5e15; // 0.5% — hardcoded in PmUsdCrvUsdStrategy
+        uint256 LP_SLIPPAGE = 5e15; // 0.5% — hardcoded in PmUsdCrvUsdStakeDaoStrategy
 
         // ── Step 1: USDT → crvUSD via USDT_CRVUSD_POOL ───────────────────────
         uint256 estimatedUsdt = (depositXaut * xauPrice8 * vault.targetLtv()) / 1e26;
@@ -1100,7 +1100,7 @@ contract XautPmUsdCrvUsdAave is ZenjiForkTestBase {
         _depositAs(user1, _unit());
 
         assertGt(strategy.balanceOf(), 0, "Strategy should report balance");
-        uint256 rvShares = strategy.rewardVault().balanceOf(address(strategy));
+        uint256 rvShares = strategy.stakingVault().balanceOf(address(strategy));
         assertGt(rvShares, 0, "Reward vault should hold shares");
     }
 

@@ -2,14 +2,14 @@
 pragma solidity ^0.8.33;
 
 import { console } from "forge-std/Test.sol";
-import { ZenjiForkTestBase } from "./base/ZenjiForkTestBase.sol";
-import { ZenjiWbtcCrvUsdPmUsd } from "../src/implementations/ZenjiWbtcCrvUsdPmUsd.sol";
+import { LlamaSecurityTestMixin } from "./base/LlamaSecurityTestMixin.sol";
+import { ZenjiWbtcLlamaStakeDao } from "../src/implementations/stakedao/ZenjiWbtcLlamaStakeDao.sol";
 import { LlamaLoanManager } from "../src/lenders/LlamaLoanManager.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UniswapMixedCurveSwapper } from "../src/swappers/base/UniswapMixedCurveSwapper.sol";
 import { ICurveTriCrypto } from "../src/interfaces/ICurveTriCrypto.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
-import { PmUsdCrvUsdStrategy } from "../src/strategies/PmUsdCrvUsdStrategy.sol";
+import { PmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/PmUsdCrvUsdStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
@@ -20,7 +20,7 @@ import { Zenji } from "../src/Zenji.sol";
 /// @title WbtcCrvUsdPmUsdLlama
 /// @notice Fork tests for WBTC + crvUSD + pmUSD/crvUSD (Stake DAO) strategy on LlamaLend
 ///         Swap route: WBTC -> WETH via Uniswap V3 (0.05%) -> crvUSD via Curve TriCRV
-contract WbtcCrvUsdPmUsdLlama is ZenjiForkTestBase {
+contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
     address constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
     address constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
     address constant CRV = 0xD533a949740bb3306d119CC777fa900bA034cd52;
@@ -48,7 +48,7 @@ contract WbtcCrvUsdPmUsdLlama is ZenjiForkTestBase {
 
     UniswapMixedCurveSwapper public swapper;
     CrvToCrvUsdSwapper public crvSwapper;
-    PmUsdCrvUsdStrategy public strategy;
+    PmUsdCrvUsdStakeDaoStrategy public strategy;
     LlamaLoanManager public llamaManager;
 
     // ============ Abstract implementations ============
@@ -91,6 +91,8 @@ contract WbtcCrvUsdPmUsdLlama is ZenjiForkTestBase {
         return 20;
     }
 
+    function _sequentialWithdrawalSlippage() internal pure returns (uint256) { return 3e16; }
+
     // ============ Vault deployment ============
 
     function _getLpCrvUsdIndex() internal view returns (int128) {
@@ -108,6 +110,10 @@ contract WbtcCrvUsdPmUsdLlama is ZenjiForkTestBase {
             if (coin == WETH) wethIdx = i;
             else if (coin == CRVUSD) crvUsdIdx = i;
         }
+    }
+
+    function setUp() public override {
+        super.setUp();
     }
 
     function _deployVaultContracts() internal override {
@@ -137,7 +143,7 @@ contract WbtcCrvUsdPmUsdLlama is ZenjiForkTestBase {
             3600 // BTC/USD oracle max staleness: 1 hour
         );
 
-        strategy = new PmUsdCrvUsdStrategy(
+        strategy = new PmUsdCrvUsdStakeDaoStrategy(
             CRVUSD,
             address(0), // vault initialised separately via initializeVault
             owner,
@@ -161,7 +167,7 @@ contract WbtcCrvUsdPmUsdLlama is ZenjiForkTestBase {
             address(0) // vault initialised separately via initializeVault
         );
 
-        ZenjiWbtcCrvUsdPmUsd vault_ = new ZenjiWbtcCrvUsdPmUsd(
+        ZenjiWbtcLlamaStakeDao vault_ = new ZenjiWbtcLlamaStakeDao(
             address(llamaManager), address(strategy), address(swapper), owner, address(viewHelper)
         );
         require(address(vault_) == expectedVaultAddress, "Vault address mismatch");
@@ -360,7 +366,7 @@ contract WbtcCrvUsdPmUsdLlama is ZenjiForkTestBase {
         _depositAs(user1, _unit());
 
         assertGt(strategy.balanceOf(), 0, "Strategy should report balance");
-        uint256 rvShares = strategy.rewardVault().balanceOf(address(strategy));
+        uint256 rvShares = strategy.stakingVault().balanceOf(address(strategy));
         assertGt(rvShares, 0, "Reward vault should hold shares");
     }
 
@@ -506,10 +512,10 @@ contract WbtcCrvUsdPmUsdLlama is ZenjiForkTestBase {
     function test_threeUserSequentialWithdrawals() public {
         _deployVault();
         // Two-hop route (WBTC→WETH→crvUSD via Uniswap V3 + Curve TriCrypto) accumulates ~1.17% in
-        // fees + oracle/market spread — marginally above the 1% default oracle floor.
-        // 2% is principled: measured round-trip for 6 WBTC combined is only ~13 bps (bpsCostCurve data).
+        // fees + oracle/market spread. The residual crvUSD profit swap (LP returns more than borrowed)
+        // uses the oracle floor — 5% covers Chainlink/V3 price divergence across mainnet blocks.
         vm.prank(owner);
-        swapper.setSlippage(2e16);
+        swapper.setSlippage(5e16);
 
         address user3 = makeAddr("user3");
 
@@ -1059,6 +1065,85 @@ contract WbtcCrvUsdPmUsdLlama is ZenjiForkTestBase {
 
         assertGt(safeCap, 0, "Must find a passing size");
         assertLe(bpsAtCap, 100, "Round-trip cost at safe cap must be within 1%%");
+    }
+
+    /// @notice Sweep deposit size at a fixed 1% slippage to find the largest size that exits.
+    ///         Complements test_slippageSweep_bySlippage (which fixes size, varies slippage).
+    function test_slippageSweep_bySize() public {
+        uint256[] memory sizes = new uint256[](8);
+        sizes[0] = 1e8;   //   1 WBTC
+        sizes[1] = 5e8;   //   5 WBTC
+        sizes[2] = 10e8;  //  10 WBTC
+        sizes[3] = 20e8;  //  20 WBTC
+        sizes[4] = 30e8;  //  30 WBTC
+        sizes[5] = 50e8;  //  50 WBTC
+        sizes[6] = 75e8;  //  75 WBTC
+        sizes[7] = 100e8; // 100 WBTC
+
+        uint256 slippage = 1e16;
+        uint256 lastPass = 0;
+
+        for (uint256 i = 0; i < sizes.length; i++) {
+            uint256 snap = vm.snapshot();
+            bool passed;
+            try this.runSlippageScenario(slippage, sizes[i]) returns (bool ok) {
+                passed = ok;
+            } catch {
+                passed = false;
+            }
+            vm.revertTo(snap);
+            console.log("WBTC SizeSweep slippage=100bps deposit=%s WBTC passed=%s", sizes[i] / 1e8, passed ? 1 : 0);
+            if (passed) lastPass = sizes[i];
+        }
+
+        console.log("WBTC SizeSweep lastPass=%s WBTC", lastPass == 0 ? 0 : lastPass / 1e8);
+        assertGt(lastPass, 0, "At least the smallest size must exit at 1% slippage");
+    }
+
+    /// @notice Diagnostic: measures actual round-trip loss at a range of deposit sizes.
+    function test_slippageCapacity() public {
+        _deployVault();
+
+        uint256[8] memory amounts =
+            [uint256(1e6), 1e7, 5e7, 1e8, 2e8, 3e8, 5e8, 10e8];
+
+        console.log("=== WBTC LlamaLend round-trip slippage (UniV3 WBTC/WETH 0.05%% + Curve TriCRV) ===");
+        console.log("Simulating deposit -> 5-block wait -> full redeem");
+        console.log("swap path on unwind: WBTC->WETH via UniV3, WETH->crvUSD via TriCRV");
+        console.log("");
+
+        for (uint256 i = 0; i < amounts.length; i++) {
+            uint256 snap = vm.snapshot();
+            uint256 amount = amounts[i];
+
+            deal(WBTC, user1, amount);
+            _syncAndMockOracles();
+            _depositAs(user1, amount);
+
+            vm.roll(block.number + 5);
+            vm.warp(block.timestamp + 60);
+            _syncAndMockOracles();
+
+            uint256 received = _redeemAllAs(user1);
+
+            uint256 loss = amount > received ? amount - received : 0;
+            uint256 bps = (loss * 10_000) / amount;
+
+            console.log(
+                string.concat(
+                    vm.toString(amount / 1e6),
+                    " centi-WBTC (1e-2 BTC)  ->  received ",
+                    vm.toString(received),
+                    " sat  (",
+                    vm.toString(bps),
+                    " bps loss  ",
+                    bps <= 100 ? "OK" : "EXCEEDS 1%",
+                    ")"
+                )
+            );
+
+            vm.revertTo(snap);
+        }
     }
 
 }

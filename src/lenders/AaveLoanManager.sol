@@ -27,7 +27,16 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
     uint16 public constant AAVE_REFERRAL_CODE = 0;
     uint256 public constant SWAP_AMOUNT_BUFFER = 105;
     uint256 public constant DUST_BUFFER = 1;
-    uint256 public constant DUST_THRESHOLD = 1e6;
+    uint256 public immutable DUST_THRESHOLD;
+    /// @notice Minimum debt-token-denominated shortfall that the unwind swap is sized for.
+    /// Sub-dollar shortfalls (e.g. flashloan premium on a tiny residual debt) are below
+    /// the routable threshold of two-hop Uniswap V3 swappers — the swapper's oracle floor
+    /// reverts because fee rounding and tick precision dwarf the trade. We oversell to
+    /// this minimum and reverse-swap the surplus back to collateral after the flashloan
+    /// returns. Withdrawer pays the round-trip swap fees on the ~$1 over-amount.
+    /// Computed as 10**debtToken.decimals() — assumes the debt token is a USD-pegged
+    /// stablecoin (1 unit = $1). All current deployments use USDT.
+    uint256 public immutable MIN_ROUTABLE_DEBT;
     uint256 public constant TIMELOCK_DELAY = 1 weeks;
     int256 public constant MIN_HEALTH = 1.1e18;
     uint256 public constant MIN_SWAP_OUT_BPS = 9500; // 95% of oracle quote
@@ -120,6 +129,12 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
 
         collateralToken = IERC20(_collateralAsset);
         debtToken = IERC20(_debtAsset);
+        // Scale dust + routable thresholds to the debt token's decimals so the
+        // contract works across 6-decimal (USDT/USDC) and 18-decimal (DAI/etc.)
+        // stablecoin debt tokens without per-deployment tuning.
+        uint256 oneDollar = 10 ** uint256(IERC20(_debtAsset).decimals());
+        DUST_THRESHOLD = oneDollar;
+        MIN_ROUTABLE_DEBT = oneDollar;
         aToken = IERC20(_aToken);
         variableDebtToken = IERC20(_variableDebtToken);
         aavePool = IAavePool(_aavePool);
@@ -281,6 +296,19 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
             if (fullyClose && variableDebtToken.balanceOf(address(this)) > 0) {
                 revert DebtNotFullyRepaid();
             }
+
+            // Convert any leftover debt token (from over-swap during dust
+            // unwinds — see executeOperation Step 3) back to collateral.
+            // The withdrawer pays the round-trip swap fees as the slippage
+            // cost of unwinding a dust-residual position. Skip if the leftover
+            // is itself dust — the reverse swap would face the same routing
+            // floor that caused us to over-swap in the first place.
+            uint256 idleDebt = debtToken.balanceOf(address(this));
+            if (idleDebt > DUST_THRESHOLD && address(swapper) != address(0)) {
+                debtToken.safeTransfer(address(swapper), idleDebt);
+                swapper.swapDebtForCollateral(idleDebt);
+            }
+
             uint256 idleCollateral = collateralToken.balanceOf(address(this));
             if (idleCollateral > 0) {
                 collateralToken.safeTransfer(vault, idleCollateral);
@@ -387,7 +415,17 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
             if (address(swapper) == address(0)) revert InvalidAddress();
 
             uint256 shortfall = repaymentNeeded - debtAvailable;
-            uint256 collateralQuote = _getDebtValue(shortfall);
+
+            // Bump dust shortfalls (e.g. flash-loan premium on a tiny residual
+            // debt) up to MIN_ROUTABLE_DEBT. Below ~$1 of swap input, two-hop
+            // Uniswap V3 swappers cannot satisfy the oracle-derived floor
+            // because fee rounding and tick precision dwarf the trade. The
+            // surplus debt token from this oversell is converted back to
+            // collateral by unwindPosition after the flashloan returns; the
+            // withdrawer pays only the round-trip swap fees on the ~$1
+            // over-amount, not on the entire position.
+            uint256 sizingShortfall = shortfall < MIN_ROUTABLE_DEBT ? MIN_ROUTABLE_DEBT : shortfall;
+            uint256 collateralQuote = _getDebtValue(sizingShortfall);
             uint256 collateralNeededForSwap =
                 (collateralQuote * SWAP_AMOUNT_BUFFER) / 100 + DUST_BUFFER;
             uint256 collateralBal = collateralToken.balanceOf(address(this));
@@ -396,8 +434,6 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
 
             if (toSwap > 0) {
                 uint256 debtBefore = debtToken.balanceOf(address(this));
-                // Skip oracle-based slippage floor for dust swaps: integer fee rounding
-                // in the V3 pool makes the effective fee exceed any oracle estimate.
                 uint256 expectedDebt = toSwap >= DUST_SWAP_THRESHOLD
                     ? (_getCollateralValue(toSwap) * MIN_SWAP_OUT_BPS) / 10000
                     : 0;
@@ -625,7 +661,7 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         IERC20(token).ensureApproval(spender, amount);
     }
 
-    function _isDustDebt(uint256 debt) internal pure returns (bool) {
+    function _isDustDebt(uint256 debt) internal view returns (bool) {
         return debt <= DUST_THRESHOLD;
     }
 

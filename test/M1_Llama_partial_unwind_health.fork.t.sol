@@ -3,13 +3,13 @@ pragma solidity ^0.8.33;
 
 import { console } from "forge-std/Test.sol";
 import { ZenjiForkTestBase } from "./base/ZenjiForkTestBase.sol";
-import { ZenjiWbtcCrvUsdPmUsd } from "../src/implementations/ZenjiWbtcCrvUsdPmUsd.sol";
+import { ZenjiWbtcLlamaStakeDao } from "../src/implementations/stakedao/ZenjiWbtcLlamaStakeDao.sol";
 import { LlamaLoanManager } from "../src/lenders/LlamaLoanManager.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UniswapMixedCurveSwapper } from "../src/swappers/base/UniswapMixedCurveSwapper.sol";
 import { ICurveTriCrypto } from "../src/interfaces/ICurveTriCrypto.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
-import { PmUsdCrvUsdStrategy } from "../src/strategies/PmUsdCrvUsdStrategy.sol";
+import { PmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/PmUsdCrvUsdStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
@@ -48,9 +48,9 @@ contract M1_Llama_partial_unwind_health is ZenjiForkTestBase {
 
     UniswapMixedCurveSwapper public swapper;
     CrvToCrvUsdSwapper public crvSwapper;
-    PmUsdCrvUsdStrategy public strategy;
+    PmUsdCrvUsdStakeDaoStrategy public strategy;
     LlamaLoanManager public llamaManager;
-    ZenjiWbtcCrvUsdPmUsd public llamaVault;
+    ZenjiWbtcLlamaStakeDao public llamaVault;
 
     function _collateral() internal pure override returns (address) {
         return WBTC;
@@ -105,6 +105,10 @@ contract M1_Llama_partial_unwind_health is ZenjiForkTestBase {
         }
     }
 
+    function setUp() public override {
+        super.setUp();
+    }
+
     function _deployVaultContracts() internal override {
         uint256 startNonce = vm.getNonce(address(this));
         address expectedVaultAddress = computeCreateAddress(address(this), startNonce + 4);
@@ -131,7 +135,7 @@ contract M1_Llama_partial_unwind_health is ZenjiForkTestBase {
             3600
         );
 
-        strategy = new PmUsdCrvUsdStrategy(
+        strategy = new PmUsdCrvUsdStakeDaoStrategy(
             CRVUSD,
             address(0),
             owner,
@@ -155,7 +159,7 @@ contract M1_Llama_partial_unwind_health is ZenjiForkTestBase {
             address(0)
         );
 
-        llamaVault = new ZenjiWbtcCrvUsdPmUsd(
+        llamaVault = new ZenjiWbtcLlamaStakeDao(
             address(llamaManager), address(strategy), address(swapper), owner, address(viewHelper)
         );
         require(address(llamaVault) == expectedVaultAddress, "Vault address mismatch");

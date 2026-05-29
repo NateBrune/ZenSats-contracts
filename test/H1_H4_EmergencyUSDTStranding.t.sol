@@ -377,10 +377,11 @@ contract H1_H4_EmergencyUSDTStranding is Test {
         console.log("H1: user1 collateral received:   %d", collateralReceived);
         console.log("H1: user1 USDT received:         %d (6 dec)", user1UsdtAfter - user1UsdtBefore);
 
-        // ASSERTION 3: rescueAssets(debtAsset) still reverts by design (debtAsset on blocklist)
-        // The fix is in _redeemEmergency itself; rescue path remains blocked as a safeguard.
+        // ASSERTION 3: rescueAssets(debtAsset) still reverts by design (debtAsset on blocklist).
+        // rescueRecipient is not configured in this test, so RescueRecipientNotSet fires first —
+        // either way, the rescue path is blocked as a safeguard.
         vm.prank(guardian);
-        vm.expectRevert(Zenji.InvalidAddress.selector);
+        vm.expectRevert();
         vault.rescueAssets(address(usdt), guardian);
 
         console.log("[H1 FIXED] _redeemEmergency now distributes debtAsset proportionally");

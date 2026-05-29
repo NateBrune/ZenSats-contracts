@@ -2,7 +2,7 @@
 pragma solidity ^0.8.33;
 
 import { Test } from "forge-std/Test.sol";
-import { IporYieldStrategy } from "../src/strategies/IporYieldStrategy.sol";
+import { CrvUsdIporStrategy } from "../src/strategies/vault/CrvUsdIporStrategy.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
 import { ERC4626 } from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -31,7 +31,7 @@ contract MockYieldVault is ERC4626 {
 contract IporYieldStrategyTest is Test {
     MockERC20 crvUSD;
     MockYieldVault iporVault;
-    IporYieldStrategy strategy;
+    CrvUsdIporStrategy strategy;
 
     address vault = makeAddr("vault");
     address user = makeAddr("user");
@@ -40,7 +40,7 @@ contract IporYieldStrategyTest is Test {
         crvUSD = new MockERC20("Curve USD", "crvUSD", 18);
         iporVault = new MockYieldVault(address(crvUSD));
 
-        strategy = new IporYieldStrategy(address(crvUSD), vault, address(iporVault));
+        strategy = new CrvUsdIporStrategy(address(crvUSD), vault, address(iporVault));
 
         crvUSD.mint(vault, 1_000_000e18);
         vm.prank(vault);
@@ -214,22 +214,22 @@ contract IporYieldStrategyTest is Test {
 
     function test_constructor_zeroAddress_reverts() public {
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
-        new IporYieldStrategy(address(0), vault, address(iporVault));
+        new CrvUsdIporStrategy(address(0), vault, address(iporVault));
 
         // vault == address(0) is valid (deferred init), so no revert expected
-        IporYieldStrategy deferredStrategy =
-            new IporYieldStrategy(address(crvUSD), address(0), address(iporVault));
+        CrvUsdIporStrategy deferredStrategy =
+            new CrvUsdIporStrategy(address(crvUSD), address(0), address(iporVault));
         assertEq(deferredStrategy.vault(), address(0));
 
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
-        new IporYieldStrategy(address(crvUSD), vault, address(0));
+        new CrvUsdIporStrategy(address(crvUSD), vault, address(0));
     }
 
     // ============ Branch Coverage: initializeVault ============
 
     function test_initializeVault_success() public {
-        IporYieldStrategy deferred =
-            new IporYieldStrategy(address(crvUSD), address(0), address(iporVault));
+        CrvUsdIporStrategy deferred =
+            new CrvUsdIporStrategy(address(crvUSD), address(0), address(iporVault));
         assertEq(deferred.vault(), address(0));
 
         deferred.initializeVault(vault);
@@ -243,15 +243,15 @@ contract IporYieldStrategyTest is Test {
     }
 
     function test_initializeVault_zeroAddress_reverts() public {
-        IporYieldStrategy deferred =
-            new IporYieldStrategy(address(crvUSD), address(0), address(iporVault));
+        CrvUsdIporStrategy deferred =
+            new CrvUsdIporStrategy(address(crvUSD), address(0), address(iporVault));
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
         deferred.initializeVault(address(0));
     }
 
     function test_initializeVault_wrongSender_reverts() public {
-        IporYieldStrategy deferred =
-            new IporYieldStrategy(address(crvUSD), address(0), address(iporVault));
+        CrvUsdIporStrategy deferred =
+            new CrvUsdIporStrategy(address(crvUSD), address(0), address(iporVault));
         vm.prank(user);
         vm.expectRevert(IYieldStrategy.Unauthorized.selector);
         deferred.initializeVault(vault);
@@ -272,7 +272,7 @@ contract IporYieldStrategyTest is Test {
         assertEq(strategy.costBasis(), 0, "Cost basis should be 0 after full withdraw");
     }
 
-    // ============ Branch Coverage: IporYieldStrategy._withdraw sharesToRedeem capping ============
+    // ============ Branch Coverage: CrvUsdIporStrategy._withdraw sharesToRedeem capping ============
 
     function test_withdraw_caps_sharesToRedeem_to_available() public {
         // Deposit and then withdraw more than balance to trigger capping in _withdraw

@@ -5,7 +5,7 @@ import { Test, console } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { UsdtIporYieldStrategy } from "../src/strategies/UsdtIporYieldStrategy.sol";
+import { UsdtIporStrategy } from "../src/strategies/vault/UsdtIporStrategy.sol";
 import { CbBtcWbtcUsdtSwapper } from "../src/swappers/base/CbBtcWbtcUsdtSwapper.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { IYieldVault } from "../src/interfaces/IYieldVault.sol";
@@ -66,7 +66,7 @@ contract VerifyH6ForkTest is Test {
     Zenji vault;
     ZenjiViewHelper viewHelper;
     AaveLoanManager loanManager;
-    UsdtIporYieldStrategy strategy;
+    UsdtIporStrategy strategy;
     CbBtcWbtcUsdtSwapper swapper;
 
     IERC20 cbbtc;
@@ -104,7 +104,7 @@ contract VerifyH6ForkTest is Test {
             CBBTC, USDT, AAVE_A_CBBTC, AAVE_VAR_DEBT_USDT, AAVE_POOL,
             CBBTC_USD_ORACLE, USDT_USD_ORACLE, address(swapper), 7500, 8000, address(0), 0, 3600
         );
-        strategy = new UsdtIporYieldStrategy(
+        strategy = new UsdtIporStrategy(
             USDT, CRVUSD, address(0), CURVE_USDT_CRVUSD_POOL, IPOR_PLASMA_VAULT,
             USDT_INDEX, CRVUSD_INDEX, CRVUSD_USD_ORACLE, USDT_USD_ORACLE
         );
