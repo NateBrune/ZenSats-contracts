@@ -5,7 +5,7 @@ import { Test } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { UsdtPmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/UsdtPmUsdCrvUsdStakeDaoStrategy.sol";
+import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
 import { IAavePool } from "../src/interfaces/IAavePool.sol";
 import { IFlashLoanSimpleReceiver } from "../src/interfaces/IFlashLoanSimpleReceiver.sol";
@@ -386,7 +386,7 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
     MockCrvSwapper crvSwapper;
 
     AaveLoanManager loanManager;
-    UsdtPmUsdCrvUsdStakeDaoStrategy strategy;
+    UsdtNgCrvUsdLpStakeDaoStrategy strategy;
     Zenji vault;
     ZenjiViewHelper viewHelper;
 
@@ -452,7 +452,7 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
             3600
         );
 
-        strategy = new UsdtPmUsdCrvUsdStakeDaoStrategy(
+        strategy = new UsdtNgCrvUsdLpStakeDaoStrategy(
             address(usdt),
             predictedVault,
             owner,
@@ -881,7 +881,7 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
 
     function test_constructor_zeroCrvSwapper_reverts() public {
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
-        new UsdtPmUsdCrvUsdStakeDaoStrategy(
+        new UsdtNgCrvUsdLpStakeDaoStrategy(
             address(usdt),
             address(vault),
             makeAddr("owner"),
@@ -903,7 +903,7 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
 
     function test_constructor_zeroUsdtCrvUsdPool_reverts() public {
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
-        new UsdtPmUsdCrvUsdStakeDaoStrategy(
+        new UsdtNgCrvUsdLpStakeDaoStrategy(
             address(usdt),
             address(vault),
             makeAddr("owner"),
@@ -923,7 +923,7 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
 
     function test_constructor_zeroLpPool_reverts() public {
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
-        new UsdtPmUsdCrvUsdStakeDaoStrategy(
+        new UsdtNgCrvUsdLpStakeDaoStrategy(
             address(usdt),
             address(vault),
             makeAddr("owner"),
@@ -943,7 +943,7 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
 
     function test_constructor_zeroGauge_reverts() public {
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
-        new UsdtPmUsdCrvUsdStakeDaoStrategy(
+        new UsdtNgCrvUsdLpStakeDaoStrategy(
             address(usdt),
             address(vault),
             makeAddr("owner"),
@@ -963,7 +963,7 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
 
     function test_constructor_zeroCrvUsdOracle_reverts() public {
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
-        new UsdtPmUsdCrvUsdStakeDaoStrategy(
+        new UsdtNgCrvUsdLpStakeDaoStrategy(
             address(usdt),
             address(vault),
             makeAddr("owner"),
@@ -983,7 +983,7 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
 
     function test_constructor_zeroUsdtOracle_reverts() public {
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
-        new UsdtPmUsdCrvUsdStakeDaoStrategy(
+        new UsdtNgCrvUsdLpStakeDaoStrategy(
             address(usdt),
             address(vault),
             makeAddr("owner"),
@@ -1003,7 +1003,7 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
 
     function test_constructor_zeroCrvOracle_reverts() public {
         vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
-        new UsdtPmUsdCrvUsdStakeDaoStrategy(
+        new UsdtNgCrvUsdLpStakeDaoStrategy(
             address(usdt),
             address(vault),
             makeAddr("owner"),

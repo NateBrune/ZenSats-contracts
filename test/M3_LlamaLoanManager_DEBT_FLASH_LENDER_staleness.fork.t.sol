@@ -9,7 +9,7 @@ import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UniswapMixedCurveSwapper } from "../src/swappers/base/UniswapMixedCurveSwapper.sol";
 import { ICurveTriCrypto } from "../src/interfaces/ICurveTriCrypto.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
-import { PmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/PmUsdCrvUsdStakeDaoStrategy.sol";
+import { NgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/NgCrvUsdLpStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
@@ -48,7 +48,7 @@ contract M3_LlamaLoanManager_DEBT_FLASH_LENDER_staleness is ZenjiForkTestBase {
 
     UniswapMixedCurveSwapper public swapper;
     CrvToCrvUsdSwapper public crvSwapper;
-    PmUsdCrvUsdStakeDaoStrategy public strategy;
+    NgCrvUsdLpStakeDaoStrategy public strategy;
     LlamaLoanManager public llamaManager;
     ZenjiWbtcLlamaStakeDao public llamaVault;
 
@@ -135,7 +135,7 @@ contract M3_LlamaLoanManager_DEBT_FLASH_LENDER_staleness is ZenjiForkTestBase {
             3600
         );
 
-        strategy = new PmUsdCrvUsdStakeDaoStrategy(
+        strategy = new NgCrvUsdLpStakeDaoStrategy(
             CRVUSD,
             address(0),
             owner,

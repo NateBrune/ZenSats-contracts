@@ -39,7 +39,7 @@ import { Test } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { UsdtPmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/UsdtPmUsdCrvUsdStakeDaoStrategy.sol";
+import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
 import { IAavePool } from "../src/interfaces/IAavePool.sol";
 import { IFlashLoanSimpleReceiver } from "../src/interfaces/IFlashLoanSimpleReceiver.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
@@ -367,7 +367,7 @@ contract VerifyH7_CrvOracleDoS is Test {
     H7MockAavePool aavePool;
 
     AaveLoanManager loanManager;
-    UsdtPmUsdCrvUsdStakeDaoStrategy strategy;
+    UsdtNgCrvUsdLpStakeDaoStrategy strategy;
     Zenji vault;
     ZenjiViewHelper viewHelper;
 
@@ -386,13 +386,13 @@ contract VerifyH7_CrvOracleDoS is Test {
         aToken    = new H7MockERC20("aWBTC", "aWBTC", 8);
         debtToken = new H7MockERC20("vUSDT", "vUSDT", 6);
 
-        // BasePmUsdCrvUsdStrategy declares crv, pmUSD, and CRVUSD as `public constant`
+        // BaseNgCrvUsdLpStakeDaoStrategy declares crv, pmUSD, and CRVUSD as `public constant`
         // singleton addresses rather than constructor parameters. The same three mainnet
         // tokens are shared across all deployed strategy instances and are never expected
         // to differ between deployments, so baking them in avoids 3 extra storage slots
         // and eliminates misconfiguration risk. Unit tests that run without a mainnet fork
         // must etch mock ERC20 bytecode at those addresses so calls like crv.balanceOf()
-        // don't revert with "call to non-contract". See UsdtPmUsdCrvUsdStakeDaoStrategy.t.sol.
+        // don't revert with "call to non-contract". See UsdtNgCrvUsdLpStakeDaoStrategy.t.sol.
         bytes memory erc20Code = address(new H7MockERC20("x", "x", 18)).code;
         vm.etch(0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E, erc20Code); // CRVUSD
         vm.etch(0xD533a949740bb3306d119CC777fa900bA034cd52, erc20Code); // CRV
@@ -447,7 +447,7 @@ contract VerifyH7_CrvOracleDoS is Test {
             3600
         );
 
-        strategy = new UsdtPmUsdCrvUsdStakeDaoStrategy(
+        strategy = new UsdtNgCrvUsdLpStakeDaoStrategy(
             address(usdt),
             predictedVault,
             owner,

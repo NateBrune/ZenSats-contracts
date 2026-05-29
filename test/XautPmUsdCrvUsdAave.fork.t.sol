@@ -8,7 +8,7 @@ import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { IAavePool } from "../src/interfaces/IAavePool.sol";
 import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
-import { UsdtPmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/UsdtPmUsdCrvUsdStakeDaoStrategy.sol";
+import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { BaseSwapper } from "../src/swappers/base/BaseSwapper.sol";
@@ -47,7 +47,7 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
 
     UniversalRouterV3SingleHopSwapper public swapper;
     CrvToCrvUsdSwapper public crvSwapper;
-    UsdtPmUsdCrvUsdStakeDaoStrategy public strategy;
+    UsdtNgCrvUsdLpStakeDaoStrategy public strategy;
 
     // ============ Abstract implementations ============
 
@@ -150,7 +150,7 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
             90_000 // XAU/USD heartbeat is 24h
         );
 
-        strategy = new UsdtPmUsdCrvUsdStakeDaoStrategy(
+        strategy = new UsdtNgCrvUsdLpStakeDaoStrategy(
             USDT,
             expectedVaultAddress,
             owner,
@@ -936,7 +936,7 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
         uint256 crvUsdPrice8,  // crvUSD/USD 8-dec
         uint256 slippage       // 1e16 = 1%
     ) internal view {
-        uint256 LP_SLIPPAGE = 5e15; // 0.5% — hardcoded in PmUsdCrvUsdStakeDaoStrategy
+        uint256 LP_SLIPPAGE = 5e15; // 0.5% — hardcoded in NgCrvUsdLpStakeDaoStrategy
 
         // ── Step 1: USDT → crvUSD via USDT_CRVUSD_POOL ───────────────────────
         uint256 estimatedUsdt = (depositXaut * xauPrice8 * vault.targetLtv()) / 1e26;

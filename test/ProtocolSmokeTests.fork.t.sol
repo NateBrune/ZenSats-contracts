@@ -13,7 +13,7 @@ import { BaseSwapper } from "../src/swappers/base/BaseSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import { UsdtIporStrategy } from "../src/strategies/vault/UsdtIporStrategy.sol";
 import { CrvUsdIporStrategy } from "../src/strategies/vault/CrvUsdIporStrategy.sol";
-import { UsdtPmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/UsdtPmUsdCrvUsdStakeDaoStrategy.sol";
+import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
 import { ILoanManager } from "../src/interfaces/ILoanManager.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
@@ -311,7 +311,7 @@ contract ProtocolSmokeTests is Test {
             3_600
         );
 
-        UsdtPmUsdCrvUsdStakeDaoStrategy strategy = new UsdtPmUsdCrvUsdStakeDaoStrategy(
+        UsdtNgCrvUsdLpStakeDaoStrategy strategy = new UsdtNgCrvUsdLpStakeDaoStrategy(
             USDT,
             expectedVaultAddress,
             owner,

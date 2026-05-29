@@ -17,7 +17,7 @@ import { IERC20 } from "../../interfaces/IERC20.sol";
 ///        - _lpUnitValue()                   — lpAsset value of 1e18 LP tokens (e.g. virtual_price)
 ///        - _claimAndSwapRewards()           — claim rewards and swap them to lpAsset
 ///      and three optional swap/conversion hooks (default 1:1 pass-through):
-///        - _swapDebtToLpAsset / _swapLpAssetToDebt / _convertLpAssetValueToDebt
+///        - _swapDebtToYieldAsset / _swapYieldAssetToDebt / _convertYieldAssetValueToDebt
 ///
 ///      The base owns generic flow (deposit / withdraw / harvest / emergency), the unit-value
 ///      cache (manipulation-resistant ratchet around the LP unit value), and the staking vault
@@ -95,12 +95,12 @@ abstract contract BaseLPStrategy is BaseYieldStrategy {
     }
 
     /// @inheritdoc IYieldStrategy
-    /// @dev stakedLp → lpAsset value via cached unit value → debt via _convertLpAssetValueToDebt.
+    /// @dev stakedLp → lpAsset value via cached unit value → debt via _convertYieldAssetValueToDebt.
     function balanceOf() public view virtual override returns (uint256) {
         uint256 lpTokens = _stakedLpBalance();
         if (lpTokens < 1) return 0;
         uint256 lpAssetValue = (lpTokens * _getSafeUnitValue()) / PRECISION;
-        return _convertLpAssetValueToDebt(lpAssetValue);
+        return _convertYieldAssetValueToDebt(lpAssetValue);
     }
 
     // ============ Unit-Value Cache ============
@@ -156,7 +156,7 @@ abstract contract BaseLPStrategy is BaseYieldStrategy {
         // the contract and gets consumed by this step's _addLiquidityAndStake. For subclasses
         // with a separate debt asset (USDT-variant) the next step's swap brings in the lpAsset.
         _compoundRewards();
-        _swapDebtToLpAsset(debtAmount, slippageTolerance);
+        _swapDebtToYieldAsset(debtAmount, slippageTolerance);
         _addLiquidityAndStake();
 
         underlyingDeposited = stakingVault.balanceOf(address(this)) - sharesBefore;
@@ -183,7 +183,7 @@ abstract contract BaseLPStrategy is BaseYieldStrategy {
             lpAssetReceived = _removeLiquidity(lpReceived, slippageTolerance);
             emit LiquidityRemoved(lpReceived, lpAssetReceived);
         }
-        received = _swapLpAssetToDebt(lpAssetReceived, slippageTolerance);
+        received = _swapYieldAssetToDebt(lpAssetReceived, slippageTolerance);
     }
 
     function _withdrawAll() internal virtual override returns (uint256 received) {
@@ -192,7 +192,7 @@ abstract contract BaseLPStrategy is BaseYieldStrategy {
         if (lpReceived < 1) return 0;
         uint256 lpAssetReceived = _removeLiquidity(lpReceived, slippageTolerance);
         emit LiquidityRemoved(lpReceived, lpAssetReceived);
-        received = _swapLpAssetToDebt(lpAssetReceived, slippageTolerance);
+        received = _swapYieldAssetToDebt(lpAssetReceived, slippageTolerance);
     }
 
     function _emergencyWithdraw() internal virtual override returns (uint256 received) {
@@ -201,13 +201,13 @@ abstract contract BaseLPStrategy is BaseYieldStrategy {
         if (lpReceived < 1) return 0;
         uint256 lpAssetReceived = _removeLiquidity(lpReceived, EMERGENCY_SLIPPAGE);
         emit LiquidityRemoved(lpReceived, lpAssetReceived);
-        received = _swapLpAssetToDebt(lpAssetReceived, EMERGENCY_SLIPPAGE);
+        received = _swapYieldAssetToDebt(lpAssetReceived, EMERGENCY_SLIPPAGE);
     }
 
     function _harvest() internal virtual override returns (uint256 rewardsValue) {
         _updateCachedUnitValue();
         uint256 lpAssetCompounded = _compoundRewards();
-        rewardsValue = _convertLpAssetValueToDebt(lpAssetCompounded);
+        rewardsValue = _convertYieldAssetValueToDebt(lpAssetCompounded);
     }
 
     // ============ Compounding ============
@@ -278,7 +278,7 @@ abstract contract BaseLPStrategy is BaseYieldStrategy {
     // ============ Optional Swap / Conversion Hooks (default 1:1 pass-through) ============
 
     /// @notice Convert an lpAsset-denominated amount to debt-asset terms (oracle, no swap).
-    function _convertLpAssetValueToDebt(uint256 lpAssetAmount)
+    function _convertYieldAssetValueToDebt(uint256 lpAssetAmount)
         internal
         view
         virtual
@@ -288,7 +288,7 @@ abstract contract BaseLPStrategy is BaseYieldStrategy {
     }
 
     /// @notice Actual debt → lpAsset swap before LP operations.
-    function _swapDebtToLpAsset(uint256 debtAmount, uint256 /*slippage*/)
+    function _swapDebtToYieldAsset(uint256 debtAmount, uint256 /*slippage*/)
         internal
         virtual
         returns (uint256)
@@ -297,7 +297,7 @@ abstract contract BaseLPStrategy is BaseYieldStrategy {
     }
 
     /// @notice Actual lpAsset → debt swap after LP exit.
-    function _swapLpAssetToDebt(uint256 lpAssetAmount, uint256 /*slippage*/)
+    function _swapYieldAssetToDebt(uint256 lpAssetAmount, uint256 /*slippage*/)
         internal
         virtual
         returns (uint256)

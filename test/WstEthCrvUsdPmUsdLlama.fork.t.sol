@@ -10,7 +10,7 @@ import { WstEthOracle } from "../src/WstEthOracle.sol";
 import { UniswapMixedCurveSwapper } from "../src/swappers/base/UniswapMixedCurveSwapper.sol";
 import { ICurveTriCrypto } from "../src/interfaces/ICurveTriCrypto.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
-import { PmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/PmUsdCrvUsdStakeDaoStrategy.sol";
+import { NgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/NgCrvUsdLpStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
@@ -50,7 +50,7 @@ contract WstEthCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
     WstEthOracle public wstEthOracle;
     UniswapMixedCurveSwapper public swapper;
     CrvToCrvUsdSwapper public crvSwapper;
-    PmUsdCrvUsdStakeDaoStrategy public strategy;
+    NgCrvUsdLpStakeDaoStrategy public strategy;
     LlamaLoanManager public llamaManager;
 
     // ============ Abstract implementations ============
@@ -157,7 +157,7 @@ contract WstEthCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
             3600 // wstETH/USD oracle max staleness: 1 hour
         );
 
-        strategy = new PmUsdCrvUsdStakeDaoStrategy(
+        strategy = new NgCrvUsdLpStakeDaoStrategy(
             CRVUSD,
             address(0), // vault initialised separately via initializeVault
             owner,

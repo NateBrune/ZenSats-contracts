@@ -7,7 +7,7 @@ import { Zenji } from "../src/Zenji.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
-import { UsdtPmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/UsdtPmUsdCrvUsdStakeDaoStrategy.sol";
+import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { BaseSwapper } from "../src/swappers/base/BaseSwapper.sol";
@@ -43,7 +43,7 @@ contract WbtcPmUsdCrvUsdAave is AaveSecurityTestMixin {
 
     UniversalRouterV3SingleHopSwapper public swapper;
     CrvToCrvUsdSwapper public crvSwapper;
-    UsdtPmUsdCrvUsdStakeDaoStrategy public strategy;
+    UsdtNgCrvUsdLpStakeDaoStrategy public strategy;
 
     // ============ Abstract implementations ============
 
@@ -129,7 +129,7 @@ contract WbtcPmUsdCrvUsdAave is AaveSecurityTestMixin {
             3_600
         );
 
-        strategy = new UsdtPmUsdCrvUsdStakeDaoStrategy(
+        strategy = new UsdtNgCrvUsdLpStakeDaoStrategy(
             USDT,
             expectedVaultAddress,
             owner,

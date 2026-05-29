@@ -11,7 +11,7 @@ import { BaseSwapper } from "../base/BaseSwapper.sol";
 
 /// @title CrvToCrvUsdSwapper
 /// @notice Swaps CRV rewards to crvUSD via Curve TriCrypto pool
-/// @dev Used by PmUsdCrvUsdStakeDaoStrategy to compound CRV harvest rewards
+/// @dev Used by NgCrvUsdLpStakeDaoStrategy to compound CRV harvest rewards
 contract CrvToCrvUsdSwapper is BaseSwapper {
     using SafeTransferLib for IERC20;
 

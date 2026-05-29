@@ -7,8 +7,8 @@ import { Zenji } from "../src/Zenji.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
-import { UsdtPmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/UsdtPmUsdCrvUsdStakeDaoStrategy.sol";
-import { BasePmUsdCrvUsdStrategy } from "../src/strategies/lp/BasePmUsdCrvUsdStrategy.sol";
+import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
+import { BaseNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/BaseNgCrvUsdLpStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { ICurveStableSwap } from "../src/interfaces/ICurveStableSwap.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
@@ -50,7 +50,7 @@ contract M2_UsdtPmUsdCrvUsd_withdraw_stuck_crvUSD is ZenjiForkTestBase {
 
     UniversalRouterV3SingleHopSwapper public swapper;
     CrvToCrvUsdSwapper public crvSwapper;
-    UsdtPmUsdCrvUsdStakeDaoStrategy public strategy;
+    UsdtNgCrvUsdLpStakeDaoStrategy public strategy;
 
     function _collateral() internal pure override returns (address) {
         return WBTC;
@@ -113,7 +113,7 @@ contract M2_UsdtPmUsdCrvUsd_withdraw_stuck_crvUSD is ZenjiForkTestBase {
             3_600
         );
 
-        strategy = new UsdtPmUsdCrvUsdStakeDaoStrategy(
+        strategy = new UsdtNgCrvUsdLpStakeDaoStrategy(
             USDT,
             expectedVaultAddress,
             owner,

@@ -7,7 +7,7 @@ import { Zenji } from "../src/Zenji.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
-import { UsdtPmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/UsdtPmUsdCrvUsdStakeDaoStrategy.sol";
+import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
@@ -47,7 +47,7 @@ contract AC3_StaleOracle_WithdrawFreeze is ZenjiForkTestBase {
 
     UniversalRouterV3SingleHopSwapper public swapper;
     CrvToCrvUsdSwapper public crvSwapper;
-    UsdtPmUsdCrvUsdStakeDaoStrategy public strategy;
+    UsdtNgCrvUsdLpStakeDaoStrategy public strategy;
 
     // ============ Abstract implementations ============
 
@@ -114,7 +114,7 @@ contract AC3_StaleOracle_WithdrawFreeze is ZenjiForkTestBase {
             3_600
         );
 
-        strategy = new UsdtPmUsdCrvUsdStakeDaoStrategy(
+        strategy = new UsdtNgCrvUsdLpStakeDaoStrategy(
             USDT,
             expectedVaultAddress,
             owner,
@@ -301,7 +301,7 @@ contract AC3_StaleOracle_WithdrawFreeze is ZenjiForkTestBase {
     }
 
     /// @dev AC-3: Demonstrates that the freeze is USDT-variant specific.
-    ///      The crvUSD variant (PmUsdCrvUsdStakeDaoStrategy) does NOT use oracles for balanceOf.
+    ///      The crvUSD variant (NgCrvUsdLpStakeDaoStrategy) does NOT use oracles for balanceOf.
     ///      This test verifies the USDT variant is the vulnerable one.
     function test_AC3_impact_is_usdt_variant_only() public {
         _deployVault();
@@ -318,7 +318,7 @@ contract AC3_StaleOracle_WithdrawFreeze is ZenjiForkTestBase {
         strategy.balanceOf();
         console.log("  PASS USDT variant: balanceOf() reverts on stale USDT oracle");
 
-        // Note: If the vault used PmUsdCrvUsdStakeDaoStrategy (crvUSD variant),
+        // Note: If the vault used NgCrvUsdLpStakeDaoStrategy (crvUSD variant),
         // balanceOf() would NOT revert because it uses a 1:1 crvUSD pass-through
         // instead of oracle conversion.
     }

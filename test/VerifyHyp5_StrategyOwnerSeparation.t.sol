@@ -12,7 +12,7 @@ contract VerifyHyp5StrategyOwnerSeparation is Test {
 
     /// @notice Prove deployer is set as owner, and vault gov is a separate address.
     function test_HYP5_DeployerIsOwner_NotVaultGov() public pure {
-        // PROOF FROM CODE (PmUsdCrvUsdStakeDaoStrategy.sol:137):
+        // PROOF FROM CODE (NgCrvUsdLpStakeDaoStrategy.sol:137):
         //   owner = msg.sender;
         //
         // The constructor sets owner = msg.sender (the deployer EOA).
@@ -35,7 +35,7 @@ contract VerifyHyp5StrategyOwnerSeparation is Test {
 
     /// @notice Prove setSlippage() is callable by strategy owner DIRECTLY, bypassing vault gov.
     function test_HYP5_SetSlippage_AuthCheck() public pure {
-        // PROOF FROM CODE (PmUsdCrvUsdStakeDaoStrategy.sol:179-184):
+        // PROOF FROM CODE (NgCrvUsdLpStakeDaoStrategy.sol:179-184):
         //   function setSlippage(uint256 newSlippage) external {
         //       if (msg.sender != vault && msg.sender != owner) revert Unauthorized();
         //       if (newSlippage > MAX_SLIPPAGE) revert SlippageExceeded();
@@ -93,7 +93,7 @@ contract VerifyHyp5StrategyOwnerSeparation is Test {
 
     /// @notice Prove rescueERC20 scope: core tokens blocked, reward vault shares not blocked.
     function test_HYP5_RescueERC20_Scope() public pure {
-        // PROOF FROM CODE (PmUsdCrvUsdStakeDaoStrategy.sol:191-198):
+        // PROOF FROM CODE (NgCrvUsdLpStakeDaoStrategy.sol:191-198):
         //   function rescueERC20(address token, ...) external onlyOwner {
         //       if (token == address(debtAsset)   // USDT blocked
         //        || token == address(lpToken)     // LP token blocked

@@ -41,6 +41,9 @@ interface ICurveStableSwapNG {
     /// @return Virtual price scaled by 1e18
     function get_virtual_price() external view returns (uint256);
 
+    /// @notice Number of coins in the pool
+    function N_COINS() external view returns (uint256);
+
     /// @notice Get coin address by index
     /// @param i Coin index
     /// @return Coin address

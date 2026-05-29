@@ -6,7 +6,7 @@ import { Zenji } from "../src/Zenji.sol";
 import { ZenjiWbtcAaveStakeDao } from "../src/implementations/stakedao/ZenjiWbtcAaveStakeDao.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { UsdtPmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/UsdtPmUsdCrvUsdStakeDaoStrategy.sol";
+import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
 import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
@@ -149,7 +149,7 @@ contract VaultInvariants is Test {
             lpCrvUsdIndex = (coin0 == CRVUSD) ? int128(0) : int128(1);
         }
 
-        UsdtPmUsdCrvUsdStakeDaoStrategy strat = new UsdtPmUsdCrvUsdStakeDaoStrategy(
+        UsdtNgCrvUsdLpStakeDaoStrategy strat = new UsdtNgCrvUsdLpStakeDaoStrategy(
             address(IERC20(USDT)), address(0), owner,
             USDT_CRVUSD_POOL, PMUSD_CRVUSD_POOL,
             STAKE_DAO_VAULT, address(crvSwapper),

@@ -475,7 +475,7 @@ contract VerifyH1_EmergencyDoSTest is Test {
 
         // emergencyStep(0) calls withdrawAll/emergencyWithdraw in try/catch
         // Even if strategy.balanceOf() would revert, withdrawAll() itself does NOT call balanceOf
-        // The actual PmUsdCrvUsdStakeDaoStrategy._emergencyWithdraw() doesn't call balanceOf either
+        // The actual NgCrvUsdLpStakeDaoStrategy._emergencyWithdraw() doesn't call balanceOf either
         // So step 0 SUCCEEDS
         vm.prank(guardian);
         bool success = vault.emergencyStep0_withdrawYield();

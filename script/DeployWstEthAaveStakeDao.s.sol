@@ -10,7 +10,7 @@ import { WstEthOracle } from "../src/WstEthOracle.sol";
 import { UniswapMixedTwoHopSwapper } from "../src/swappers/base/UniswapMixedTwoHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { UsdtPmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/UsdtPmUsdCrvUsdStakeDaoStrategy.sol";
+import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { ZenjiWstEthAaveStakeDao } from "../src/implementations/stakedao/ZenjiWstEthAaveStakeDao.sol";
 
@@ -83,7 +83,7 @@ contract DeployWstEthAaveStakeDao is Script {
 
         int128 lpCrvUsdIndex = _lpCrvUsdIndex();
 
-        UsdtPmUsdCrvUsdStakeDaoStrategy strategy = new UsdtPmUsdCrvUsdStakeDaoStrategy(
+        UsdtNgCrvUsdLpStakeDaoStrategy strategy = new UsdtNgCrvUsdLpStakeDaoStrategy(
             USDT,
             address(0),
             gov,

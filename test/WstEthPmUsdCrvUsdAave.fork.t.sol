@@ -8,7 +8,7 @@ import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UniswapMixedTwoHopSwapper } from "../src/swappers/base/UniswapMixedTwoHopSwapper.sol";
 import { WstEthOracle } from "../src/WstEthOracle.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
-import { UsdtPmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/UsdtPmUsdCrvUsdStakeDaoStrategy.sol";
+import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { BaseSwapper } from "../src/swappers/base/BaseSwapper.sol";
@@ -48,7 +48,7 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
     UniswapMixedTwoHopSwapper public swapper;
     CrvToCrvUsdSwapper public crvSwapper;
     WstEthOracle public wstEthOracle;
-    UsdtPmUsdCrvUsdStakeDaoStrategy public strategy;
+    UsdtNgCrvUsdLpStakeDaoStrategy public strategy;
 
     // ============ Abstract implementations ============
 
@@ -147,7 +147,7 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
             3_600
         );
 
-        strategy = new UsdtPmUsdCrvUsdStakeDaoStrategy(
+        strategy = new UsdtNgCrvUsdLpStakeDaoStrategy(
             USDT,
             expectedVaultAddress,
             owner,

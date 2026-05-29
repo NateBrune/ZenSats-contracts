@@ -9,7 +9,7 @@ import { ZenjiRebalanceKeeper } from "../src/keepers/ZenjiRebalanceKeeper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import { UniswapMixedCurveSwapper } from "../src/swappers/base/UniswapMixedCurveSwapper.sol";
 import { LlamaLoanManager } from "../src/lenders/LlamaLoanManager.sol";
-import { PmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/PmUsdCrvUsdStakeDaoStrategy.sol";
+import { NgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/NgCrvUsdLpStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { ICurveTriCrypto } from "../src/interfaces/ICurveTriCrypto.sol";
 import { ZenjiWbtcLlamaStakeDao } from "../src/implementations/stakedao/ZenjiWbtcLlamaStakeDao.sol";
@@ -78,7 +78,7 @@ contract DeployWbtcLlamaStakeDao is Script {
 
         int128 lpCrvUsdIndex = _lpCrvUsdIndex();
 
-        PmUsdCrvUsdStakeDaoStrategy strategy = new PmUsdCrvUsdStakeDaoStrategy(
+        NgCrvUsdLpStakeDaoStrategy strategy = new NgCrvUsdLpStakeDaoStrategy(
             CRVUSD,
             address(0),
             gov,

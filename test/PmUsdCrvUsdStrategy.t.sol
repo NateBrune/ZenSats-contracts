@@ -5,7 +5,7 @@ import { Test } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { PmUsdCrvUsdStakeDaoStrategy } from "../src/strategies/lp/PmUsdCrvUsdStakeDaoStrategy.sol";
+import { NgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/NgCrvUsdLpStakeDaoStrategy.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
 import { IAavePool } from "../src/interfaces/IAavePool.sol";
 import { IFlashLoanSimpleReceiver } from "../src/interfaces/IFlashLoanSimpleReceiver.sol";
@@ -121,8 +121,12 @@ contract MockCurveStableSwapNG {
         return _virtualPrice;
     }
 
-    function coins(uint256) external pure returns (address) {
-        return address(0);
+    function N_COINS() external pure returns (uint256) {
+        return 2;
+    }
+
+    function coins(uint256 i) external view returns (address) {
+        return i == uint256(uint128(crvUsdIdx)) ? address(crvUSD) : address(pmUSD);
     }
 
     function balances(uint256) external pure returns (uint256) {
@@ -286,7 +290,7 @@ contract MockAavePool is IAavePool {
 
 // ============ Test Contract ============
 
-/// @notice Unit tests for crvUSD-native PmUsdCrvUsdStakeDaoStrategy (no USDT swap layer)
+/// @notice Unit tests for crvUSD-native NgCrvUsdLpStakeDaoStrategy (no USDT swap layer)
 contract PmUsdCrvUsdStrategyTest is Test {
     // Tokens
     MockERC20 wbtc;
@@ -310,7 +314,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
 
     // Protocol contracts
     AaveLoanManager loanManager;
-    PmUsdCrvUsdStakeDaoStrategy strategy;
+    NgCrvUsdLpStakeDaoStrategy strategy;
     Zenji vault;
     ZenjiViewHelper viewHelper;
 
@@ -380,7 +384,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
             3600
         );
 
-        strategy = new PmUsdCrvUsdStakeDaoStrategy(
+        strategy = new NgCrvUsdLpStakeDaoStrategy(
             address(crvUSD), // _crvUsd
             predictedVault, // _vault
             owner, // _owner
@@ -410,7 +414,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
     // ============ Basic Properties ============
 
     function test_name() public view {
-        assertEq(strategy.name(), "crvUSD -> pmUSD/crvUSD LP Strategy");
+        assertEq(strategy.name(), "crvUSD -> NG crvUSD/token LP Strategy");
     }
 
     function test_debtAsset_is_crvUsd() public view {
@@ -419,7 +423,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
 
     function test_lpCrvUsdIndex() public view {
         assertEq(strategy.lpCrvUsdIndex(), int128(1));
-        assertEq(strategy.lpPmUsdIndex(), 0);
+        assertEq(strategy.lpOtherIndex(), 0);
     }
 
     function test_owner_set() public view {
@@ -661,7 +665,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
 
     function test_constructor_zero_owner_reverts() public {
         vm.expectRevert();
-        new PmUsdCrvUsdStakeDaoStrategy(
+        new NgCrvUsdLpStakeDaoStrategy(
             address(crvUSD),
             address(lpPool),  // vault (any non-zero)
             address(0),       // owner = 0 → should revert

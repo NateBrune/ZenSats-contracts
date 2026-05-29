@@ -12,9 +12,9 @@ import { IERC20 } from "../../interfaces/IERC20.sol";
 /// @dev When the debt asset already equals the vault's accepted asset, subclasses inherit the
 ///      defaults verbatim (1:1 swaps + 1:1 value conversion). When a swap layer is needed
 ///      (e.g. USDT → crvUSD before depositing into an IPOR PlasmaVault), subclasses override:
-///        - _swapDebtToVaultAsset(amount, slippage)         — actual entry swap
-///        - _swapVaultAssetToDebt(amount, slippage)         — actual exit swap
-///        - _convertVaultAssetValueToDebt(amount) view      — oracle-based valuation
+///        - _swapDebtToYieldAsset(amount, slippage)         — actual entry swap
+///        - _swapYieldAssetToDebt(amount, slippage)         — actual exit swap
+///        - _convertYieldAssetValueToDebt(amount) view      — oracle-based valuation
 ///      Withdrawals may transiently revert when oracles are stale or pool slippage spikes;
 ///      no funds are stuck because all state changes revert atomically.
 abstract contract BaseVaultStrategy is BaseYieldStrategy {
@@ -47,7 +47,7 @@ abstract contract BaseVaultStrategy is BaseYieldStrategy {
     function balanceOf() public view virtual override returns (uint256) {
         uint256 vaultAssetValue = _vaultBalance();
         if (vaultAssetValue < 1) return 0;
-        return _convertVaultAssetValueToDebt(vaultAssetValue);
+        return _convertYieldAssetValueToDebt(vaultAssetValue);
     }
 
     /// @inheritdoc IYieldStrategy
@@ -61,7 +61,7 @@ abstract contract BaseVaultStrategy is BaseYieldStrategy {
 
     /// @dev 1) Optionally swap debt → vault asset. 2) Deposit into the vault.
     function _deposit(uint256 debtAmount) internal virtual override returns (uint256 underlyingDeposited) {
-        uint256 vaultAssetAmount = _swapDebtToVaultAsset(debtAmount, slippageTolerance);
+        uint256 vaultAssetAmount = _swapDebtToYieldAsset(debtAmount, slippageTolerance);
         if (vaultAssetAmount == 0) return 0;
         underlyingDeposited = _depositToVault(vaultAssetAmount);
     }
@@ -81,21 +81,21 @@ abstract contract BaseVaultStrategy is BaseYieldStrategy {
 
         uint256 vaultAssetReceived = _redeemFromVault(sharesToRedeem);
         if (vaultAssetReceived == 0) return 0;
-        received = _swapVaultAssetToDebt(vaultAssetReceived, slippageTolerance);
+        received = _swapYieldAssetToDebt(vaultAssetReceived, slippageTolerance);
     }
 
     /// @dev Redeem all, then optionally swap vault asset → debt at the normal slippage.
     function _withdrawAll() internal virtual override returns (uint256 received) {
         uint256 vaultAssetReceived = _redeemAllFromVault();
         if (vaultAssetReceived == 0) return 0;
-        received = _swapVaultAssetToDebt(vaultAssetReceived, slippageTolerance);
+        received = _swapYieldAssetToDebt(vaultAssetReceived, slippageTolerance);
     }
 
     /// @dev Same as _withdrawAll but at EMERGENCY_SLIPPAGE.
     function _emergencyWithdraw() internal virtual override returns (uint256 received) {
         uint256 vaultAssetReceived = _redeemAllFromVault();
         if (vaultAssetReceived == 0) return 0;
-        received = _swapVaultAssetToDebt(vaultAssetReceived, EMERGENCY_SLIPPAGE);
+        received = _swapYieldAssetToDebt(vaultAssetReceived, EMERGENCY_SLIPPAGE);
     }
 
     /// @dev External ERC4626 vaults auto-compound; no claimable rewards by default.
@@ -136,7 +136,7 @@ abstract contract BaseVaultStrategy is BaseYieldStrategy {
 
     /// @notice Convert a vault-asset-denominated amount into debt-asset terms (oracle, no swap).
     /// @dev Default: 1:1 (use when debt asset == vault asset).
-    function _convertVaultAssetValueToDebt(uint256 vaultAssetAmount)
+    function _convertYieldAssetValueToDebt(uint256 vaultAssetAmount)
         internal
         view
         virtual
@@ -147,7 +147,7 @@ abstract contract BaseVaultStrategy is BaseYieldStrategy {
 
     /// @notice Actual debt → vault-asset swap before depositing into the vault.
     /// @dev Default: 1:1 pass-through (no swap needed when debt asset == vault asset).
-    function _swapDebtToVaultAsset(uint256 debtAmount, uint256 /*slippage*/)
+    function _swapDebtToYieldAsset(uint256 debtAmount, uint256 /*slippage*/)
         internal
         virtual
         returns (uint256)
@@ -157,7 +157,7 @@ abstract contract BaseVaultStrategy is BaseYieldStrategy {
 
     /// @notice Actual vault-asset → debt swap after redeeming from the vault.
     /// @dev Default: 1:1 pass-through.
-    function _swapVaultAssetToDebt(uint256 vaultAssetAmount, uint256 /*slippage*/)
+    function _swapYieldAssetToDebt(uint256 vaultAssetAmount, uint256 /*slippage*/)
         internal
         virtual
         returns (uint256)
