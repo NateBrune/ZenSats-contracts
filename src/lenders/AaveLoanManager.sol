@@ -440,7 +440,12 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
                 collateralToken.safeTransfer(address(swapper), toSwap);
                 swapper.swapCollateralForDebt(toSwap);
                 uint256 debtDelta = debtToken.balanceOf(address(this)) - debtBefore;
-                if (expectedDebt > 0 && debtDelta < expectedDebt) {
+                // A clean zero means the swapper performed an atomic no-op and returned the
+                // collateral (e.g. a multi-hop pool could not fill a dust residual). Fall through
+                // to the defensive full-collateral sweep + final repayment assertion below rather
+                // than reverting here. A *partial* fill below the floor is a bad-price execution
+                // worth rejecting.
+                if (expectedDebt > 0 && debtDelta > 0 && debtDelta < expectedDebt) {
                     revert SwapperUnderperformed(expectedDebt, debtDelta);
                 }
             }

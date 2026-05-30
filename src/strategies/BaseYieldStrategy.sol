@@ -4,6 +4,7 @@ pragma solidity ^0.8.33;
 import { IYieldStrategy } from "../interfaces/IYieldStrategy.sol";
 import { IERC20 } from "../interfaces/IERC20.sol";
 import { SafeTransferLib } from "../libraries/SafeTransferLib.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /// @title BaseYieldStrategy
 /// @notice Abstract base for all yield strategies. Owns the IYieldStrategy plumbing
@@ -14,7 +15,7 @@ import { SafeTransferLib } from "../libraries/SafeTransferLib.sol";
 ///         - BaseLPStrategy   (lp/)    — deposit single-sided into an LP and stake the LP token.
 ///       Subclasses implement the five core hooks (_deposit/_withdraw/_withdrawAll/_harvest/
 ///       _emergencyWithdraw) and may override _onSlippageUpdate / _isProtectedToken.
-abstract contract BaseYieldStrategy is IYieldStrategy {
+abstract contract BaseYieldStrategy is IYieldStrategy, ReentrancyGuard {
     using SafeTransferLib for IERC20;
 
     // ============ Constants ============
@@ -49,11 +50,6 @@ abstract contract BaseYieldStrategy is IYieldStrategy {
     /// @notice Slippage tolerance applied to swap and LP-exit operations.
     uint256 public slippageTolerance;
 
-    /// @notice Reentrancy guard
-    uint256 private _status;
-    uint256 private constant _NOT_ENTERED = 1;
-    uint256 private constant _ENTERED = 2;
-
     // ============ Events ============
 
     event VaultInitialized(address indexed vault);
@@ -73,13 +69,6 @@ abstract contract BaseYieldStrategy is IYieldStrategy {
         _;
     }
 
-    modifier nonReentrant() {
-        if (_status == _ENTERED) revert ReentrancyError();
-        _status = _ENTERED;
-        _;
-        _status = _NOT_ENTERED;
-    }
-
     // ============ Constructor ============
 
     /// @param _debtAsset The debt asset token address
@@ -96,7 +85,6 @@ abstract contract BaseYieldStrategy is IYieldStrategy {
         }
         owner = _owner == address(0) ? msg.sender : _owner;
         slippageTolerance = DEFAULT_SLIPPAGE;
-        _status = _NOT_ENTERED;
     }
 
     // ============ Deferred Initialization ============

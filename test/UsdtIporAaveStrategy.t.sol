@@ -6,6 +6,7 @@ import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UsdtIporStrategy } from "../src/strategies/vault/UsdtIporStrategy.sol";
+import { UsdtCrvUsdSwapMixin } from "../src/strategies/UsdtCrvUsdSwapMixin.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
 import { IAavePool } from "../src/interfaces/IAavePool.sol";
 import { IFlashLoanSimpleReceiver } from "../src/interfaces/IFlashLoanSimpleReceiver.sol";
@@ -462,7 +463,7 @@ contract UsdtIporAaveStrategyTest is Test {
     // ============ Branch Coverage: constructor zero-address checks ============
 
     function test_constructor_zeroCrvUSD_reverts() public {
-        vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
+        vm.expectRevert(UsdtCrvUsdSwapMixin.UsdtSwapInvalidAddress.selector);
         new UsdtIporStrategy(
             address(usdt),
             address(0), // crvUSD = 0
@@ -477,7 +478,7 @@ contract UsdtIporAaveStrategyTest is Test {
     }
 
     function test_constructor_zeroCurvePool_reverts() public {
-        vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
+        vm.expectRevert(UsdtCrvUsdSwapMixin.UsdtSwapInvalidAddress.selector);
         new UsdtIporStrategy(
             address(usdt),
             address(crvUSD),
@@ -492,7 +493,7 @@ contract UsdtIporAaveStrategyTest is Test {
     }
 
     function test_constructor_zeroCrvUsdOracle_reverts() public {
-        vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
+        vm.expectRevert(UsdtCrvUsdSwapMixin.UsdtSwapInvalidAddress.selector);
         new UsdtIporStrategy(
             address(usdt),
             address(crvUSD),
@@ -507,7 +508,7 @@ contract UsdtIporAaveStrategyTest is Test {
     }
 
     function test_constructor_zeroUsdtOracle_reverts() public {
-        vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
+        vm.expectRevert(UsdtCrvUsdSwapMixin.UsdtSwapInvalidAddress.selector);
         new UsdtIporStrategy(
             address(usdt),
             address(crvUSD),

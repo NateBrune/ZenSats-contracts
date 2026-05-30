@@ -6,6 +6,7 @@ import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
+import { UsdtCrvUsdSwapMixin } from "../src/strategies/UsdtCrvUsdSwapMixin.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
 import { IAavePool } from "../src/interfaces/IAavePool.sol";
 import { IFlashLoanSimpleReceiver } from "../src/interfaces/IFlashLoanSimpleReceiver.sol";
@@ -170,8 +171,12 @@ contract MockCurveStableSwapNG {
         return 1e18;
     }
 
-    function coins(uint256) external pure returns (address) {
-        return address(0);
+    function N_COINS() external pure returns (uint256) {
+        return 2;
+    }
+
+    function coins(uint256 i) external view returns (address) {
+        return i == uint256(uint128(crvUsdIdx)) ? address(crvUSD) : address(pmUSD);
     }
 
     function balances(uint256) external pure returns (uint256) {
@@ -640,7 +645,7 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
     // ============ View Function Tests ============
 
     function test_name() public view {
-        assertEq(strategy.name(), "USDT -> pmUSD/crvUSD LP Strategy");
+        assertEq(strategy.name(), "USDT -> NG crvUSD/token LP Strategy");
     }
 
     function test_underlyingAsset() public view {
@@ -902,7 +907,7 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
 
 
     function test_constructor_zeroUsdtCrvUsdPool_reverts() public {
-        vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
+        vm.expectRevert(UsdtCrvUsdSwapMixin.UsdtSwapInvalidAddress.selector);
         new UsdtNgCrvUsdLpStakeDaoStrategy(
             address(usdt),
             address(vault),
@@ -982,7 +987,7 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
     }
 
     function test_constructor_zeroUsdtOracle_reverts() public {
-        vm.expectRevert(IYieldStrategy.InvalidAddress.selector);
+        vm.expectRevert(UsdtCrvUsdSwapMixin.UsdtSwapInvalidAddress.selector);
         new UsdtNgCrvUsdLpStakeDaoStrategy(
             address(usdt),
             address(vault),

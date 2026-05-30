@@ -24,6 +24,7 @@ abstract contract BaseNgCrvUsdLpStakeDaoStrategy is BaseCurveStakeDaoStrategy {
     uint256 public immutable lpOtherIndex;
 
     error UnsupportedCoinCount();
+    error CrvUsdIndexMismatch();
 
     /// @param _debtAsset     Debt token accepted by the vault (crvUSD or USDT depending on variant).
     /// @param _vault         Zenji vault address.
@@ -61,10 +62,16 @@ abstract contract BaseNgCrvUsdLpStakeDaoStrategy is BaseCurveStakeDaoStrategy {
             _crvOracle
         )
     {
-        if (ICurveStableSwapNG(_lpPool).N_COINS() != 2) revert UnsupportedCoinCount();
+        ICurveStableSwapNG pool = ICurveStableSwapNG(_lpPool);
+        if (pool.N_COINS() != 2) revert UnsupportedCoinCount();
+        // crvUSD must actually sit at the declared index — guards a deploy-time index mistake
+        // that would otherwise make the strategy add/exit on the wrong coin.
+        if (pool.coins(uint256(uint128(_lpCrvUsdIndex))) != address(CRVUSD)) {
+            revert CrvUsdIndexMismatch();
+        }
         uint256 otherIdx = _lpCrvUsdIndex == int128(0) ? 1 : 0;
         lpOtherIndex = otherIdx;
-        otherCoin = IERC20(ICurveStableSwapNG(_lpPool).coins(otherIdx));
+        otherCoin = IERC20(pool.coins(otherIdx));
     }
 
     // ============ BaseLPStrategy Hook: Add Liquidity ============
@@ -89,11 +96,14 @@ abstract contract BaseNgCrvUsdLpStakeDaoStrategy is BaseCurveStakeDaoStrategy {
         uint256 expectedLp = pool.calc_token_amount(amounts, true);
         uint256 minLp = (expectedLp * (PRECISION - LP_SLIPPAGE)) / PRECISION;
 
-        // Oracle floor via cached unit value — immune to same-block manipulation.
+        // Oracle floor via cached unit value — immune to same-block manipulation. Applied to the
+        // crvUSD amount only: the other coin appears solely as a donated residual (zero in normal
+        // flow), is a windfall rather than user capital, and may use different decimals — so the
+        // manipulation backstop covers the crvUSD deposit while the spot LP_SLIPPAGE floor above
+        // still protects the residual portion.
         uint256 safeVP = _getSafeUnitValue();
-        uint256 totalValue = crvUsdAmount + otherAmount;
         uint256 oracleMinLp =
-            (totalValue * PRECISION * (PRECISION - LP_SLIPPAGE)) / (safeVP * PRECISION);
+            (crvUsdAmount * PRECISION * (PRECISION - LP_SLIPPAGE)) / (safeVP * PRECISION);
         if (oracleMinLp > minLp) minLp = oracleMinLp;
 
         lpReceived = pool.add_liquidity(amounts, minLp);

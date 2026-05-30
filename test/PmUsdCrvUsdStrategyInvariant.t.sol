@@ -213,8 +213,12 @@ contract StratMockLpPool {
         return 1e18;
     }
 
+    function N_COINS() external pure returns (uint256) {
+        return 2;
+    }
+
     function coins(uint256 i) external view returns (address) {
-        return i == uint256(uint128(crvUsdIndex)) ? address(crvUSD) : address(0);
+        return i == uint256(uint128(crvUsdIndex)) ? address(crvUSD) : address(pmUSD);
     }
 
     function balances(uint256) external pure returns (uint256) {
@@ -452,8 +456,13 @@ contract PmUsdCrvUsdStrategyInvariantTest is Test {
     function setUp() public {
         // Deploy mock tokens
         usdt = new StratMockUSDT();
-        crvUSD = new StratMockCrvUSD();
-        crv = new StratMockCRV();
+        // crvUSD and CRV are hardcoded mainnet constants inside the strategy bases, so the mocks
+        // must live at those addresses for the strategy's transfers/balances to be consistent
+        // (and for the crvUSD-index deploy guard to pass).
+        vm.etch(0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E, address(new StratMockCrvUSD()).code);
+        crvUSD = StratMockCrvUSD(0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E);
+        vm.etch(0xD533a949740bb3306d119CC777fa900bA034cd52, address(new StratMockCRV()).code);
+        crv = StratMockCRV(0xD533a949740bb3306d119CC777fa900bA034cd52);
         pmUsd = new StratMockPmUSD();
         lpToken = new StratMockLP();
 

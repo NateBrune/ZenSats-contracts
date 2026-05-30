@@ -171,7 +171,10 @@ contract H7MockCurveStableSwapNG {
     }
 
     function get_virtual_price() external pure returns (uint256) { return 1e18; }
-    function coins(uint256) external pure returns (address) { return address(0); }
+    function N_COINS() external pure returns (uint256) { return 2; }
+    function coins(uint256 i) external view returns (address) {
+        return i == uint256(uint128(crvUsdIdx)) ? address(crvUSD) : address(pmUSD);
+    }
     function balances(uint256) external pure returns (uint256) { return 0; }
     function exchange(int128, int128, uint256, uint256) external pure returns (uint256) { return 0; }
     function get_dy(int128, int128, uint256) external pure returns (uint256) { return 0; }

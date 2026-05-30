@@ -1106,7 +1106,7 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
 
     function test_strategyName() public {
         _deployVault();
-        assertEq(strategy.name(), "USDT -> pmUSD/crvUSD LP Strategy");
+        assertEq(strategy.name(), "USDT -> NG crvUSD/token LP Strategy");
     }
 
     function test_pendingRewards_view() public {

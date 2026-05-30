@@ -389,7 +389,7 @@ contract WstEthCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
 
     function test_strategyName() public {
         _deployVault();
-        assertEq(strategy.name(), "crvUSD -> pmUSD/crvUSD LP Strategy");
+        assertEq(strategy.name(), "crvUSD -> NG crvUSD/token LP Strategy");
     }
 
     function test_pendingRewards_view() public {

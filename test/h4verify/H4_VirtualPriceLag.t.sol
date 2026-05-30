@@ -78,11 +78,16 @@ contract MockLpPoolH4 {
         return amounts[uint256(uint128(crvUsdIdx))] + amounts[pmUsdIdx];
     }
 
-    function calc_withdraw_one_coin(uint256 burn_amount, int128) external pure returns (uint256) {
-        return burn_amount;
+    function calc_withdraw_one_coin(uint256 burn_amount, int128) external view returns (uint256) {
+        // Track the real (possibly jumped) virtual price so balanceOf's min(VP, exit) is bound
+        // by the cached-VP cap, not an unrealistic 1:1 exit quote.
+        return (burn_amount * virtualPrice) / 1e18;
     }
 
-    function coins(uint256) external pure returns (address) { return address(0); }
+    function N_COINS() external pure returns (uint256) { return 2; }
+    function coins(uint256 i) external view returns (address) {
+        return i == uint256(uint128(crvUsdIdx)) ? address(crvUSD) : address(pmUSD);
+    }
     function balances(uint256) external pure returns (uint256) { return 0; }
     function exchange(int128, int128, uint256, uint256) external pure returns (uint256) { return 0; }
     function get_dy(int128, int128, uint256) external pure returns (uint256) { return 0; }

@@ -123,9 +123,16 @@ contract CbBtcWbtcUsdtSwapper is BaseSwapper, ISwapper {
 
         wbtcToken.ensureApproval(address(triCryptoPool), wbtcReceived);
         uint256 debtBefore = debtToken.balanceOf(address(this));
-        debtReceived = _exchangeThree(
-            triWbtcIndex, triUsdtIndex, wbtcReceived, minUsdt, debtToken, debtBefore
-        );
+        if (!_exchangeThree(triWbtcIndex, triUsdtIndex, wbtcReceived, minUsdt)) {
+            // Hop 2 (WBTC->USDT) could not fill at the floor (e.g. TriCrypto prices a dust
+            // residual below its own quote). Unwind hop 1 so no WBTC is stranded: swap the WBTC
+            // back to cbBTC and return it to the caller. The caller (loan manager) then falls
+            // through to its defensive full-collateral sweep rather than reverting the unwind.
+            wbtcToken.ensureApproval(address(cbBtcPool), wbtcReceived);
+            _exchangeTwo(wbtcIndex, cbBtcIndex, wbtcReceived, 0, msg.sender);
+            return 0;
+        }
+        debtReceived = debtToken.balanceOf(address(this)) - debtBefore;
         if (debtReceived > 0) {
             _safeTransferDebt(msg.sender, debtReceived);
         }
@@ -142,9 +149,13 @@ contract CbBtcWbtcUsdtSwapper is BaseSwapper, ISwapper {
         uint256 minWbtc = expectedWbtc > 0 ? _applySlippageDown(expectedWbtc) : 0;
         debtToken.ensureApproval(address(triCryptoPool), debtAmount);
         uint256 wbtcBefore = wbtcToken.balanceOf(address(this));
-        uint256 wbtcReceived = _exchangeThree(
-            triUsdtIndex, triWbtcIndex, debtAmount, minWbtc, wbtcToken, wbtcBefore
-        );
+        if (!_exchangeThree(triUsdtIndex, triWbtcIndex, debtAmount, minWbtc)) {
+            // Hop 1 (USDT->WBTC) could not fill — the debt was not consumed (atomic revert).
+            // Return the unspent debt to the caller rather than stranding it in the swapper.
+            _safeTransferDebt(msg.sender, debtAmount);
+            return 0;
+        }
+        uint256 wbtcReceived = wbtcToken.balanceOf(address(this)) - wbtcBefore;
         if (wbtcReceived == 0) return 0;
 
         uint256 expectedCbBtc = _safeGetDyTwo(wbtcIndex, cbBtcIndex, wbtcReceived);
@@ -245,24 +256,18 @@ contract CbBtcWbtcUsdtSwapper is BaseSwapper, ISwapper {
         return false;
     }
 
-    function _exchangeThree(
-        uint256 i,
-        uint256 j,
-        uint256 dx,
-        uint256 minOut,
-        IERC20 outToken,
-        uint256 balanceBefore
-    ) private returns (uint256 amountOut) {
-        try triCryptoPool.exchange(i, j, dx, minOut, false) returns (uint256 outAmount) {
-            amountOut = outAmount;
+    /// @return ok true if the TriCrypto exchange succeeded; false if it reverted (e.g. the pool
+    ///         filled below `minOut` for a dust amount). On false the input was NOT consumed —
+    ///         Curve reverts atomically — so the caller must recover the (still-held) input token.
+    ///         The caller reads the output via its own balance delta.
+    function _exchangeThree(uint256 i, uint256 j, uint256 dx, uint256 minOut)
+        private
+        returns (bool ok)
+    {
+        try triCryptoPool.exchange(i, j, dx, minOut, false) returns (uint256) {
+            return true;
         } catch {
-            revert TransferFailed();
-        }
-
-        // Handle older pools that might not return amountOut
-        if (amountOut == 0) {
-            uint256 balanceAfter = outToken.balanceOf(address(this));
-            amountOut = balanceAfter > balanceBefore ? balanceAfter - balanceBefore : 0;
+            return false;
         }
     }
 
