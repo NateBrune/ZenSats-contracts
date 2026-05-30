@@ -12,7 +12,9 @@ import { UniswapMixedCurveSwapper } from "../src/swappers/base/UniswapMixedCurve
 import { LlamaLoanManager } from "../src/lenders/LlamaLoanManager.sol";
 import { NgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/NgCrvUsdLpStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
-import { ZenjiWstEthLlamaStakeDao } from "../src/implementations/stakedao/ZenjiWstEthLlamaStakeDao.sol";
+import {
+    ZenjiWstEthLlamaStakeDao
+} from "../src/implementations/stakedao/ZenjiWstEthLlamaStakeDao.sol";
 
 /// @notice Deploys wstETH/crvUSD vault with pmUSD/crvUSD Stake DAO strategy on LlamaLend
 /// @dev IMPORTANT: Verify pool addresses on-chain before deploying to mainnet.
@@ -38,8 +40,8 @@ contract DeployWstEthLlamaStakeDao is Script {
 
     // Uniswap V3 wstETH/WETH (fee=100) + Curve TriCRV for WETH↔crvUSD
     address constant UNIVERSAL_ROUTER = 0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af;
-    uint24 constant FEE_WSTETH_WETH = 100;   // V3 0.01 %
-    uint256 constant MAX_COLLATERAL_STALENESS = 3600; // 1 hour
+    uint24 constant FEE_WSTETH_WETH = 100; // V3 0.01 %
+    uint256 constant MAX_COLLATERAL_STALENESS = 90000; // 25h — WstEthOracle's stETH/ETH leg has a 24h heartbeat
 
     // Curve TriCRV: crvUSD/CRV/WETH
     address constant CRV_CRVUSD_TRICRYPTO = 0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14;
@@ -103,7 +105,8 @@ contract DeployWstEthLlamaStakeDao is Script {
             address(wstEthOracle),
             CRVUSD_USD_ORACLE,
             address(swapper),
-            address(0)
+            address(0),
+            90000
         );
 
         ZenjiWstEthLlamaStakeDao vault = new ZenjiWstEthLlamaStakeDao(

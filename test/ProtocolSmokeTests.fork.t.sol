@@ -8,12 +8,16 @@ import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { LlamaLoanManager } from "../src/lenders/LlamaLoanManager.sol";
 import { CurveTwoCryptoSwapper } from "../src/swappers/base/CurveTwoCryptoSwapper.sol";
 import { CurveThreeCryptoSwapper } from "../src/swappers/base/CurveThreeCryptoSwapper.sol";
-import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
+import {
+    UniversalRouterV3SingleHopSwapper
+} from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { BaseSwapper } from "../src/swappers/base/BaseSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import { UsdtIporStrategy } from "../src/strategies/vault/UsdtIporStrategy.sol";
 import { CrvUsdIporStrategy } from "../src/strategies/vault/CrvUsdIporStrategy.sol";
-import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
+import {
+    UsdtNgCrvUsdLpStakeDaoStrategy
+} from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
 import { ILoanManager } from "../src/interfaces/ILoanManager.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
@@ -131,7 +135,10 @@ contract ProtocolSmokeTests is Test {
 
         // When Aave USDT hits ~100% utilization, DefaultReserveInterestRateStrategyV2
         // overflows (panic 0x11) on any new borrow. Skip Aave tests in that state.
-        if (IERC20(USDT).balanceOf(AAVE_A_USDT) < 1000e6) { vm.skip(true); return; }
+        if (IERC20(USDT).balanceOf(AAVE_A_USDT) < 1000e6) {
+            vm.skip(true);
+            return;
+        }
     }
 
     function _syncOracles() internal {
@@ -435,7 +442,8 @@ contract ProtocolSmokeTests is Test {
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
             address(swapper),
-            expectedVaultAddress
+            expectedVaultAddress,
+            3600
         );
 
         // Deploy vault
@@ -523,7 +531,8 @@ contract ProtocolSmokeTests is Test {
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
             address(swapper),
-            expectedVaultAddress
+            expectedVaultAddress,
+            3600
         );
 
         Zenji vault = new Zenji(
@@ -583,7 +592,8 @@ contract ProtocolSmokeTests is Test {
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
             address(swapper),
-            expectedVaultAddress
+            expectedVaultAddress,
+            3600
         );
 
         Zenji vault = new Zenji(
@@ -628,15 +638,15 @@ contract ProtocolSmokeTests is Test {
             owner, WBTC, CRVUSD, WBTC_CRVUSD_POOL, 1, 0, BTC_USD_ORACLE, CRVUSD_USD_ORACLE
         );
 
-        // Gov sets slippage directly
+        // Gov sets slippage directly (at the 5% cap)
         vm.prank(owner);
-        swapper.setSlippage(10e16); // 10%
-        assertEq(swapper.slippage(), 10e16, "Slippage should be updated to 10%");
+        swapper.setSlippage(5e16); // 5% (MAX_SLIPPAGE)
+        assertEq(swapper.slippage(), 5e16, "Slippage should be updated to 5%");
 
         // Gov can update slippage again
         vm.prank(owner);
-        swapper.setSlippage(5e16); // 5%
-        assertEq(swapper.slippage(), 5e16, "Slippage should be updated to 5%");
+        swapper.setSlippage(2e16); // 2%
+        assertEq(swapper.slippage(), 2e16, "Slippage should be updated to 2%");
 
         // Non-gov cannot set slippage
         vm.prank(makeAddr("stranger"));

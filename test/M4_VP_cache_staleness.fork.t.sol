@@ -5,10 +5,16 @@ import { console } from "forge-std/Test.sol";
 import { ZenjiForkTestBase } from "./base/ZenjiForkTestBase.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
+import {
+    UniversalRouterV3SingleHopSwapper
+} from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
-import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
-import { BaseNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/BaseNgCrvUsdLpStakeDaoStrategy.sol";
+import {
+    UsdtNgCrvUsdLpStakeDaoStrategy
+} from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
+import {
+    BaseNgCrvUsdLpStakeDaoStrategy
+} from "../src/strategies/lp/BaseNgCrvUsdLpStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";

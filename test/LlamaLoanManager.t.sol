@@ -285,7 +285,8 @@ contract LlamaLoanManagerTest is LoanManagerTestBase {
             address(oracle),
             address(crvUsdOracle),
             address(swapper),
-            vault
+            vault,
+            3600
         );
         manager = ILoanManager(address(llamaManager));
         collateral = wbtc;
@@ -301,7 +302,8 @@ contract LlamaLoanManagerTest is LoanManagerTestBase {
             address(oracle),
             address(crvUsdOracle),
             address(swapper),
-            address(0)
+            address(0),
+            3600
         );
         return ILoanManager(address(deferred));
     }
@@ -590,7 +592,8 @@ contract LlamaLoanManagerTest is LoanManagerTestBase {
             address(oracle),
             address(crvUsdOracle),
             address(swapper),
-            vault
+            vault,
+            3600
         );
     }
 
@@ -604,7 +607,8 @@ contract LlamaLoanManagerTest is LoanManagerTestBase {
             address(oracle),
             address(crvUsdOracle),
             address(swapper),
-            vault
+            vault,
+            3600
         );
     }
 
@@ -618,7 +622,8 @@ contract LlamaLoanManagerTest is LoanManagerTestBase {
             address(oracle),
             address(crvUsdOracle),
             address(swapper),
-            vault
+            vault,
+            3600
         );
     }
 }

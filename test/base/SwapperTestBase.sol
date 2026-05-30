@@ -57,10 +57,10 @@ abstract contract SwapperTestBase is Test {
         vm.expectRevert(BaseSwapper.Unauthorized.selector);
         s.setSlippage(10e16);
 
-        // Direct slippage set by gov
+        // Direct slippage set by gov (at the 5% cap)
         vm.prank(owner);
-        s.setSlippage(10e16);
-        assertEq(s.slippage(), 10e16, "Slippage should be updated");
+        s.setSlippage(5e16);
+        assertEq(s.slippage(), 5e16, "Slippage should be updated");
 
         // Governance transfer
         address newGov = makeAddr("newGov");
@@ -81,7 +81,7 @@ abstract contract SwapperTestBase is Test {
 
         vm.prank(owner);
         vm.expectRevert(BaseSwapper.InvalidSlippage.selector);
-        s.setSlippage(1e18 + 1);
+        s.setSlippage(1e18 + 1); // reverts for all swapper types (reward swapper caps at PRECISION)
     }
 
     /// @notice Registered vault can also call setSlippage directly

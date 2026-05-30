@@ -75,11 +75,7 @@ contract MockKeeperLoanManager is ILoanManager {
         value = 0;
     }
 
-    function calculateBorrowAmount(uint256, uint256)
-        external
-        pure
-        returns (uint256 borrowAmount)
-    {
+    function calculateBorrowAmount(uint256, uint256) external pure returns (uint256 borrowAmount) {
         borrowAmount = 0;
     }
 
@@ -91,7 +87,11 @@ contract MockKeeperLoanManager is ILoanManager {
         minCollat = 0;
     }
 
-    function getPositionValues() external pure returns (uint256 collateralValue, uint256 debtValue) {
+    function getPositionValues()
+        external
+        pure
+        returns (uint256 collateralValue, uint256 debtValue)
+    {
         collateralValue = 0;
         debtValue = 0;
     }

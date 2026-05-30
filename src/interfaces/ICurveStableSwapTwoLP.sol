@@ -24,8 +24,5 @@ interface ICurveStableSwapTwoLP is ICurveStableSwap {
         returns (uint256);
 
     /// @notice Estimate single-sided withdrawal amount.
-    function calc_withdraw_one_coin(uint256 _burn_amount, int128 i)
-        external
-        view
-        returns (uint256);
+    function calc_withdraw_one_coin(uint256 _burn_amount, int128 i) external view returns (uint256);
 }

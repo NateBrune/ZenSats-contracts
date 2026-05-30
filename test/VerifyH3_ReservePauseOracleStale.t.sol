@@ -207,7 +207,8 @@ contract VerifyH3_ReservePauseOracleStale is Test {
         aToken = new H3MockERC20("aWBTC", "aWBTC", 8);
         vDebt = new H3MockERC20("vUSDT", "vUSDT", 6);
 
-        pool = new H3MockAavePool(address(collateral), address(debt), address(aToken), address(vDebt));
+        pool =
+            new H3MockAavePool(address(collateral), address(debt), address(aToken), address(vDebt));
 
         btcOracle = new H3MockOracle(8, 100_000e8);
         usdtOracle = new H3MockOracle(8, 1e8);

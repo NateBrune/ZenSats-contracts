@@ -584,7 +584,8 @@ contract LlamaLoanManagerInvariantTest is Test {
             address(collateralOracle),
             address(debtOracle),
             address(swapper),
-            vault
+            vault,
+            3600
         );
 
         // Deploy handler

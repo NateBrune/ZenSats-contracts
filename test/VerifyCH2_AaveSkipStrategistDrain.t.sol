@@ -41,31 +41,75 @@ contract MockLoanManagerCH2 is ILoanManager {
         debtAsset = _debt;
     }
 
-    function createLoan(uint256, uint256) external override {}
-    function addCollateral(uint256) external override {}
-    function borrowMore(uint256, uint256) external override {}
-    function repayDebt(uint256) external override {}
-    function removeCollateral(uint256) external override {}
-    function unwindPosition(uint256) external override {}
-    function transferCollateral(address, uint256) external override {}
-    function transferDebt(address, uint256) external override {}
-    function maxLtvBps() external pure override returns (uint256) { return type(uint256).max; }
-    function checkOracleFreshness() external view override {}
+    function createLoan(uint256, uint256) external override { }
+    function addCollateral(uint256) external override { }
+    function borrowMore(uint256, uint256) external override { }
+    function repayDebt(uint256) external override { }
+    function removeCollateral(uint256) external override { }
+    function unwindPosition(uint256) external override { }
+    function transferCollateral(address, uint256) external override { }
+    function transferDebt(address, uint256) external override { }
 
-    function getCurrentLTV() external pure override returns (uint256) { return 0; }
-    function getCurrentCollateral() external pure override returns (uint256) { return 0; }
-    function getCurrentDebt() external pure override returns (uint256) { return 0; }
-    function getHealth() external pure override returns (int256) { return 1e18; }
-    function loanExists() external pure override returns (bool) { return false; }
-    function getCollateralValue(uint256 a) external pure override returns (uint256) { return a; }
-    function getDebtValue(uint256 a) external pure override returns (uint256) { return a; }
-    function calculateBorrowAmount(uint256, uint256) external pure override returns (uint256) { return 0; }
-    function healthCalculator(int256, int256) external pure override returns (int256) { return 1e18; }
-    function minCollateral(uint256, uint256) external pure override returns (uint256) { return 0; }
-    function getPositionValues() external pure override returns (uint256, uint256) { return (0, 0); }
-    function getNetCollateralValue() external pure override returns (uint256) { return 0; }
-    function getCollateralBalance() external pure override returns (uint256) { return 0; }
-    function getDebtBalance() external pure override returns (uint256) { return 0; }
+    function maxLtvBps() external pure override returns (uint256) {
+        return type(uint256).max;
+    }
+    function checkOracleFreshness() external view override { }
+
+    function getCurrentLTV() external pure override returns (uint256) {
+        return 0;
+    }
+
+    function getCurrentCollateral() external pure override returns (uint256) {
+        return 0;
+    }
+
+    function getCurrentDebt() external pure override returns (uint256) {
+        return 0;
+    }
+
+    function getHealth() external pure override returns (int256) {
+        return 1e18;
+    }
+
+    function loanExists() external pure override returns (bool) {
+        return false;
+    }
+
+    function getCollateralValue(uint256 a) external pure override returns (uint256) {
+        return a;
+    }
+
+    function getDebtValue(uint256 a) external pure override returns (uint256) {
+        return a;
+    }
+
+    function calculateBorrowAmount(uint256, uint256) external pure override returns (uint256) {
+        return 0;
+    }
+
+    function healthCalculator(int256, int256) external pure override returns (int256) {
+        return 1e18;
+    }
+
+    function minCollateral(uint256, uint256) external pure override returns (uint256) {
+        return 0;
+    }
+
+    function getPositionValues() external pure override returns (uint256, uint256) {
+        return (0, 0);
+    }
+
+    function getNetCollateralValue() external pure override returns (uint256) {
+        return 0;
+    }
+
+    function getCollateralBalance() external pure override returns (uint256) {
+        return 0;
+    }
+
+    function getDebtBalance() external pure override returns (uint256) {
+        return 0;
+    }
 }
 
 contract MockYieldStrategyCH2 is IYieldStrategy {
@@ -85,7 +129,9 @@ contract MockYieldStrategyCH2 is IYieldStrategy {
         return bal;
     }
 
-    function deposit(uint256) external pure override returns (uint256) { return 0; }
+    function deposit(uint256) external pure override returns (uint256) {
+        return 0;
+    }
 
     function withdraw(uint256 amt) external override returns (uint256) {
         uint256 bal = _token.balanceOf(address(this));
@@ -94,7 +140,9 @@ contract MockYieldStrategyCH2 is IYieldStrategy {
         return out;
     }
 
-    function harvest() external pure override returns (uint256) { return 0; }
+    function harvest() external pure override returns (uint256) {
+        return 0;
+    }
 
     function emergencyWithdraw() external override returns (uint256) {
         uint256 bal = _token.balanceOf(address(this));
@@ -102,19 +150,32 @@ contract MockYieldStrategyCH2 is IYieldStrategy {
         return bal;
     }
 
-    function underlyingAsset() external view override returns (address) { return asset; }
+    function underlyingAsset() external view override returns (address) {
+        return asset;
+    }
 
     function balanceOf() external view override returns (uint256) {
         return _token.balanceOf(address(this));
     }
 
-    function costBasis() external pure override returns (uint256) { return 0; }
-    function unrealizedProfit() external pure override returns (uint256) { return 0; }
-    function pendingRewards() external pure override returns (uint256) { return 0; }
-    function name() external pure override returns (string memory) { return "MockStrategy"; }
-    function transferOwnerFromVault(address) external override {}
-    function setSlippage(uint256) external override {}
-    function updateCachedVirtualPrice() external {}
+    function costBasis() external pure override returns (uint256) {
+        return 0;
+    }
+
+    function unrealizedProfit() external pure override returns (uint256) {
+        return 0;
+    }
+
+    function pendingRewards() external pure override returns (uint256) {
+        return 0;
+    }
+
+    function name() external pure override returns (string memory) {
+        return "MockStrategy";
+    }
+    function transferOwnerFromVault(address) external override { }
+    function setSlippage(uint256) external override { }
+    function updateCachedVirtualPrice() external { }
 }
 
 contract MockSwapperCH2 is ISwapper {
@@ -126,7 +187,9 @@ contract MockSwapperCH2 is ISwapper {
         debtToken = MockERC20CH2(_debt);
     }
 
-    function quoteCollateralForDebt(uint256 d) external pure returns (uint256) { return d; }
+    function quoteCollateralForDebt(uint256 d) external pure returns (uint256) {
+        return d;
+    }
 
     function swapCollateralForDebt(uint256 a) external returns (uint256) {
         debtToken.mint(msg.sender, a);

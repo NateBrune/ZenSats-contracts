@@ -25,7 +25,6 @@ import { IERC20 } from "../../interfaces/IERC20.sol";
 ///      `EMERGENCY_SLIPPAGE` — no VP-based exit floor is applied, so users can always exit
 ///      during depeg events by accepting the market price.
 abstract contract BaseLPStrategy is BaseYieldStrategy {
-
     // ============ Constants ============
 
     /// @notice Slippage applied to LP add operations (stable pool default).
@@ -122,6 +121,13 @@ abstract contract BaseLPStrategy is BaseYieldStrategy {
     function _updateCachedUnitValue() internal {
         cachedVirtualPrice = _getSafeUnitValue();
         lastVpUpdate = block.timestamp;
+    }
+
+    /// @inheritdoc BaseYieldStrategy
+    /// @dev Ratchet the cache before the outer withdraw() reads balanceOf() for cost-basis,
+    ///      so it matches the post-update value _withdraw() uses for share redemption.
+    function _syncValueCache() internal override {
+        _updateCachedUnitValue();
     }
 
     /// @notice Manipulation-resistant unit value: clamp current to ±MAX_VP_DEVIATION around
@@ -288,7 +294,10 @@ abstract contract BaseLPStrategy is BaseYieldStrategy {
     }
 
     /// @notice Actual debt → lpAsset swap before LP operations.
-    function _swapDebtToYieldAsset(uint256 debtAmount, uint256 /*slippage*/)
+    function _swapDebtToYieldAsset(
+        uint256 debtAmount,
+        uint256 /*slippage*/
+    )
         internal
         virtual
         returns (uint256)
@@ -297,7 +306,10 @@ abstract contract BaseLPStrategy is BaseYieldStrategy {
     }
 
     /// @notice Actual lpAsset → debt swap after LP exit.
-    function _swapYieldAssetToDebt(uint256 lpAssetAmount, uint256 /*slippage*/)
+    function _swapYieldAssetToDebt(
+        uint256 lpAssetAmount,
+        uint256 /*slippage*/
+    )
         internal
         virtual
         returns (uint256)

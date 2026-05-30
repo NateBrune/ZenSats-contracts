@@ -32,14 +32,22 @@ abstract contract AaveSecurityTestMixin is ZenjiForkTestBase {
         ILoanManager lm = ILoanManager(address(loanManager));
 
         vm.startPrank(stranger);
-        vm.expectRevert(); lm.createLoan(1, 1);
-        vm.expectRevert(); lm.addCollateral(1);
-        vm.expectRevert(); lm.borrowMore(1, 1);
-        vm.expectRevert(); lm.repayDebt(1);
-        vm.expectRevert(); lm.removeCollateral(1);
-        vm.expectRevert(); lm.unwindPosition(1);
-        vm.expectRevert(); lm.transferCollateral(stranger, 1);
-        vm.expectRevert(); lm.transferDebt(stranger, 1);
+        vm.expectRevert();
+        lm.createLoan(1, 1);
+        vm.expectRevert();
+        lm.addCollateral(1);
+        vm.expectRevert();
+        lm.borrowMore(1, 1);
+        vm.expectRevert();
+        lm.repayDebt(1);
+        vm.expectRevert();
+        lm.removeCollateral(1);
+        vm.expectRevert();
+        lm.unwindPosition(1);
+        vm.expectRevert();
+        lm.transferCollateral(stranger, 1);
+        vm.expectRevert();
+        lm.transferDebt(stranger, 1);
         vm.stopPrank();
     }
 
@@ -263,15 +271,20 @@ abstract contract AaveSecurityTestMixin is ZenjiForkTestBase {
 
     // ============ Realistic mainnet lifecycle ============
 
-    address constant PMUSD_CRVUSD_POOL_MIXIN  = 0xEcb0F0d68C19BdAaDAEbE24f6752A4Db34e2c2cb;
-    address constant PMUSD_MIXIN              = 0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF;
-    address constant CRVUSD_MIXIN             = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
+    address constant PMUSD_CRVUSD_POOL_MIXIN = 0xEcb0F0d68C19BdAaDAEbE24f6752A4Db34e2c2cb;
+    address constant PMUSD_MIXIN = 0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF;
+    address constant CRVUSD_MIXIN = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
 
     /// @notice Get the (pmUSD, crvUSD) coin indices in the PMUSD_CRVUSD_POOL.
     function _pmUsdPoolIndices() internal view returns (int128 iPm, int128 iCrv) {
         address c0 = ICurveStableSwapNG(PMUSD_CRVUSD_POOL_MIXIN).coins(0);
-        if (c0 == PMUSD_MIXIN) { iPm = 0; iCrv = 1; }
-        else { iPm = 1; iCrv = 0; }
+        if (c0 == PMUSD_MIXIN) {
+            iPm = 0;
+            iCrv = 1;
+        } else {
+            iPm = 1;
+            iCrv = 0;
+        }
     }
 
     /// @notice Simulate an arbitrageur restoring the pmUSD/crvUSD pool ratio after the
@@ -280,7 +293,7 @@ abstract contract AaveSecurityTestMixin is ZenjiForkTestBase {
     /// Skips silently if the pool is already balanced (small deposits may not move it).
     function _arbitrateUsdtPmUsdPool() internal {
         (int128 iPm, int128 iCrv) = _pmUsdPoolIndices();
-        uint256 pmBal  = ICurveStableSwapNG(PMUSD_CRVUSD_POOL_MIXIN).balances(uint128(iPm));
+        uint256 pmBal = ICurveStableSwapNG(PMUSD_CRVUSD_POOL_MIXIN).balances(uint128(iPm));
         uint256 crvBal = ICurveStableSwapNG(PMUSD_CRVUSD_POOL_MIXIN).balances(uint128(iCrv));
         if (crvBal <= pmBal) return; // pool not crvUSD-heavy, nothing to arb
         uint256 excess = crvBal - pmBal;

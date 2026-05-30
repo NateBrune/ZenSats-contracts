@@ -81,7 +81,7 @@ abstract contract ZenjiStrategyTestBase is ZenjiForkTestBase {
     /// @notice Assert post-harvest state is valid.
     ///         Default: no-op — net yield sign depends on borrow cost vs strategy yield.
     ///         LP strategies override to assertGt (CRV harvest must increase NAV).
-    function _assertHarvestYield(uint256 navBefore, uint256 navAfter) internal virtual {}
+    function _assertHarvestYield(uint256 navBefore, uint256 navAfter) internal virtual { }
 
     /// @notice Assert pending rewards are non-zero after time has passed.
     ///         Default: non-strict (≥0) — CRV rewards need off-chain accountant to register.
@@ -94,7 +94,7 @@ abstract contract ZenjiStrategyTestBase is ZenjiForkTestBase {
     /// value after a deposit perturbed it. Default no-op — used by non-LP strategies (IPOR
     /// PlasmaVault) where there's no pool imbalance to arbitrage. LP-based strategies
     /// override to perform the specific arb swap that restores their pool's ratio.
-    function _arbitragePoolBalance() internal virtual {}
+    function _arbitragePoolBalance() internal virtual { }
 
     /// @notice Deposit size for the realistic-lifecycle test. Must be small enough that
     /// the strategy's LP pool can absorb the single-sided add and an arb can restore it
@@ -200,8 +200,13 @@ abstract contract ZenjiStrategyTestBase is ZenjiForkTestBase {
         bs.setSlippage(10e16);
 
         vm.prank(owner);
-        bs.setSlippage(10e16);
-        assertEq(bs.slippage(), 10e16, "Slippage should be 10%");
+        bs.setSlippage(5e16);
+        assertEq(bs.slippage(), 5e16, "Slippage should be 5%");
+
+        // Above the 5% MAX_SLIPPAGE cap is rejected
+        vm.prank(owner);
+        vm.expectRevert(BaseSwapper.InvalidSlippage.selector);
+        bs.setSlippage(5e16 + 1);
     }
 
     function test_largeDeposit_fullRedeem_succeedsAt2Percent() public {
@@ -233,14 +238,14 @@ abstract contract ZenjiStrategyTestBase is ZenjiForkTestBase {
 
     function test_slippageSweep_bySlippage() public {
         uint256[] memory levels = new uint256[](8);
-        levels[0] = 5e13;   //   5 bps
-        levels[1] = 25e13;  //  25 bps
-        levels[2] = 50e13;  //  50 bps
-        levels[3] = 1e16;   //  1.0%
-        levels[4] = 2e16;   //  2.0%
-        levels[5] = 3e16;   //  3.0%
-        levels[6] = 5e16;   //  5.0%
-        levels[7] = 10e16;  // 10.0%
+        levels[0] = 5e13; //   5 bps
+        levels[1] = 25e13; //  25 bps
+        levels[2] = 50e13; //  50 bps
+        levels[3] = 1e16; //  1.0%
+        levels[4] = 2e16; //  2.0%
+        levels[5] = 3e16; //  3.0%
+        levels[6] = 5e16; //  5.0%
+        levels[7] = 10e16; // 10.0%
 
         uint256 depositAmt = _largeDepositAmount();
         uint256 firstPass = 0;
@@ -293,7 +298,11 @@ abstract contract ZenjiStrategyTestBase is ZenjiForkTestBase {
         uint256 stratAfter = yieldStrategy.balanceOf();
         // Allow up to 0.02% decrease from oracle mock rounding after warp — the important
         // invariant is that the strategy did not suffer a significant loss.
-        assertGe(stratAfter * 10000, stratBefore * 9998, "Strategy balance must not significantly decrease after harvest");
+        assertGe(
+            stratAfter * 10000,
+            stratBefore * 9998,
+            "Strategy balance must not significantly decrease after harvest"
+        );
         console.log("Harvest: before=%d after=%d", stratBefore, stratAfter);
     }
 
@@ -339,9 +348,9 @@ abstract contract ZenjiStrategyTestBase is ZenjiForkTestBase {
         address user3 = makeAddr("user3");
         address user4 = makeAddr("user4");
         address[4] memory users = [user1, user2, user3, user4];
-        uint256 chunk    = _tvlChunk();
+        uint256 chunk = _tvlChunk();
         uint256 minChunk = _tvlMinChunk();
-        uint256 tvl      = loanManager.getCollateralValue(vault.getTotalCollateral());
+        uint256 tvl = loanManager.getCollateralValue(vault.getTotalCollateral());
 
         for (uint256 i = 0; i < _tvlIterCap() && tvl < _tvlTarget(); i++) {
             address depositor = users[i % users.length];
@@ -383,7 +392,9 @@ abstract contract ZenjiStrategyTestBase is ZenjiForkTestBase {
         _refreshOracles();
         _redeemAllAs(user2);
 
-        assertEq(vault.balanceOf(user1), user1SharesBefore, "Shares unchanged after large withdrawal");
+        assertEq(
+            vault.balanceOf(user1), user1SharesBefore, "Shares unchanged after large withdrawal"
+        );
 
         _refreshOracles();
         uint256 received = _redeemAllAs(user1);
@@ -423,7 +434,9 @@ abstract contract ZenjiStrategyTestBase is ZenjiForkTestBase {
         }
 
         address user3 = makeAddr("user3");
-        uint256 d1 = _unit(); uint256 d2 = _unit() * 2; uint256 d3 = _unit() * 3;
+        uint256 d1 = _unit();
+        uint256 d2 = _unit() * 2;
+        uint256 d3 = _unit() * 3;
         deal(_collateral(), user1, d1);
         deal(_collateral(), user2, d2);
         deal(_collateral(), user3, d3);
@@ -505,11 +518,13 @@ abstract contract ZenjiStrategyTestBase is ZenjiForkTestBase {
         uint256 stratAfter = yieldStrategy.balanceOf();
 
         if (debtBefore > 0 && stratBefore > 0) {
-            uint256 debtRatio  = (debtAfter * 1e18) / debtBefore;
+            uint256 debtRatio = (debtAfter * 1e18) / debtBefore;
             uint256 stratRatio = (stratAfter * 1e18) / stratBefore;
             uint256 diff = debtRatio > stratRatio ? debtRatio - stratRatio : stratRatio - debtRatio;
             assertLe(diff, 25e16, "Strategy/debt divergence >25% after partial withdraw");
-            console.log("Proportionality: debtRatio=%d stratRatio=%d diff=%d", debtRatio, stratRatio, diff);
+            console.log(
+                "Proportionality: debtRatio=%d stratRatio=%d diff=%d", debtRatio, stratRatio, diff
+            );
         }
     }
 
@@ -547,7 +562,9 @@ abstract contract ZenjiStrategyTestBase is ZenjiForkTestBase {
         vm.mockCall(
             _collateralPriceOracle(),
             abi.encodeWithSelector(IChainlinkOracle.latestRoundData.selector),
-            abi.encode(roundId1, (answer1 * 95) / 100, block.timestamp, block.timestamp, answeredInRound1)
+            abi.encode(
+                roundId1, (answer1 * 95) / 100, block.timestamp, block.timestamp, answeredInRound1
+            )
         );
 
         // Drop debt-asset price 5% — preserves the collateral/debt ratio so the swapper oracle
@@ -557,7 +574,9 @@ abstract contract ZenjiStrategyTestBase is ZenjiForkTestBase {
         vm.mockCall(
             _debtOracle(),
             abi.encodeWithSelector(IChainlinkOracle.latestRoundData.selector),
-            abi.encode(roundId2, (answer2 * 95) / 100, block.timestamp, block.timestamp, answeredInRound2)
+            abi.encode(
+                roundId2, (answer2 * 95) / 100, block.timestamp, block.timestamp, answeredInRound2
+            )
         );
 
         // Drop additional strategy oracles (e.g., crvUSD for IPOR withdrawal path).

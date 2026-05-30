@@ -19,6 +19,12 @@ interface ISwapperSlippageConfig {
     function slippage() external view returns (uint256);
 }
 
+/// @dev Minimal vault-initiated gov handoff for swappers (mirrors transferOwnerFromVault on
+///      strategies). Kept inline so ISwapper stays stable and mocks don't need updating.
+interface ISwapperGovRotation {
+    function transferGovFromVault(address newGov) external;
+}
+
 /// @dev Minimal accessor for strategy owner. Defined inline so we don't widen IYieldStrategy
 ///      (which would require updating every mock in the test tree).
 interface IStrategyOwner {
@@ -32,7 +38,6 @@ interface ILoanManagerSwapperRotation {
     function executeSwapper() external;
     function cancelSwapper() external;
 }
-
 
 /// @title Zenji
 /// @notice ERC4626-compliant conservative collateral yield vault using loan managers and yield strategies
@@ -194,6 +199,7 @@ contract Zenji is ERC20, IERC4626 {
     event EmergencySkipCancelled(uint8 indexed step);
     event EmergencyModeCancelled();
     event StrategyOwnerPropagationFailed(address indexed newOwner);
+    event SwapperGovPropagationFailed(address indexed newGov);
 
     // Strategy events
     error SwapperUnderperformed(uint256 expected, uint256 received);
@@ -493,10 +499,12 @@ contract Zenji is ERC20, IERC4626 {
         return _withdrawWithMin(assets, receiver, owner_, minAssetsOut);
     }
 
-    function _withdrawWithMin(uint256 assets, address receiver, address owner_, uint256 minAssetsOut)
-        internal
-        returns (uint256 shareAmount)
-    {
+    function _withdrawWithMin(
+        uint256 assets,
+        address receiver,
+        address owner_,
+        uint256 minAssetsOut
+    ) internal returns (uint256 shareAmount) {
         if (assets == 0) revert ZeroAmount();
 
         if (emergencyMode && !liquidationComplete) revert EmergencyModeActive();
@@ -592,11 +600,9 @@ contract Zenji is ERC20, IERC4626 {
         uint256 minStrategyRatio = PRECISION - DEADBAND_SPREAD;
         uint256 maxStrategyRatio = PRECISION + DEADBAND_SPREAD;
         bool ratioTooLow =
-            strategyDebtRatio != type(uint256).max
-            && strategyDebtRatio < minStrategyRatio;
+            strategyDebtRatio != type(uint256).max && strategyDebtRatio < minStrategyRatio;
         bool ratioTooHigh =
-            strategyDebtRatio != type(uint256).max
-            && strategyDebtRatio > maxStrategyRatio;
+            strategyDebtRatio != type(uint256).max && strategyDebtRatio > maxStrategyRatio;
 
         loanManager.checkOracleFreshness();
         currentLtv = loanManager.getCurrentLTV();
@@ -785,7 +791,9 @@ contract Zenji is ERC20, IERC4626 {
     function acceptRole(uint8 role) external {
         if (role == 0) {
             if (msg.sender != pendingStrategist) revert Unauthorized();
-            if (block.timestamp < pendingStrategistTimestamp) revert TimelockLib.TimelockNotReady();
+            if (block.timestamp < pendingStrategistTimestamp) {
+                revert TimelockLib.TimelockNotReady();
+            }
             strategist = msg.sender;
             pendingStrategist = address(0);
             pendingStrategistTimestamp = 0;
@@ -801,9 +809,19 @@ contract Zenji is ERC20, IERC4626 {
             // Wrapped in try/catch so a bricked or paused strategy can't block gov rotation.
             // Operators can re-sync ownership later via the strategy's own admin path.
             try yieldStrategy.transferOwnerFromVault(msg.sender) {
-                // success — strategy owner is now the new gov
-            } catch {
+            // success — strategy owner is now the new gov
+            }
+            catch {
                 emit StrategyOwnerPropagationFailed(msg.sender);
+            }
+            // Propagate gov to the registered swapper too (mirrors the strategy owner handoff),
+            // so a rotated-away key cannot keep widening the swap floor via setSlippage.
+            // try/catch so a swapper that doesn't recognise this vault can't block gov rotation.
+            try ISwapperGovRotation(address(swapper)).transferGovFromVault(msg.sender) {
+            // success — swapper gov is now the new gov
+            }
+            catch {
+                emit SwapperGovPropagationFailed(msg.sender);
             }
         } else {
             if (msg.sender != pendingGuardian) revert Unauthorized();
@@ -866,6 +884,9 @@ contract Zenji is ERC20, IERC4626 {
     /// @dev Strategist-only. Accrues pending fees before withdrawal.
     function withdrawFees(address recipient) external nonReentrant onlyStrategist {
         if (recipient == address(0)) revert InvalidAddress();
+        // Advance the strategy's cached VP before accruing fees (mirrors rebalance()), so the
+        // accrual sees an up-to-date strategy balance and VP drift can't cause phantom fees.
+        yieldStrategy.updateCachedVirtualPrice();
         _accrueYieldFees();
 
         (accumulatedFees, lastStrategyBalance) =
@@ -1147,7 +1168,9 @@ contract Zenji is ERC20, IERC4626 {
             // Re-validate against current loan manager cap (could have moved during the delay).
             if (newLtv < MIN_TARGET_LTV || newLtv > MAX_TARGET_LTV()) revert InvalidTargetLtv();
             uint256 lmMaxBps = loanManager.maxLtvBps();
-            if (lmMaxBps != type(uint256).max && newLtv > lmMaxBps * 1e14) revert InvalidTargetLtv();
+            if (lmMaxBps != type(uint256).max && newLtv > lmMaxBps * 1e14) {
+                revert InvalidTargetLtv();
+            }
             emit ParamUpdated(p, targetLtv, newLtv);
             targetLtv = newLtv;
         } else if (p == 2) {
@@ -1196,7 +1219,11 @@ contract Zenji is ERC20, IERC4626 {
     }
 
     /// @notice View pending param proposal state.
-    function pendingParamChange(uint8 p) external view returns (uint256 newValue, uint256 effectiveTime) {
+    function pendingParamChange(uint8 p)
+        external
+        view
+        returns (uint256 newValue, uint256 effectiveTime)
+    {
         if (p == 0) return (_feeRateTimelock.pendingValue, _feeRateTimelock.timestamp);
         if (p == 1) return (_targetLtvTimelock.pendingValue, _targetLtvTimelock.timestamp);
         if (p == 2) return (_depositCapTimelock.pendingValue, _depositCapTimelock.timestamp);
@@ -1264,7 +1291,8 @@ contract Zenji is ERC20, IERC4626 {
             // to ~2×slippage even on a fair swap.
             uint256 baseSlip = slippageOverride == 0 ? maxSlippage : slippageOverride;
             uint256 swapperSlippage = ISwapperSlippageConfig(address(swapper)).slippage();
-            uint256 effectiveSlippage = swapperSlippage > baseSlip * 2 ? swapperSlippage : baseSlip * 2;
+            uint256 effectiveSlippage =
+                swapperSlippage > baseSlip * 2 ? swapperSlippage : baseSlip * 2;
             uint256 minOut = (oracleExpected * (PRECISION - effectiveSlippage)) / PRECISION;
             if (collateralReceived < minOut) {
                 revert SwapperUnderperformed(minOut, collateralReceived);
@@ -1339,7 +1367,8 @@ contract Zenji is ERC20, IERC4626 {
             return (collateralAmount, actualShareAmount);
         }
 
-        (collateralAmount, actualShareAmount) = _redeemStandard(shareAmount, receiver, owner_, minAssetsOut);
+        (collateralAmount, actualShareAmount) =
+            _redeemStandard(shareAmount, receiver, owner_, minAssetsOut);
         return (collateralAmount, actualShareAmount);
     }
 
@@ -1380,10 +1409,12 @@ contract Zenji is ERC20, IERC4626 {
         return (collateralAmount, actualShareAmount);
     }
 
-    function _redeemStandard(uint256 shareAmount, address receiver, address owner_, uint256 minAssetsOut)
-        internal
-        returns (uint256 collateralAmount, uint256 actualShareAmount)
-    {
+    function _redeemStandard(
+        uint256 shareAmount,
+        address receiver,
+        address owner_,
+        uint256 minAssetsOut
+    ) internal returns (uint256 collateralAmount, uint256 actualShareAmount) {
         // Accrue fees before pricing to prevent fee bypass on redemption
         _accrueYieldFees();
 
@@ -1430,8 +1461,7 @@ contract Zenji is ERC20, IERC4626 {
                     (uint256 posCol,) = loanManager.getPositionValues();
                     uint256 virtualSupply =
                         totalSupply() + actualShareAmount + VIRTUAL_SHARE_OFFSET();
-                    uint256 proportionalLM =
-                        (posCol * actualShareAmount) / virtualSupply;
+                    uint256 proportionalLM = (posCol * actualShareAmount) / virtualSupply;
                     if (proportionalLM > needed) {
                         needed = proportionalLM;
                     }
@@ -1452,8 +1482,9 @@ contract Zenji is ERC20, IERC4626 {
                     // Reconstruct total supply as if shares weren't burned yet
                     uint256 virtualSupply =
                         remainingShares + actualShareAmount + VIRTUAL_SHARE_OFFSET();
-                    uint256 realizedCollateral = (actualShareAmount
-                        * (postUnwindTotal + VIRTUAL_SHARE_OFFSET())) / virtualSupply;
+                    uint256 realizedCollateral =
+                        (actualShareAmount * (postUnwindTotal + VIRTUAL_SHARE_OFFSET()))
+                            / virtualSupply;
                     if (realizedCollateral < collateralAmount) {
                         collateralAmount = realizedCollateral;
                     }

@@ -2,7 +2,9 @@
 pragma solidity ^0.8.33;
 
 import { Test, console } from "forge-std/Test.sol";
-import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
+import {
+    UsdtNgCrvUsdLpStakeDaoStrategy
+} from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { ERC4626 } from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";

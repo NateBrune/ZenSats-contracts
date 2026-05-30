@@ -24,8 +24,8 @@ contract CbBtcAaveExtensive is IporVaultStrategyTestBase {
 
     // Uniswap V3: cbBTC/WBTC 0.01% pool, WBTC/USDT 0.3% pool
     address constant UNISWAP_ROUTER = 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45;
-    uint24 constant CBBTC_WBTC_FEE = 100;    // 0.01%
-    uint24 constant WBTC_USDT_FEE = 3000;    // 0.3%
+    uint24 constant CBBTC_WBTC_FEE = 100; // 0.01%
+    uint24 constant WBTC_USDT_FEE = 3000; // 0.3%
 
     address constant CBBTC_USD_ORACLE = 0x2665701293fCbEB223D11A08D826563EDcCE423A;
     CbBtcUniswapV3TwoHopSwapper public swapper;
@@ -61,25 +61,53 @@ contract CbBtcAaveExtensive is IporVaultStrategyTestBase {
         address expectedVaultAddress = computeCreateAddress(address(this), startNonce + 3);
 
         swapper = new CbBtcUniswapV3TwoHopSwapper(
-            owner, CBBTC, USDT, WBTC, UNISWAP_ROUTER, CBBTC_WBTC_FEE, WBTC_USDT_FEE,
-            CBBTC_USD_ORACLE, USDT_USD_ORACLE
+            owner,
+            CBBTC,
+            USDT,
+            WBTC,
+            UNISWAP_ROUTER,
+            CBBTC_WBTC_FEE,
+            WBTC_USDT_FEE,
+            CBBTC_USD_ORACLE,
+            USDT_USD_ORACLE
         );
 
         UsdtIporStrategy strategy = new UsdtIporStrategy(
-            USDT, CRVUSD, expectedVaultAddress, USDT_CRVUSD_POOL, IPOR_PLASMA_VAULT, 0, 1,
-            CRVUSD_USD_ORACLE, USDT_USD_ORACLE
+            USDT,
+            CRVUSD,
+            expectedVaultAddress,
+            USDT_CRVUSD_POOL,
+            IPOR_PLASMA_VAULT,
+            0,
+            1,
+            CRVUSD_USD_ORACLE,
+            USDT_USD_ORACLE
         );
         strategy.transferOwner(owner);
 
         loanManager = new AaveLoanManager(
-            CBBTC, USDT, AAVE_A_CBBTC, AAVE_VAR_DEBT_USDT, AAVE_POOL, CBBTC_USD_ORACLE,
-            USDT_USD_ORACLE, address(swapper), 7500, 8000, expectedVaultAddress,
+            CBBTC,
+            USDT,
+            AAVE_A_CBBTC,
+            AAVE_VAR_DEBT_USDT,
+            AAVE_POOL,
+            CBBTC_USD_ORACLE,
+            USDT_USD_ORACLE,
+            address(swapper),
+            7500,
+            8000,
+            expectedVaultAddress,
             0, // eMode: disabled
             3600
         );
 
         vault = new Zenji(
-            CBBTC, USDT, address(loanManager), address(strategy), address(swapper), owner,
+            CBBTC,
+            USDT,
+            address(loanManager),
+            address(strategy),
+            address(swapper),
+            owner,
             address(viewHelper)
         );
         require(address(vault) == expectedVaultAddress, "Vault address mismatch");
@@ -95,14 +123,20 @@ contract CbBtcAaveExtensive is IporVaultStrategyTestBase {
         swapper.setSlippage(5e16);
     }
 
-
     // ============ ZenjiStrategyTestBase hook implementations ============
 
     function _newSwapper() internal override returns (address) {
         return address(
             new CbBtcUniswapV3TwoHopSwapper(
-                owner, CBBTC, USDT, WBTC, UNISWAP_ROUTER, CBBTC_WBTC_FEE, WBTC_USDT_FEE,
-                CBBTC_USD_ORACLE, USDT_USD_ORACLE
+                owner,
+                CBBTC,
+                USDT,
+                WBTC,
+                UNISWAP_ROUTER,
+                CBBTC_WBTC_FEE,
+                WBTC_USDT_FEE,
+                CBBTC_USD_ORACLE,
+                USDT_USD_ORACLE
             )
         );
     }
@@ -239,9 +273,8 @@ contract CbBtcAaveExtensive is IporVaultStrategyTestBase {
         vm.clearMockedCalls();
 
         (,,, uint256 collateralUpdatedAt,) = IChainlinkOracle(CBBTC_USD_ORACLE).latestRoundData();
-        uint256 collateralAge = block.timestamp > collateralUpdatedAt
-            ? block.timestamp - collateralUpdatedAt
-            : 0;
+        uint256 collateralAge =
+            block.timestamp > collateralUpdatedAt ? block.timestamp - collateralUpdatedAt : 0;
 
         emit log_named_uint("cbBTC oracle updatedAt", collateralUpdatedAt);
         emit log_named_uint("cbBTC oracle age (sec)", collateralAge);

@@ -198,7 +198,7 @@ contract MockCrvSwapper {
         return amount;
     }
 
-    function setSlippage(uint256) external {}
+    function setSlippage(uint256) external { }
 }
 
 contract MockSwapper {
@@ -224,7 +224,7 @@ contract MockSwapper {
         return debtAmount;
     }
 
-    function setSlippage(uint256) external {}
+    function setSlippage(uint256) external { }
 }
 
 contract MockAavePool is IAavePool {
@@ -281,7 +281,7 @@ contract MockAavePool is IAavePool {
         IERC20(asset).transferFrom(receiverAddress, address(this), amount);
     }
 
-    function setUserEMode(uint8) external {}
+    function setUserEMode(uint8) external { }
 
     function getUserEMode(address) external pure returns (uint256) {
         return 0;
@@ -343,7 +343,7 @@ contract PmUsdCrvUsdStrategyTest is Test {
         // Deploy oracle mocks
         collateralOracle = new MockOracle(8, 100_000e8); // BTC $100k
         crvUsdOracle = new MockOracle(8, 1e8); // crvUSD $1.00
-        crvOracle = new MockOracle(8, 0.50e8); // CRV $0.50
+        crvOracle = new MockOracle(8, 0.5e8); // CRV $0.50
 
         // Deploy pool / vault mocks
         // crvUSD is at index 1 in pmUSD/crvUSD pool (pmUSD=0, crvUSD=1)
@@ -364,9 +364,8 @@ contract PmUsdCrvUsdStrategyTest is Test {
         swapper = new MockSwapper(address(wbtc), address(crvUSD));
 
         // Use AaveLoanManager with crvUSD debt for simplicity (tests strategy, not loan manager)
-        aavePool = new MockAavePool(
-            address(wbtc), address(crvUSD), address(aToken), address(debtToken)
-        );
+        aavePool =
+            new MockAavePool(address(wbtc), address(crvUSD), address(aToken), address(debtToken));
 
         loanManager = new AaveLoanManager(
             address(wbtc),
@@ -667,8 +666,8 @@ contract PmUsdCrvUsdStrategyTest is Test {
         vm.expectRevert();
         new NgCrvUsdLpStakeDaoStrategy(
             address(crvUSD),
-            address(lpPool),  // vault (any non-zero)
-            address(0),       // owner = 0 → should revert
+            address(lpPool), // vault (any non-zero)
+            address(0), // owner = 0 → should revert
             address(lpPool),
             address(rewardVault),
             address(crvSwapper),
@@ -678,7 +677,6 @@ contract PmUsdCrvUsdStrategyTest is Test {
             address(crvOracle)
         );
     }
-
 
     // ============ Access Control ============
 

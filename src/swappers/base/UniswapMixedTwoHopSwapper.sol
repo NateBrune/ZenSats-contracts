@@ -192,8 +192,7 @@ contract UniswapMixedTwoHopSwapper is BaseSwapper, ISwapper {
         // Push collateral directly to the Universal Router (no ERC-20 approval needed).
         collateralToken.safeTransfer(address(universalRouter), collateralAmount);
 
-        bytes memory commands =
-            abi.encodePacked(CMD_V3_SWAP_EXACT_IN, CMD_UNWRAP_WETH, CMD_V4_SWAP);
+        bytes memory commands = abi.encodePacked(CMD_V3_SWAP_EXACT_IN, CMD_UNWRAP_WETH, CMD_V4_SWAP);
         bytes[] memory inputs = new bytes[](3);
 
         // 1. V3: collateral → WETH, output remains in the router for the next step.
@@ -253,8 +252,7 @@ contract UniswapMixedTwoHopSwapper is BaseSwapper, ISwapper {
         // Push debt token directly to the Universal Router.
         debtToken.safeTransfer(address(universalRouter), debtAmount);
 
-        bytes memory commands =
-            abi.encodePacked(CMD_V4_SWAP, CMD_WRAP_ETH, CMD_V3_SWAP_EXACT_IN);
+        bytes memory commands = abi.encodePacked(CMD_V4_SWAP, CMD_WRAP_ETH, CMD_V3_SWAP_EXACT_IN);
         bytes[] memory inputs = new bytes[](3);
 
         // 1. V4_SWAP: debt → ETH, native ETH output goes to the Universal Router.
@@ -307,11 +305,7 @@ contract UniswapMixedTwoHopSwapper is BaseSwapper, ISwapper {
     ///        3. TAKE_ALL(debt, minAmount=0)
     ///           Sends the full debt credit to msgSender() (= this swapper).
     ///           The amountOutMinimum in the SWAP already enforces slippage.
-    function _buildV4CollateralToDebt(uint128 minAmountOut)
-        internal
-        view
-        returns (bytes memory)
-    {
+    function _buildV4CollateralToDebt(uint128 minAmountOut) internal view returns (bytes memory) {
         bytes memory v4Actions =
             abi.encodePacked(ACT_SETTLE, ACT_SWAP_EXACT_IN_SINGLE, ACT_TAKE_ALL);
 
@@ -346,13 +340,8 @@ contract UniswapMixedTwoHopSwapper is BaseSwapper, ISwapper {
     ///           ADDRESS_THIS maps to the Universal Router.
     ///           OPEN_DELTA resolves to _getFullCredit(ETH) = ethOut from the swap.
     ///           Native ETH is sent to the router for the subsequent WRAP_ETH command.
-    function _buildV4DebtToCollateral(uint128 amountIn)
-        internal
-        view
-        returns (bytes memory)
-    {
-        bytes memory v4Actions =
-            abi.encodePacked(ACT_SWAP_EXACT_IN_SINGLE, ACT_SETTLE, ACT_TAKE);
+    function _buildV4DebtToCollateral(uint128 amountIn) internal view returns (bytes memory) {
+        bytes memory v4Actions = abi.encodePacked(ACT_SWAP_EXACT_IN_SINGLE, ACT_SETTLE, ACT_TAKE);
 
         bytes[] memory v4Params = new bytes[](3);
 

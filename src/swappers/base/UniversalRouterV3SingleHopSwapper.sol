@@ -78,7 +78,10 @@ contract UniversalRouterV3SingleHopSwapper is BaseSwapper, ISwapper {
     }
 
     /// @inheritdoc ISwapper
-    function swapCollateralForDebt(uint256 collateralAmount) external returns (uint256 debtReceived) {
+    function swapCollateralForDebt(uint256 collateralAmount)
+        external
+        returns (uint256 debtReceived)
+    {
         if (collateralAmount == 0) return 0;
 
         uint256 expectedOut = OracleLib.getCollateralValue(
@@ -112,7 +115,10 @@ contract UniversalRouterV3SingleHopSwapper is BaseSwapper, ISwapper {
     }
 
     /// @inheritdoc ISwapper
-    function swapDebtForCollateral(uint256 debtAmount) external returns (uint256 collateralReceived) {
+    function swapDebtForCollateral(uint256 debtAmount)
+        external
+        returns (uint256 collateralReceived)
+    {
         if (debtAmount == 0) return 0;
 
         uint256 expectedOut = OracleLib.getDebtValue(

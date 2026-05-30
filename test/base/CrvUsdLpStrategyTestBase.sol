@@ -16,13 +16,13 @@ abstract contract CrvUsdLpStrategyTestBase is ZenjiStrategyTestBase {
     // ============ Shared LP constants ============
 
     // USDT/crvUSD Curve StableSwap (legacy 2-coin, v0.3.7 — pool == LP token)
-    address constant USDT_CRVUSD_POOL           = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
-    int128  constant CRVUSD_INDEX               = 1; // coin(0)=USDT, coin(1)=crvUSD
+    address constant USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
+    int128 constant CRVUSD_INDEX = 1; // coin(0)=USDT, coin(1)=crvUSD
     address constant STAKEDAO_USDT_CRVUSD_VAULT = 0xF980f195A93577DcCe48e91e98124D3B71C4a066;
-    address constant USDT_CRVUSD_GAUGE          = 0x4e6bB6B7447B7B2Aa268C16AB87F4Bb48BF57939;
-    address constant CRVUSD                     = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
-    address constant CRV                        = 0xD533a949740bb3306d119CC777fa900bA034cd52;
-    address constant CRVUSD_USD_ORACLE          = 0xEEf0C605546958c1f899b6fB336C20671f9cD49F;
+    address constant USDT_CRVUSD_GAUGE = 0x4e6bB6B7447B7B2Aa268C16AB87F4Bb48BF57939;
+    address constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
+    address constant CRV = 0xD533a949740bb3306d119CC777fa900bA034cd52;
+    address constant CRVUSD_USD_ORACLE = 0xEEf0C605546958c1f899b6fB336C20671f9cD49F;
 
     // ============ Typed fields (concrete sets these in _deployVaultContracts) ============
 
@@ -89,7 +89,8 @@ abstract contract CrvUsdLpStrategyTestBase is ZenjiStrategyTestBase {
 
     function test_poolCoinIndex() public {
         _deployVault();
-        address coin1 = ICurveStableSwapTwoLP(USDT_CRVUSD_POOL).coins(uint256(uint128(CRVUSD_INDEX)));
+        address coin1 =
+            ICurveStableSwapTwoLP(USDT_CRVUSD_POOL).coins(uint256(uint128(CRVUSD_INDEX)));
         assertEq(coin1, CRVUSD, "crvUSD should be at index 1 in USDT/crvUSD pool");
     }
 
@@ -125,15 +126,21 @@ abstract contract CrvUsdLpStrategyTestBase is ZenjiStrategyTestBase {
         uint256 slippage = 1e16;
 
         uint256[] memory probe = _capacityProbeAmounts();
-        uint256 lo = 0; uint256 hi = 0;
+        uint256 lo = 0;
+        uint256 hi = 0;
         console.log("=== %s USDT/crvUSD capacity sweep at 1%% slippage ===", _capacityLabel());
 
         for (uint256 i = 0; i < probe.length; i++) {
             uint256 snap = vm.snapshot();
             bool passed;
-            try this.runSlippageScenario(slippage, probe[i]) returns (bool ok) { passed = ok; } catch {}
+            try this.runSlippageScenario(slippage, probe[i]) returns (bool ok) {
+                passed = ok;
+            }
+                catch { }
             vm.revertTo(snap);
-            console.log("  %d %s: %s", probe[i] / _unit(), _collateralLabel(), passed ? "pass" : "FAIL");
+            console.log(
+                "  %d %s: %s", probe[i] / _unit(), _collateralLabel(), passed ? "pass" : "FAIL"
+            );
             if (passed) { lo = probe[i]; }
             else if (hi == 0) { hi = probe[i]; break; }
         }
@@ -148,19 +155,27 @@ abstract contract CrvUsdLpStrategyTestBase is ZenjiStrategyTestBase {
             uint256 mid = lo + ((hi - lo) / 2 / step) * step;
             uint256 snap = vm.snapshot();
             bool ok;
-            try this.runSlippageScenario(slippage, mid) returns (bool r) { ok = r; } catch {}
+            try this.runSlippageScenario(slippage, mid) returns (bool r) {
+                ok = r;
+            }
+                catch { }
             vm.revertTo(snap);
-            if (ok) lo = mid; else hi = mid;
+            if (ok) lo = mid;
+            else hi = mid;
         }
-        uint256 safeCap = lo; uint256 firstFail = hi;
+        uint256 safeCap = lo;
+        uint256 firstFail = hi;
 
-        int256 ubpsAtCap; uint256 capUsd; uint256 receivedAtCap;
+        int256 ubpsAtCap;
+        uint256 capUsd;
+        uint256 receivedAtCap;
         {
             uint256 snap = vm.snapshot();
             _syncAndMockOracles();
             _deployVault();
             deal(_collateral(), user1, safeCap);
-            vm.prank(owner); swapper.setSlippage(slippage);
+            vm.prank(owner);
+            swapper.setSlippage(slippage);
             _depositAs(user1, safeCap);
             _syncAndMockOracles();
             receivedAtCap = _redeemAllAs(user1);
@@ -205,14 +220,14 @@ abstract contract CrvUsdLpStrategyTestBase is ZenjiStrategyTestBase {
     /// buy back the excess crvUSD. Pool fees from this swap accrue to LP holders (the
     /// strategy), which is reflected once `updateCachedVirtualPrice` is called.
     function _arbitragePoolBalance() internal override {
-        uint256 crvUsdPost   = ICurveStableSwapTwoLP(USDT_CRVUSD_POOL).balances(1);
-        uint256 usdtPost     = ICurveStableSwapTwoLP(USDT_CRVUSD_POOL).balances(0);
+        uint256 crvUsdPost = ICurveStableSwapTwoLP(USDT_CRVUSD_POOL).balances(1);
+        uint256 usdtPost = ICurveStableSwapTwoLP(USDT_CRVUSD_POOL).balances(0);
         uint256 crvUsdExcess = crvUsdPost > usdtPost * 1e12 ? crvUsdPost - usdtPost * 1e12 : 0;
-        uint256 usdtToSwap   = crvUsdExcess / (2 * 1e12);
+        uint256 usdtToSwap = crvUsdExcess / (2 * 1e12);
         if (usdtToSwap == 0) return;
 
         address usdt_ = ICurveStableSwapTwoLP(USDT_CRVUSD_POOL).coins(0);
-        address arb   = makeAddr("arb");
+        address arb = makeAddr("arb");
         deal(usdt_, arb, usdtToSwap);
         vm.startPrank(arb);
         // USDT has non-standard approve (no return value) — use low-level call.
@@ -233,7 +248,8 @@ abstract contract CrvUsdLpStrategyTestBase is ZenjiStrategyTestBase {
         _syncAndMockOracles();
         _deployVault();
         deal(_collateral(), user1, depositAmount);
-        vm.prank(owner); swapper.setSlippage(1e16);
+        vm.prank(owner);
+        swapper.setSlippage(1e16);
 
         _depositAs(user1, depositAmount);
 
@@ -246,9 +262,19 @@ abstract contract CrvUsdLpStrategyTestBase is ZenjiStrategyTestBase {
 
         int256 ubps = (int256(received) - int256(depositAmount)) * 1_000_000 / int256(depositAmount);
         if (ubps >= 0) {
-            console.log("  %d %s after rebalance: +%d ubps", depositAmount / _unit(), _collateralLabel(), uint256(ubps));
+            console.log(
+                "  %d %s after rebalance: +%d ubps",
+                depositAmount / _unit(),
+                _collateralLabel(),
+                uint256(ubps)
+            );
         } else {
-            console.log("  %d %s after rebalance: -%d ubps", depositAmount / _unit(), _collateralLabel(), uint256(-ubps));
+            console.log(
+                "  %d %s after rebalance: -%d ubps",
+                depositAmount / _unit(),
+                _collateralLabel(),
+                uint256(-ubps)
+            );
         }
 
         // Loss must be less than 1 bps (10_000 ubps) even in the adversarial rebalanced scenario.

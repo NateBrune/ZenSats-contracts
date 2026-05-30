@@ -39,7 +39,9 @@ import { Test } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
+import {
+    UsdtNgCrvUsdLpStakeDaoStrategy
+} from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
 import { IAavePool } from "../src/interfaces/IAavePool.sol";
 import { IFlashLoanSimpleReceiver } from "../src/interfaces/IFlashLoanSimpleReceiver.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
@@ -56,9 +58,17 @@ contract H7MockERC20 is ERC20 {
         _dec = dec_;
     }
 
-    function decimals() public view override returns (uint8) { return _dec; }
-    function mint(address to, uint256 amount) external { _mint(to, amount); }
-    function burnFrom(address from, uint256 amount) external { _burn(from, amount); }
+    function decimals() public view override returns (uint8) {
+        return _dec;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function burnFrom(address from, uint256 amount) external {
+        _burn(from, amount);
+    }
 }
 
 /// @notice Oracle with controllable freshness.
@@ -126,8 +136,13 @@ contract H7MockCurveStableSwap {
         return address(0);
     }
 
-    function balances(uint256) external pure returns (uint256) { return 0; }
-    function get_virtual_price() external pure returns (uint256) { return 1e18; }
+    function balances(uint256) external pure returns (uint256) {
+        return 0;
+    }
+
+    function get_virtual_price() external pure returns (uint256) {
+        return 1e18;
+    }
 }
 
 contract H7MockCurveStableSwapNG {
@@ -143,14 +158,21 @@ contract H7MockCurveStableSwapNG {
         pmUsdIdx = _crvUsdIdx == int128(0) ? 1 : 0;
     }
 
-    function setLpToken(address _lp) external { lpToken = H7MockERC20(_lp); }
-    function setPmUsd(address _pm) external { pmUSD = H7MockERC20(_pm); }
+    function setLpToken(address _lp) external {
+        lpToken = H7MockERC20(_lp);
+    }
+
+    function setPmUsd(address _pm) external {
+        pmUSD = H7MockERC20(_pm);
+    }
 
     function add_liquidity(uint256[] calldata amounts, uint256) external returns (uint256) {
         uint256 c = amounts[uint256(uint128(crvUsdIdx))];
         uint256 p = amounts[pmUsdIdx];
         if (c > 0) crvUSD.transferFrom(msg.sender, address(this), c);
-        if (p > 0 && address(pmUSD) != address(0)) pmUSD.transferFrom(msg.sender, address(this), p);
+        if (p > 0 && address(pmUSD) != address(0)) {
+            pmUSD.transferFrom(msg.sender, address(this), p);
+        }
         uint256 total = c + p;
         if (total > 0) lpToken.mint(msg.sender, total);
         return total;
@@ -170,23 +192,43 @@ contract H7MockCurveStableSwapNG {
         return burn;
     }
 
-    function get_virtual_price() external pure returns (uint256) { return 1e18; }
-    function N_COINS() external pure returns (uint256) { return 2; }
+    function get_virtual_price() external pure returns (uint256) {
+        return 1e18;
+    }
+
+    function N_COINS() external pure returns (uint256) {
+        return 2;
+    }
+
     function coins(uint256 i) external view returns (address) {
         return i == uint256(uint128(crvUsdIdx)) ? address(crvUSD) : address(pmUSD);
     }
-    function balances(uint256) external pure returns (uint256) { return 0; }
-    function exchange(int128, int128, uint256, uint256) external pure returns (uint256) { return 0; }
-    function get_dy(int128, int128, uint256) external pure returns (uint256) { return 0; }
+
+    function balances(uint256) external pure returns (uint256) {
+        return 0;
+    }
+
+    function exchange(int128, int128, uint256, uint256) external pure returns (uint256) {
+        return 0;
+    }
+
+    function get_dy(int128, int128, uint256) external pure returns (uint256) {
+        return 0;
+    }
 }
 
 contract H7MockAccountant {
     H7MockERC20 public rewardToken;
     mapping(address => uint256) public rewards;
 
-    constructor(address _rt) { rewardToken = H7MockERC20(_rt); }
+    constructor(address _rt) {
+        rewardToken = H7MockERC20(_rt);
+    }
 
-    function setRewards(address account, uint256 amount) external { rewards[account] = amount; }
+    function setRewards(address account, uint256 amount) external {
+        rewards[account] = amount;
+    }
+
     function getPendingRewards(address, address account) external view returns (uint256) {
         return rewards[account];
     }
@@ -213,7 +255,9 @@ contract H7MockRewardVault is ERC4626 {
         _accountant = acct_;
     }
 
-    function ACCOUNTANT() external view returns (address) { return _accountant; }
+    function ACCOUNTANT() external view returns (address) {
+        return _accountant;
+    }
 
     function addRewards(address account, uint256 amount) external {
         pendingRewards[account] += amount;
@@ -224,8 +268,13 @@ contract H7MockRewardVault is ERC4626 {
         return pendingRewards[account];
     }
 
-    function rewardTokens(uint256) external view returns (address) { return address(rewardToken); }
-    function rewardTokensLength() external pure returns (uint256) { return 1; }
+    function rewardTokens(uint256) external view returns (address) {
+        return address(rewardToken);
+    }
+
+    function rewardTokensLength() external pure returns (uint256) {
+        return 1;
+    }
 }
 
 /**
@@ -268,7 +317,9 @@ contract H7RealisticCrvSwapper {
         return crvAmount;
     }
 
-    function quote(uint256 crvAmount) external pure returns (uint256) { return crvAmount; }
+    function quote(uint256 crvAmount) external pure returns (uint256) {
+        return crvAmount;
+    }
 }
 
 contract H7MockSwapper {
@@ -280,16 +331,20 @@ contract H7MockSwapper {
         debt = H7MockERC20(_debt);
     }
 
-    function quoteCollateralForDebt(uint256 d) external pure returns (uint256) { return d; }
+    function quoteCollateralForDebt(uint256 d) external pure returns (uint256) {
+        return d;
+    }
+
     function swapCollateralForDebt(uint256 c) external returns (uint256) {
         debt.mint(msg.sender, c);
         return c;
     }
+
     function swapDebtForCollateral(uint256 d) external returns (uint256) {
         collateral.mint(msg.sender, d);
         return d;
     }
-    function setSlippage(uint256) external {}
+    function setSlippage(uint256) external { }
 }
 
 contract H7MockAavePool is IAavePool {
@@ -316,7 +371,8 @@ contract H7MockAavePool is IAavePool {
     }
 
     function repay(address asset, uint256 amount, uint256, address onBehalfOf)
-        external returns (uint256)
+        external
+        returns (uint256)
     {
         IERC20(asset).transferFrom(msg.sender, address(this), amount);
         variableDebtToken.burnFrom(onBehalfOf, amount);
@@ -332,7 +388,11 @@ contract H7MockAavePool is IAavePool {
     }
 
     function flashLoanSimple(
-        address receiverAddress, address asset, uint256 amount, bytes calldata params, uint16
+        address receiverAddress,
+        address asset,
+        uint256 amount,
+        bytes calldata params,
+        uint16
     ) external {
         H7MockERC20(asset).mint(receiverAddress, amount);
         IFlashLoanSimpleReceiver(receiverAddress)
@@ -340,8 +400,11 @@ contract H7MockAavePool is IAavePool {
         IERC20(asset).transferFrom(receiverAddress, address(this), amount);
     }
 
-    function setUserEMode(uint8) external {}
-    function getUserEMode(address) external pure returns (uint256) { return 0; }
+    function setUserEMode(uint8) external { }
+
+    function getUserEMode(address) external pure returns (uint256) {
+        return 0;
+    }
 }
 
 // ============ Test Contract ============
@@ -383,10 +446,10 @@ contract VerifyH7_CrvOracleDoS is Test {
         // Start at a realistic timestamp so staleness math never underflows
         vm.warp(1_700_000_000);
 
-        wbtc      = new H7MockERC20("WBTC",  "WBTC",  8);
-        usdt      = new H7MockERC20("USDT",  "USDT",  6);
-        lpToken   = new H7MockERC20("LP",    "LP",    18);
-        aToken    = new H7MockERC20("aWBTC", "aWBTC", 8);
+        wbtc = new H7MockERC20("WBTC", "WBTC", 8);
+        usdt = new H7MockERC20("USDT", "USDT", 6);
+        lpToken = new H7MockERC20("LP", "LP", 18);
+        aToken = new H7MockERC20("aWBTC", "aWBTC", 8);
         debtToken = new H7MockERC20("vUSDT", "vUSDT", 6);
 
         // BaseNgCrvUsdLpStakeDaoStrategy declares crv, pmUSD, and CRVUSD as `public constant`
@@ -401,18 +464,17 @@ contract VerifyH7_CrvOracleDoS is Test {
         vm.etch(0xD533a949740bb3306d119CC777fa900bA034cd52, erc20Code); // CRV
         vm.etch(0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF, erc20Code); // pmUSD
         crvUSD = H7MockERC20(0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E);
-        crv    = H7MockERC20(0xD533a949740bb3306d119CC777fa900bA034cd52);
-        pmUsd  = H7MockERC20(0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF);
+        crv = H7MockERC20(0xD533a949740bb3306d119CC777fa900bA034cd52);
+        pmUsd = H7MockERC20(0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF);
 
         collateralOracle = new H7MockOracle(8, 1e8);
-        debtOracle       = new H7MockOracle(8, 1e8);
-        crvUsdOracle     = new H7MockOracle(8, 1e8);
-        usdtOracle       = new H7MockOracle(8, 1e8);
-        crvOracle        = new H7MockOracle(8, 50000000);
+        debtOracle = new H7MockOracle(8, 1e8);
+        crvUsdOracle = new H7MockOracle(8, 1e8);
+        usdtOracle = new H7MockOracle(8, 1e8);
+        crvOracle = new H7MockOracle(8, 50000000);
 
-        aavePool = new H7MockAavePool(
-            address(wbtc), address(usdt), address(aToken), address(debtToken)
-        );
+        aavePool =
+            new H7MockAavePool(address(wbtc), address(usdt), address(aToken), address(debtToken));
         wbtc.mint(address(aavePool), 100e8);
 
         usdtCrvUsdPool = new H7MockCurveStableSwap(address(usdt), address(crvUSD), 0, 1);
@@ -420,7 +482,7 @@ contract VerifyH7_CrvOracleDoS is Test {
         lpPool.setLpToken(address(lpToken));
         lpPool.setPmUsd(address(pmUsd));
 
-        accountant  = new H7MockAccountant(address(crv));
+        accountant = new H7MockAccountant(address(crv));
         rewardVault = new H7MockRewardVault(address(lpToken), address(crv), address(accountant));
 
         crvSwapper = new H7RealisticCrvSwapper(
@@ -459,7 +521,9 @@ contract VerifyH7_CrvOracleDoS is Test {
             address(rewardVault),
             address(crvSwapper),
             gauge,
-            0, 1, 1,
+            0,
+            1,
+            1,
             address(crvUsdOracle),
             address(usdtOracle),
             address(crvOracle)

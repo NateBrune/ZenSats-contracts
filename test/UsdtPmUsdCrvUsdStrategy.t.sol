@@ -5,7 +5,9 @@ import { Test } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
+import {
+    UsdtNgCrvUsdLpStakeDaoStrategy
+} from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
 import { UsdtCrvUsdSwapMixin } from "../src/strategies/UsdtCrvUsdSwapMixin.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
 import { IAavePool } from "../src/interfaces/IAavePool.sol";
@@ -306,7 +308,7 @@ contract MockSwapper {
         return debtAmount;
     }
 
-    function setSlippage(uint256) external {}
+    function setSlippage(uint256) external { }
 }
 
 contract MockAavePool is IAavePool {
@@ -362,8 +364,11 @@ contract MockAavePool is IAavePool {
             .executeOperation(asset, amount, 0, receiverAddress, params);
         IERC20(asset).transferFrom(receiverAddress, address(this), amount);
     }
-    function setUserEMode(uint8) external {}
-    function getUserEMode(address) external pure returns (uint256) { return 0; }
+    function setUserEMode(uint8) external { }
+
+    function getUserEMode(address) external pure returns (uint256) {
+        return 0;
+    }
 }
 
 // ============ Test Contract ============
@@ -809,8 +814,14 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
         vault.emergencyRescue(2);
         vm.stopPrank();
 
-        assertEq(vault.accumulatedFees(), 0, "Emergency rescue step 2 should clear accumulated fees");
-        assertEq(vault.lastStrategyBalance(), 0, "Emergency rescue step 2 should clear strategy checkpoint");
+        assertEq(
+            vault.accumulatedFees(), 0, "Emergency rescue step 2 should clear accumulated fees"
+        );
+        assertEq(
+            vault.lastStrategyBalance(),
+            0,
+            "Emergency rescue step 2 should clear strategy checkpoint"
+        );
     }
 
     // ============ More Branch Coverage ============
@@ -903,8 +914,6 @@ contract UsdtPmUsdCrvUsdStrategyTest is Test {
             address(crvOracle)
         );
     }
-
-
 
     function test_constructor_zeroUsdtCrvUsdPool_reverts() public {
         vm.expectRevert(UsdtCrvUsdSwapMixin.UsdtSwapInvalidAddress.selector);

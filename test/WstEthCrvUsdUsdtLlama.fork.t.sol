@@ -3,7 +3,9 @@ pragma solidity ^0.8.33;
 
 import { console } from "forge-std/Test.sol";
 import { CrvUsdLpStrategyTestBase } from "./base/CrvUsdLpStrategyTestBase.sol";
-import { ZenjiWstEthLlamaStakeDao } from "../src/implementations/stakedao/ZenjiWstEthLlamaStakeDao.sol";
+import {
+    ZenjiWstEthLlamaStakeDao
+} from "../src/implementations/stakedao/ZenjiWstEthLlamaStakeDao.sol";
 import { LlamaLoanManager } from "../src/lenders/LlamaLoanManager.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { WstEthOracle } from "../src/WstEthOracle.sol";
@@ -22,29 +24,43 @@ import { Zenji } from "../src/Zenji.sol";
 ///         Swap route: wstETH → WETH via Uniswap V3 (0.01%) → crvUSD via Curve TriCRV.
 ///         Strategy: CrvUsdLpStakeDaoStrategy — single-sided crvUSD → USDT/crvUSD pool → Stake DAO.
 contract WstEthCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
+    /// @dev WstEthOracle composite reports the OLDER feed timestamp; its stETH/ETH leg has a
+    ///      24h Chainlink heartbeat, so the collateral staleness window is 90000s.
+    function _collateralStalenessWarp() internal pure override returns (uint256) {
+        return 90001;
+    }
+
     address constant WSTETH = 0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0;
-    address constant WETH   = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
 
     address constant LLAMALEND_WSTETH_CONTROLLER = 0x100dAa78fC509Db39Ef7D04DE0c1ABD299f4C6CE;
     address constant WSTETH_CRVUSD_POOL = 0x37417B2238AA52D0DD2D6252d989E728e8f706e4;
 
-    address constant UNIVERSAL_ROUTER  = 0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af;
-    uint24  constant FEE_WSTETH_WETH   = 100; // V3 0.01%
-    address constant TRICRYPTO_POOL    = 0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14;
+    address constant UNIVERSAL_ROUTER = 0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af;
+    uint24 constant FEE_WSTETH_WETH = 100; // V3 0.01%
+    address constant TRICRYPTO_POOL = 0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14;
 
-    address constant STETH_ETH_ORACLE  = 0x86392dC19c0b719886221c78AB11eb8Cf5c52812;
-    address constant ETH_USD_ORACLE    = 0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419;
-    address constant CRV_USD_ORACLE    = 0xCd627aA160A6fA45Eb793D19Ef54f5062F20f33f;
+    address constant STETH_ETH_ORACLE = 0x86392dC19c0b719886221c78AB11eb8Cf5c52812;
+    address constant ETH_USD_ORACLE = 0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419;
+    address constant CRV_USD_ORACLE = 0xCd627aA160A6fA45Eb793D19Ef54f5062F20f33f;
 
-    WstEthOracle     public wstEthOracle;
+    WstEthOracle public wstEthOracle;
     CrvToCrvUsdSwapper public crvSwapper;
     LlamaLoanManager public llamaManager;
 
     // ============ Abstract implementations ============
 
-    function _collateral() internal pure override returns (address) { return WSTETH; }
-    function _unit()       internal pure override returns (uint256)  { return 1e18; }
-    function _tinyDeposit() internal pure override returns (uint256) { return 3e15; } // 0.003 wstETH
+    function _collateral() internal pure override returns (address) {
+        return WSTETH;
+    }
+
+    function _unit() internal pure override returns (uint256) {
+        return 1e18;
+    }
+
+    function _tinyDeposit() internal pure override returns (uint256) {
+        return 3e15; // 0.003 wstETH
+    }
 
     function _oracleList() internal pure override returns (address[] memory) {
         // WstEthOracle is a locally-deployed composite; mock its underlying Chainlink feeds.
@@ -61,50 +77,115 @@ contract WstEthCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
         return ETH_USD_ORACLE;
     }
 
-    function _fuzzMin() internal pure override returns (uint256) { return 1e17; } // 0.1 wstETH
-    function _fuzzMultiMin() internal pure override returns (uint256) { return 3e18; } // 3 wstETH
-    function _fuzzMultiMax() internal pure override returns (uint256) { return 50e18; }
-    function _fuzzMultiUserLossPct() internal pure override returns (uint256) { return 20; }
-    function _fuzzMultiUserFairnessPct() internal pure override returns (uint256) { return 20; }
+    function _fuzzMin() internal pure override returns (uint256) {
+        return 1e17; // 0.1 wstETH
+    }
+
+    function _fuzzMultiMin() internal pure override returns (uint256) {
+        return 3e18; // 3 wstETH
+    }
+
+    function _fuzzMultiMax() internal pure override returns (uint256) {
+        return 50e18;
+    }
+
+    function _fuzzMultiUserLossPct() internal pure override returns (uint256) {
+        return 20;
+    }
+
+    function _fuzzMultiUserFairnessPct() internal pure override returns (uint256) {
+        return 20;
+    }
 
     // -- LP-specific abstracts --
     function _newSwapper() internal override returns (address) {
         (uint256 wethIdx, uint256 crvUsdIdx) = _getWethCrvUsdIndices();
-        return address(new UniswapMixedCurveSwapper(
-            owner, WSTETH, CRVUSD, WETH, UNIVERSAL_ROUTER, FEE_WSTETH_WETH,
-            TRICRYPTO_POOL, wethIdx, crvUsdIdx, address(wstEthOracle), CRVUSD_USD_ORACLE, 3600
-        ));
+        return address(
+            new UniswapMixedCurveSwapper(
+                owner,
+                WSTETH,
+                CRVUSD,
+                WETH,
+                UNIVERSAL_ROUTER,
+                FEE_WSTETH_WETH,
+                TRICRYPTO_POOL,
+                wethIdx,
+                crvUsdIdx,
+                address(wstEthOracle),
+                CRVUSD_USD_ORACLE,
+                90000
+            )
+        );
     }
 
-    function _largeDepositAmount()           internal pure override returns (uint256) { return 50e18; }
-    function _oneMillionAmount()             internal pure override returns (uint256) { return 250e18; }
-    function _oneMillionLabel()              internal pure override returns (string memory) { return "250 wstETH (~$1M)"; }
-    function _ratioTestSmallAmount()         internal pure override returns (uint256) { return 1e17; }
-    function _sequentialWithdrawalSlippage() internal pure override returns (uint256) { return 2e16; }
+    function _largeDepositAmount() internal pure override returns (uint256) {
+        return 50e18;
+    }
 
-    function _tvlChunk()    internal pure override returns (uint256) { return 50e18; }
-    function _tvlMinChunk() internal pure override returns (uint256) { return 1e17; }
-    function _tvlIterCap()  internal pure override returns (uint256) { return 200; }
-    function _tvlLabel()    internal pure override returns (string memory) {
+    function _oneMillionAmount() internal pure override returns (uint256) {
+        return 250e18;
+    }
+
+    function _oneMillionLabel() internal pure override returns (string memory) {
+        return "250 wstETH (~$1M)";
+    }
+
+    function _ratioTestSmallAmount() internal pure override returns (uint256) {
+        return 1e17;
+    }
+
+    function _sequentialWithdrawalSlippage() internal pure override returns (uint256) {
+        return 2e16;
+    }
+
+    function _tvlChunk() internal pure override returns (uint256) {
+        return 50e18;
+    }
+
+    function _tvlMinChunk() internal pure override returns (uint256) {
+        return 1e17;
+    }
+
+    function _tvlIterCap() internal pure override returns (uint256) {
+        return 200;
+    }
+
+    function _tvlLabel() internal pure override returns (string memory) {
         return "wstETH multi-user TVL(crvUSD 18d)=";
     }
 
     function _capacityProbeAmounts() internal pure override returns (uint256[] memory) {
         uint256[] memory probe = new uint256[](14);
-        probe[0]  = 1e18;       probe[1]  = 25e18;      probe[2]  = 100e18;
-        probe[3]  = 500e18;     probe[4]  = 1000e18;    probe[5]  = 2500e18;
-        probe[6]  = 5000e18;    probe[7]  = 10_000e18;  probe[8]  = 20_000e18;
-        probe[9]  = 30_000e18;  probe[10] = 50_000e18;  probe[11] = 75_000e18;
-        probe[12] = 100_000e18; probe[13] = 150_000e18;
+        probe[0] = 1e18;
+        probe[1] = 25e18;
+        probe[2] = 100e18;
+        probe[3] = 500e18;
+        probe[4] = 1000e18;
+        probe[5] = 2500e18;
+        probe[6] = 5000e18;
+        probe[7] = 10_000e18;
+        probe[8] = 20_000e18;
+        probe[9] = 30_000e18;
+        probe[10] = 50_000e18;
+        probe[11] = 75_000e18;
+        probe[12] = 100_000e18;
+        probe[13] = 150_000e18;
         return probe;
     }
 
-    function _capacityLabel()  internal pure override returns (string memory) { return "wstETH"; }
-    function _collateralLabel() internal pure override returns (string memory) { return "wstETH"; }
+    function _capacityLabel() internal pure override returns (string memory) {
+        return "wstETH";
+    }
+
+    function _collateralLabel() internal pure override returns (string memory) {
+        return "wstETH";
+    }
 
     function _rebalancedAmounts() internal pure override returns (uint256[] memory) {
         uint256[] memory a = new uint256[](3);
-        a[0] = 1000e18; a[1] = 500e18; a[2] = 100e18;
+        a[0] = 1000e18;
+        a[1] = 500e18;
+        a[2] = 100e18;
         return a;
     }
 
@@ -119,7 +200,7 @@ contract WstEthCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
         ICurveTriCrypto pool = ICurveTriCrypto(TRICRYPTO_POOL);
         for (uint256 i = 0; i < 3; i++) {
             address coin = pool.coins(i);
-            if (coin == WETH)   wethIdx   = i;
+            if (coin == WETH) wethIdx = i;
             else if (coin == CRVUSD) crvUsdIdx = i;
         }
     }
@@ -139,20 +220,44 @@ contract WstEthCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
         );
 
         swapper = new UniswapMixedCurveSwapper(
-            owner, WSTETH, CRVUSD, WETH, UNIVERSAL_ROUTER, FEE_WSTETH_WETH,
-            TRICRYPTO_POOL, wethIdx, crvUsdIdx, address(wstEthOracle), CRVUSD_USD_ORACLE, 3600
+            owner,
+            WSTETH,
+            CRVUSD,
+            WETH,
+            UNIVERSAL_ROUTER,
+            FEE_WSTETH_WETH,
+            TRICRYPTO_POOL,
+            wethIdx,
+            crvUsdIdx,
+            address(wstEthOracle),
+            CRVUSD_USD_ORACLE,
+            90000
         );
 
         strategy = new CrvUsdLpStakeDaoStrategy(
-            CRVUSD, address(0), owner,
-            USDT_CRVUSD_POOL, STAKEDAO_USDT_CRVUSD_VAULT, address(crvSwapper),
-            USDT_CRVUSD_GAUGE, CRVUSD_INDEX, CRVUSD_USD_ORACLE, CRV_USD_ORACLE,
+            CRVUSD,
+            address(0),
+            owner,
+            USDT_CRVUSD_POOL,
+            STAKEDAO_USDT_CRVUSD_VAULT,
+            address(crvSwapper),
+            USDT_CRVUSD_GAUGE,
+            CRVUSD_INDEX,
+            CRVUSD_USD_ORACLE,
+            CRV_USD_ORACLE,
             "crvUSD -> USDT/crvUSD LP Strategy"
         );
 
         llamaManager = new LlamaLoanManager(
-            WSTETH, CRVUSD, LLAMALEND_WSTETH_CONTROLLER, WSTETH_CRVUSD_POOL,
-            address(wstEthOracle), CRVUSD_USD_ORACLE, address(swapper), address(0)
+            WSTETH,
+            CRVUSD,
+            LLAMALEND_WSTETH_CONTROLLER,
+            WSTETH_CRVUSD_POOL,
+            address(wstEthOracle),
+            CRVUSD_USD_ORACLE,
+            address(swapper),
+            address(0),
+            90000
         );
 
         ZenjiWstEthLlamaStakeDao vault_ = new ZenjiWstEthLlamaStakeDao(
@@ -232,10 +337,15 @@ contract WstEthCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
             if (err.length >= 4) {
                 bytes4 sel;
                 assembly { sel := mload(add(err, 32)) }
-                if (sel == Zenji.InsufficientWithdrawal.selector)  console.log("=> InsufficientWithdrawal");
-                else if (sel == Zenji.InsufficientCollateral.selector) console.log("=> InsufficientCollateral");
-                else if (sel == Zenji.SwapperUnderperformed.selector)  console.log("=> SwapperUnderperformed");
-                else                                                    console.log("=> Unknown selector");
+                if (sel == Zenji.InsufficientWithdrawal.selector) {
+                    console.log("=> InsufficientWithdrawal");
+                } else if (sel == Zenji.InsufficientCollateral.selector) {
+                    console.log("=> InsufficientCollateral");
+                } else if (sel == Zenji.SwapperUnderperformed.selector) {
+                    console.log("=> SwapperUnderperformed");
+                } else {
+                    console.log("=> Unknown selector");
+                }
             }
         }
     }
@@ -269,7 +379,7 @@ contract WstEthCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
 
     function test_documentEconomicMinimum() public pure {
         uint256 contractMinimum = 3e15;
-        uint256 virtualOffset   = 3e15;
+        uint256 virtualOffset = 3e15;
         uint256 economicMinimum = 3e16; // 0.03 wstETH
 
         console.log("Contract MIN_DEPOSIT:  %d wei", contractMinimum);
@@ -285,8 +395,10 @@ contract WstEthCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
         _deployVault();
         uint256 depositAmount = 3e16; // 0.03 wstETH
         deal(WSTETH, user1, depositAmount);
-        vm.prank(user1); IERC20(WSTETH).approve(address(vault), depositAmount);
-        vm.prank(user1); vault.deposit(depositAmount, user1);
+        vm.prank(user1);
+        IERC20(WSTETH).approve(address(vault), depositAmount);
+        vm.prank(user1);
+        vault.deposit(depositAmount, user1);
 
         uint256 shares = vault.balanceOf(user1);
         (uint256 col, uint256 debt) = loanManager.getPositionValues();
@@ -303,8 +415,12 @@ contract WstEthCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
         uint256 depositAmount = 3e16; // 0.03 wstETH
 
         uint256[] memory slippageLevels = new uint256[](6);
-        slippageLevels[0] = 1e16;  slippageLevels[1] = 2e16;  slippageLevels[2] = 3e16;
-        slippageLevels[3] = 5e16;  slippageLevels[4] = 10e16; slippageLevels[5] = 20e16;
+        slippageLevels[0] = 1e16;
+        slippageLevels[1] = 2e16;
+        slippageLevels[2] = 3e16;
+        slippageLevels[3] = 4e16;
+        slippageLevels[4] = 45e15;
+        slippageLevels[5] = 5e16;
 
         uint256 firstSuccess = 0;
         console.log("=== wstETH Slippage Sweep for 3e16 wei deposit (USDT/crvUSD LP) ===");
@@ -342,15 +458,22 @@ contract WstEthCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
             if (!ok && errData.length >= 4) {
                 bytes4 sel;
                 assembly { sel := mload(add(errData, 32)) }
-                if (sel == bytes4(keccak256("InsufficientWithdrawal()")))          console.log("  => InsufficientWithdrawal");
-                else if (sel == bytes4(keccak256("SwapperUnderperformed(uint256,uint256)"))) console.log("  => SwapperUnderperformed");
-                else if (sel == bytes4(keccak256("InsufficientCollateral()")))     console.log("  => InsufficientCollateral");
-                else                                                                console.log("  => unknown selector");
+                if (sel == bytes4(keccak256("InsufficientWithdrawal()"))) {
+                    console.log("  => InsufficientWithdrawal");
+                } else if (sel == bytes4(keccak256("SwapperUnderperformed(uint256,uint256)"))) {
+                    console.log("  => SwapperUnderperformed");
+                } else if (sel == bytes4(keccak256("InsufficientCollateral()"))) {
+                    console.log("  => InsufficientCollateral");
+                } else {
+                    console.log("  => unknown selector");
+                }
             }
             if (ok && firstSuccess == 0) firstSuccess = slippageLevels[i];
             vm.revertTo(snap);
         }
 
-        console.log("wstETH USDT/crvUSD firstSuccess_bps=%d", firstSuccess == 0 ? 0 : firstSuccess / 1e14);
+        console.log(
+            "wstETH USDT/crvUSD firstSuccess_bps=%d", firstSuccess == 0 ? 0 : firstSuccess / 1e14
+        );
     }
 }

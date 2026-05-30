@@ -30,7 +30,7 @@ contract UniswapMixedCurveSwapper is BaseSwapper, ISwapper {
     uint256 public constant DUST_SWAP_THRESHOLD = 1000;
 
     IERC20 public immutable collateralToken; // wstETH
-    IERC20 public immutable debtToken;       // crvUSD
+    IERC20 public immutable debtToken; // crvUSD
     IERC20 public immutable weth;
     IUniversalRouter public immutable universalRouter;
 
@@ -56,14 +56,14 @@ contract UniswapMixedCurveSwapper is BaseSwapper, ISwapper {
 
     constructor(
         address _gov,
-        address _collateralToken,   // wstETH
-        address _debtToken,         // crvUSD
+        address _collateralToken, // wstETH
+        address _debtToken, // crvUSD
         address _weth,
         address _universalRouter,
-        uint24 _v3Fee,              // 100 (0.01%)
-        address _triCryptoPool,     // 0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14
-        uint256 _wethCurveIndex,    // 1 (WETH index in TriCRV)
-        uint256 _crvUsdCurveIndex,  // 0 (crvUSD index in TriCRV)
+        uint24 _v3Fee, // 100 (0.01%)
+        address _triCryptoPool, // 0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14
+        uint256 _wethCurveIndex, // 1 (WETH index in TriCRV)
+        uint256 _crvUsdCurveIndex, // 0 (crvUSD index in TriCRV)
         address _collateralOracle,
         address _debtOracle,
         uint256 _maxCollateralStaleness
@@ -121,14 +121,13 @@ contract UniswapMixedCurveSwapper is BaseSwapper, ISwapper {
         {
             bytes memory commands = abi.encodePacked(CMD_V3_SWAP_EXACT_IN);
             bytes[] memory inputs = new bytes[](1);
-            bytes memory v3Path =
-                abi.encodePacked(address(collateralToken), v3Fee, address(weth));
+            bytes memory v3Path = abi.encodePacked(address(collateralToken), v3Fee, address(weth));
             inputs[0] = abi.encode(
-                address(this),   // recipient: WETH to this contract
+                address(this), // recipient: WETH to this contract
                 collateralAmount,
-                uint256(0),      // amountOutMin: 0 — Curve step enforces floor
+                uint256(0), // amountOutMin: 0 — Curve step enforces floor
                 v3Path,
-                false            // payerIsUser: tokens were pre-transferred
+                false // payerIsUser: tokens were pre-transferred
             );
             universalRouter.execute(commands, inputs);
         }
@@ -139,11 +138,17 @@ contract UniswapMixedCurveSwapper is BaseSwapper, ISwapper {
 
         // Per-hop slippage floor: use get_dy as best-effort estimate, fall back to 0 on failure.
         // get_dy can diverge from actual output on large swaps (EMA oracle), so this is soft
-        // protection; the vault-level SwapperUnderperformed check remains the hard floor.
+        // protection; the hard end-to-end floor is the loan manager's SwapperUnderperformed check
+        // (95% of the oracle-implied value), which covers a sandwich on the amountOutMin=0 V3 hop.
+        // A tighter swapper-level oracle floor was tried but over-constrains small swaps where the
+        // oracle/pool price level diverges by more than `slippage` (crvUSD peg + composite vs spot).
         uint256 minCrvUsd;
-        (bool ok, bytes memory dyData) = address(triCryptoPool).staticcall(
-            abi.encodeWithSelector(ICurveTriCrypto.get_dy.selector, wethCurveIndex, crvUsdCurveIndex, wethBalance)
-        );
+        (bool ok, bytes memory dyData) = address(triCryptoPool)
+            .staticcall(
+                abi.encodeWithSelector(
+                    ICurveTriCrypto.get_dy.selector, wethCurveIndex, crvUsdCurveIndex, wethBalance
+                )
+            );
         if (ok && dyData.length >= 32) {
             uint256 expected = abi.decode(dyData, (uint256));
             if (expected > 0) minCrvUsd = (expected * (PRECISION - slippage)) / PRECISION;
@@ -202,14 +207,13 @@ contract UniswapMixedCurveSwapper is BaseSwapper, ISwapper {
         {
             bytes memory commands = abi.encodePacked(CMD_V3_SWAP_EXACT_IN);
             bytes[] memory inputs = new bytes[](1);
-            bytes memory v3Path =
-                abi.encodePacked(address(weth), v3Fee, address(collateralToken));
+            bytes memory v3Path = abi.encodePacked(address(weth), v3Fee, address(collateralToken));
             inputs[0] = abi.encode(
                 address(this), // recipient: wstETH to this contract
-                wethReceived,  // exact WETH in
-                minWstEth,     // end-to-end oracle floor on final output
+                wethReceived, // exact WETH in
+                minWstEth, // end-to-end oracle floor on final output
                 v3Path,
-                false          // payerIsUser: tokens were pre-transferred
+                false // payerIsUser: tokens were pre-transferred
             );
             uint256 balanceBefore = collateralToken.balanceOf(address(this));
             universalRouter.execute(commands, inputs);

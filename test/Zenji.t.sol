@@ -256,7 +256,9 @@ contract MockYieldStrategy is IYieldStrategy {
             return payout;
         }
 
-        function slippage() external pure returns (uint256) { return 1e16; }
+        function slippage() external pure returns (uint256) {
+            return 1e16;
+        }
     }
 
     /// @notice Mock strategy that can be toggled to revert on withdrawals
@@ -508,7 +510,8 @@ contract MockYieldStrategy is IYieldStrategy {
                     BTC_USD_ORACLE,
                     CRVUSD_USD_ORACLE,
                     address(swapper),
-                    address(0)
+                    address(0),
+                    3600
                 );
 
                 swapper.setLoanManager(address(loanManager));
@@ -869,7 +872,9 @@ contract MockYieldStrategy is IYieldStrategy {
 
                 uint256 ltvBefore = ILoanManager(address(vault.loanManager())).getCurrentLTV();
                 uint256 debtBefore = ILoanManager(address(vault.loanManager())).getCurrentDebt();
-                assertTrue(vault.strategyDebtRebalanceNeeded(), "Ratio drift should trigger rebalance");
+                assertTrue(
+                    vault.strategyDebtRebalanceNeeded(), "Ratio drift should trigger rebalance"
+                );
 
                 vault.rebalance();
 
@@ -891,13 +896,17 @@ contract MockYieldStrategy is IYieldStrategy {
 
                 uint256 ltvBefore = ILoanManager(address(vault.loanManager())).getCurrentLTV();
                 uint256 debtBefore = ILoanManager(address(vault.loanManager())).getCurrentDebt();
-                assertTrue(vault.strategyDebtRebalanceNeeded(), "High ratio should trigger rebalance");
+                assertTrue(
+                    vault.strategyDebtRebalanceNeeded(), "High ratio should trigger rebalance"
+                );
 
                 vault.rebalance();
 
                 uint256 ltvAfter = ILoanManager(address(vault.loanManager())).getCurrentLTV();
                 uint256 debtAfter = ILoanManager(address(vault.loanManager())).getCurrentDebt();
-                assertGt(ltvAfter, ltvBefore, "High ratio rebalance should increase debt deployment");
+                assertGt(
+                    ltvAfter, ltvBefore, "High ratio rebalance should increase debt deployment"
+                );
                 assertGt(debtAfter, debtBefore, "High ratio rebalance should increase debt");
             }
 
@@ -1083,7 +1092,10 @@ contract MockYieldStrategy is IYieldStrategy {
                 vault.acceptRole(1);
 
                 // 4-week delay is required
-                vm.warp(block.timestamp + vault.GOV_GUARDIAN_TRANSFER_DELAY() - vault.ROLE_TRANSFER_DELAY());
+                vm.warp(
+                    block.timestamp + vault.GOV_GUARDIAN_TRANSFER_DELAY()
+                        - vault.ROLE_TRANSFER_DELAY()
+                );
                 vm.prank(newGov);
                 vault.acceptRole(1);
                 assertEq(vault.gov(), newGov, "Gov should be transferred after extended delay");
@@ -1254,7 +1266,8 @@ contract MockYieldStrategy is IYieldStrategy {
                     BTC_USD_ORACLE,
                     CRVUSD_USD_ORACLE,
                     address(swapper),
-                    address(0)
+                    address(0),
+                    3600
                 );
 
                 Zenji brickedVault = new Zenji(
@@ -1360,7 +1373,8 @@ contract MockYieldStrategy is IYieldStrategy {
                     BTC_USD_ORACLE,
                     CRVUSD_USD_ORACLE,
                     address(swapper),
-                    predictedVault
+                    predictedVault,
+                    3600
                 );
 
                 vm.expectRevert(Zenji.InvalidAddress.selector);
@@ -2864,7 +2878,8 @@ contract MockYieldStrategy is IYieldStrategy {
                     BTC_USD_ORACLE,
                     CRVUSD_USD_ORACLE,
                     address(swapper),
-                    address(0)
+                    address(0),
+                    3600
                 );
                 vm.expectRevert(Zenji.InvalidAddress.selector);
                 new Zenji(
@@ -2891,7 +2906,8 @@ contract MockYieldStrategy is IYieldStrategy {
                     BTC_USD_ORACLE,
                     CRVUSD_USD_ORACLE,
                     address(swapper),
-                    address(0)
+                    address(0),
+                    3600
                 );
                 vm.expectRevert(Zenji.InvalidAddress.selector);
                 new Zenji(
@@ -4483,7 +4499,9 @@ contract MockYieldStrategy is IYieldStrategy {
 
                 vm.prank(user1);
                 vm.expectRevert(
-                    abi.encodeWithSelector(Zenji.UserSlippageExceeded.selector, unrealisticMin, expected)
+                    abi.encodeWithSelector(
+                        Zenji.UserSlippageExceeded.selector, unrealisticMin, expected
+                    )
                 );
                 vault.redeem(shares, user1, user1, unrealisticMin);
             }

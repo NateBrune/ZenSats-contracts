@@ -132,7 +132,10 @@ abstract contract BaseCurveStakeDaoStrategy is BaseLPStrategy {
     }
 
     /// @notice Claim CRV via Stake DAO accountant and swap it to crvUSD via the CRV swapper.
-    /// @dev Swap failure (oracle floor, slippage) leaves CRV at the swapper for the next cycle.
+    /// @dev On swap failure the CRV remains at the swapper. It is NOT auto-retried — the next
+    ///      cycle only forwards newly-claimed CRV (swap() consumes the passed amount, not the
+    ///      swapper's full balance), so any leftover must be recovered via the swapper's rescue
+    ///      path. CrvSwapDeferred is emitted below for monitoring.
     function _claimAndSwapRewards() internal override returns (uint256 lpAssetReceived) {
         _accountantClaim();
         uint256 crvBalance = crv.balanceOf(address(this));
@@ -142,7 +145,8 @@ abstract contract BaseCurveStakeDaoStrategy is BaseLPStrategy {
         try crvSwapper.swap(crvBalance) returns (uint256 received) {
             lpAssetReceived = received;
         } catch {
-            // CRV stays at swapper; retried next compound cycle.
+            // Swap reverted (oracle floor / slippage). CRV stays at the swapper; recover via
+            // its rescue path. CrvSwapDeferred is emitted below.
         }
         if (lpAssetReceived > 0) emit RewardsHarvested(crvBalance, lpAssetReceived);
         else emit CrvSwapDeferred(crvBalance);
@@ -166,8 +170,10 @@ abstract contract BaseCurveStakeDaoStrategy is BaseLPStrategy {
     ///      is stale or invalid.
     function pendingRewards() external view virtual override returns (uint256) {
         address accountant = IStakeDaoRewardVault(address(stakingVault)).ACCOUNTANT();
-        try IAccountant(accountant).getPendingRewards(address(stakingVault), address(this))
-        returns (uint256 pendingCrv) {
+        try IAccountant(accountant)
+            .getPendingRewards(address(stakingVault), address(this)) returns (
+            uint256 pendingCrv
+        ) {
             if (pendingCrv < 1) return 0;
 
             (uint80 crvRoundId, int256 crvPrice,, uint256 crvUpdatedAt, uint80 crvAnswered) =
@@ -213,7 +219,14 @@ abstract contract BaseCurveStakeDaoStrategy is BaseLPStrategy {
     // ============ Slippage Propagation ============
 
     /// @notice Keep the CRV reward swapper's oracle floor in sync with the strategy tolerance.
-    function _onSlippageUpdate(uint256, /*old*/ uint256 newSlippage) internal override {
+    function _onSlippageUpdate(
+        uint256,
+        /*old*/
+        uint256 newSlippage
+    )
+        internal
+        override
+    {
         try ICrvSwapperWithSlippage(address(crvSwapper)).setSlippage(newSlippage) { } catch { }
     }
 

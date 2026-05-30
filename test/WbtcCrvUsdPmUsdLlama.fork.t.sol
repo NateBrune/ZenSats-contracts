@@ -91,7 +91,9 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
         return 20;
     }
 
-    function _sequentialWithdrawalSlippage() internal pure returns (uint256) { return 3e16; }
+    function _sequentialWithdrawalSlippage() internal pure returns (uint256) {
+        return 3e16;
+    }
 
     // ============ Vault deployment ============
 
@@ -164,7 +166,8 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
             address(swapper),
-            address(0) // vault initialised separately via initializeVault
+            address(0), // vault initialised separately via initializeVault
+            3600
         );
 
         ZenjiWbtcLlamaStakeDao vault_ = new ZenjiWbtcLlamaStakeDao(
@@ -292,7 +295,10 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
 
     /// @dev Deploy a fresh vault, set slippage to targetSlippage, deposit depositAmount WBTC,
     ///      then attempt a single full redemption. Returns true if the redeem succeeds.
-    function _runSlippageScenario(uint256 targetSlippage, uint256 depositAmount) internal returns (bool) {
+    function _runSlippageScenario(uint256 targetSlippage, uint256 depositAmount)
+        internal
+        returns (bool)
+    {
         _syncAndMockOracles();
         _deployVault();
 
@@ -316,7 +322,10 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
         }
     }
 
-    function runSlippageScenario(uint256 targetSlippage, uint256 depositAmount) external returns (bool) {
+    function runSlippageScenario(uint256 targetSlippage, uint256 depositAmount)
+        external
+        returns (bool)
+    {
         return _runSlippageScenario(targetSlippage, depositAmount);
     }
 
@@ -328,13 +337,13 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
 
     function test_slippageSweep_bySlippage() public {
         uint256[] memory levels = new uint256[](8);
-        levels[0] = 5e13;  //  5 bps
+        levels[0] = 5e13; //  5 bps
         levels[1] = 25e13; // 25 bps
         levels[2] = 50e13; // 50 bps
-        levels[3] = 1e16;  //  1.0%
-        levels[4] = 2e16;  //  2.0%
-        levels[5] = 3e16;  //  3.0%
-        levels[6] = 5e16;  //  5.0%
+        levels[3] = 1e16; //  1.0%
+        levels[4] = 2e16; //  2.0%
+        levels[5] = 3e16; //  3.0%
+        levels[6] = 5e16; //  5.0%
         levels[7] = 10e16; // 10.0%
 
         uint256 firstPass = 0;
@@ -356,7 +365,10 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
         }
 
         console.log("Sweep firstPass(bps)=%s", firstPass == 0 ? 0 : firstPass / 1e14);
-        assertTrue(firstPass > 0 && firstPass <= 2e16, "Full redeem should succeed within 2% slippage on UniV3+TriCRV");
+        assertTrue(
+            firstPass > 0 && firstPass <= 2e16,
+            "Full redeem should succeed within 2% slippage on UniV3+TriCRV"
+        );
     }
 
     // ============ Strategy-Specific Tests ============
@@ -411,12 +423,26 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
 
     // ============ TVL Helpers ============
 
-    function _tvlTarget() internal pure returns (uint256) { return 5_000_000e18; }
-    function _tvlChunk() internal pure returns (uint256) { return 5e8; }
-    function _tvlMinChunk() internal pure returns (uint256) { return 1e7; }
-    function _tvlIterCap() internal pure returns (uint256) { return 160; }
-    function _requireTvlSetup() internal {}
-    function _tvlLabel() internal pure returns (string memory) { return "WBTC multi-user TVL(crvUSD 18d)="; }
+    function _tvlTarget() internal pure returns (uint256) {
+        return 5_000_000e18;
+    }
+
+    function _tvlChunk() internal pure returns (uint256) {
+        return 5e8;
+    }
+
+    function _tvlMinChunk() internal pure returns (uint256) {
+        return 1e7;
+    }
+
+    function _tvlIterCap() internal pure returns (uint256) {
+        return 160;
+    }
+    function _requireTvlSetup() internal { }
+
+    function _tvlLabel() internal pure returns (string memory) {
+        return "WBTC multi-user TVL(crvUSD 18d)=";
+    }
 
     // ============ Multi-Depositor TVL Test ============
 
@@ -434,9 +460,9 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
 
         address[4] memory users = [user1, user2, user3, user4];
         uint256 targetTvl = _tvlTarget();
-        uint256 chunk     = _tvlChunk();
-        uint256 minChunk  = _tvlMinChunk();
-        uint256 tvl       = loanManager.getCollateralValue(vault.getTotalCollateral());
+        uint256 chunk = _tvlChunk();
+        uint256 minChunk = _tvlMinChunk();
+        uint256 tvl = loanManager.getCollateralValue(vault.getTotalCollateral());
 
         for (uint256 i = 0; i < _tvlIterCap() && tvl < targetTvl; i++) {
             address depositor = users[i % users.length];
@@ -656,7 +682,9 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
         vm.mockCall(
             BTC_USD_ORACLE,
             abi.encodeWithSelector(IChainlinkOracle.latestRoundData.selector),
-            abi.encode(roundId1, (answer1 * 95) / 100, block.timestamp, block.timestamp, answeredInRound1)
+            abi.encode(
+                roundId1, (answer1 * 95) / 100, block.timestamp, block.timestamp, answeredInRound1
+            )
         );
 
         // Drop crvUSD price 5% -- preserves BTC/crvUSD ratio so the swapper floor stays in range
@@ -665,7 +693,9 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
         vm.mockCall(
             CRVUSD_USD_ORACLE,
             abi.encodeWithSelector(IChainlinkOracle.latestRoundData.selector),
-            abi.encode(roundId2, (answer2 * 95) / 100, block.timestamp, block.timestamp, answeredInRound2)
+            abi.encode(
+                roundId2, (answer2 * 95) / 100, block.timestamp, block.timestamp, answeredInRound2
+            )
         );
 
         uint256 withdrawn = _redeemAllAs(user1);
@@ -837,7 +867,9 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
             if (shares > 0) {
                 vm.prank(users[i]);
                 uint256 collateralReceived = vault.redeem(shares, users[i], users[i]);
-                assertGt(collateralReceived, 0, "Realistic deposit should redeem non-zero collateral");
+                assertGt(
+                    collateralReceived, 0, "Realistic deposit should redeem non-zero collateral"
+                );
                 console.log("User redeemed shares for sat");
                 console.log(i);
                 console.log(shares);
@@ -870,8 +902,10 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
         _deployVault();
         uint256 depositAmount = 1e4;
         deal(WBTC, user1, depositAmount);
-        vm.prank(user1); IERC20(WBTC).approve(address(vault), depositAmount);
-        vm.prank(user1); vault.deposit(depositAmount, user1);
+        vm.prank(user1);
+        IERC20(WBTC).approve(address(vault), depositAmount);
+        vm.prank(user1);
+        vault.deposit(depositAmount, user1);
 
         uint256 shares = vault.balanceOf(user1);
         (uint256 col, uint256 debt) = loanManager.getPositionValues();
@@ -890,12 +924,12 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
         uint256 depositAmount = 1e4; // exact minimum deposit: 10000 sat = 0.0001 WBTC
 
         uint256[] memory slippageLevels = new uint256[](6);
-        slippageLevels[0] = 1e16;  //  1%%
-        slippageLevels[1] = 2e16;  //  2%%
-        slippageLevels[2] = 3e16;  //  3%%
-        slippageLevels[3] = 5e16;  //  5%%
-        slippageLevels[4] = 10e16; // 10%%
-        slippageLevels[5] = 20e16; // 20%%
+        slippageLevels[0] = 1e16; //  1%%
+        slippageLevels[1] = 2e16; //  2%%
+        slippageLevels[2] = 3e16; //  3%%
+        slippageLevels[3] = 5e16; //  5%%
+        slippageLevels[4] = 45e15; // 4.5%%
+        slippageLevels[5] = 5e16; // 5%% (cap)
 
         uint256 firstSuccess = 0;
 
@@ -936,13 +970,21 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
                 assembly { selector := mload(add(errData, 32)) }
             }
 
-            console.log("slippage_bps=%d redeem=%d errLen=%d", slippageLevels[i] / 1e14, ok ? 1 : 0, errData.length);
+            console.log(
+                "slippage_bps=%d redeem=%d errLen=%d",
+                slippageLevels[i] / 1e14,
+                ok ? 1 : 0,
+                errData.length
+            );
             if (!ok) {
                 if (selector == bytes4(keccak256("InsufficientWithdrawal()"))) {
-                    console.log("  => InsufficientWithdrawal (strategy LP underperformed maxSlippage)");
+                    console.log(
+                        "  => InsufficientWithdrawal (strategy LP underperformed maxSlippage)"
+                    );
                 } else if (selector == bytes4(keccak256("InsufficientCollateral()"))) {
                     console.log("  => InsufficientCollateral (shortfall exceeds maxSlippage)");
-                } else if (selector == bytes4(keccak256("SwapperUnderperformed(uint256,uint256)"))) {
+                } else if (selector == bytes4(keccak256("SwapperUnderperformed(uint256,uint256)")))
+                {
                     console.log("  => SwapperUnderperformed (oracle floor not met)");
                 } else if (selector == bytes4(keccak256("ExchangeFailed()"))) {
                     console.log("  => ExchangeFailed (Curve output below oracle floor)");
@@ -963,30 +1005,55 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
             vm.revertTo(snap);
         }
 
-        console.log("WBTC LlamaLend firstSuccess_bps=%d", firstSuccess == 0 ? 0 : firstSuccess / 1e14);
+        console.log(
+            "WBTC LlamaLend firstSuccess_bps=%d", firstSuccess == 0 ? 0 : firstSuccess / 1e14
+        );
     }
 
     // ============ TVL Ceiling Tests ============
 
     /// @dev Decode a low-level revert into a human-readable label for console output.
-    function _decodeRevertReason(bytes memory err, string memory step) internal pure returns (string memory) {
+    function _decodeRevertReason(bytes memory err, string memory step)
+        internal
+        pure
+        returns (string memory)
+    {
         if (err.length < 4) return string(abi.encodePacked(step, ": revert (no data)"));
         bytes4 sel;
         assembly { sel := mload(add(err, 32)) }
-        if (sel == bytes4(keccak256("SwapperUnderperformed(uint256,uint256)")))
-            return string(abi.encodePacked(step, ": SwapperUnderperformed (oracle floor not met on WBTC->WETH->crvUSD)"));
-        if (sel == bytes4(keccak256("SlippageExceeded()")))
+        if (sel == bytes4(keccak256("SwapperUnderperformed(uint256,uint256)"))) {
+            return string(
+                abi.encodePacked(
+                    step, ": SwapperUnderperformed (oracle floor not met on WBTC->WETH->crvUSD)"
+                )
+            );
+        }
+        if (sel == bytes4(keccak256("SlippageExceeded()"))) {
             return string(abi.encodePacked(step, ": SlippageExceeded (UniV3 minAmountOut not met)"));
-        if (sel == bytes4(keccak256("InsufficientCollateral()")))
-            return string(abi.encodePacked(step, ": InsufficientCollateral (recovered WBTC < minOut after unwind)"));
-        if (sel == bytes4(keccak256("HealthTooLow()")))
+        }
+        if (sel == bytes4(keccak256("InsufficientCollateral()"))) {
+            return string(
+                abi.encodePacked(
+                    step, ": InsufficientCollateral (recovered WBTC < minOut after unwind)"
+                )
+            );
+        }
+        if (sel == bytes4(keccak256("HealthTooLow()"))) {
             return string(abi.encodePacked(step, ": HealthTooLow (LlamaLend health < min)"));
-        if (sel == bytes4(keccak256("InsufficientWithdrawal()")))
-            return string(abi.encodePacked(step, ": InsufficientWithdrawal (strategy LP underperformed maxSlippage)"));
+        }
+        if (sel == bytes4(keccak256("InsufficientWithdrawal()"))) {
+            return string(
+                abi.encodePacked(
+                    step, ": InsufficientWithdrawal (strategy LP underperformed maxSlippage)"
+                )
+            );
+        }
         if (sel == bytes4(keccak256("Error(string)"))) {
             if (err.length > 68) {
                 bytes memory msg_ = new bytes(err.length - 68);
-                for (uint256 i = 0; i < msg_.length; i++) msg_[i] = err[68 + i];
+                for (uint256 i = 0; i < msg_.length; i++) {
+                    msg_[i] = err[68 + i];
+                }
                 return string(abi.encodePacked(step, ": require(", string(msg_), ")"));
             }
             return string(abi.encodePacked(step, ": require (empty message)"));
@@ -994,12 +1061,11 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
         bytes memory h = new bytes(8);
         bytes16 chars = "0123456789abcdef";
         for (uint256 k = 0; k < 4; k++) {
-            h[k * 2]     = chars[uint8(sel[k]) >> 4];
+            h[k * 2] = chars[uint8(sel[k]) >> 4];
             h[k * 2 + 1] = chars[uint8(sel[k]) & 0xf];
         }
         return string(abi.encodePacked(step, ": unknown selector 0x", string(h)));
     }
-
 
     /// @notice Determines the current single-depositor TVL cap at 1% swapper slippage.
     ///         Coarse sweep locates the cliff, binary search narrows to 1-WBTC resolution,
@@ -1010,8 +1076,20 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
 
         // ── Stage 1: coarse sweep to locate the cliff bracket ───────────────────────
         uint256[14] memory probe = [
-            uint256(1e8), 5e8, 10e8, 25e8, 50e8, 75e8,
-            100e8, 125e8, 150e8, 175e8, 200e8, 250e8, 300e8, 500e8
+            uint256(1e8),
+            5e8,
+            10e8,
+            25e8,
+            50e8,
+            75e8,
+            100e8,
+            125e8,
+            150e8,
+            175e8,
+            200e8,
+            250e8,
+            300e8,
+            500e8
         ];
         uint256 lo = 0;
         uint256 hi = 0;
@@ -1019,7 +1097,10 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
         for (uint256 i = 0; i < probe.length; i++) {
             uint256 snap = vm.snapshot();
             bool passed;
-            try this.runSlippageScenario(slippage, probe[i]) returns (bool ok) { passed = ok; } catch {}
+            try this.runSlippageScenario(slippage, probe[i]) returns (bool ok) {
+                passed = ok;
+            }
+                catch { }
             vm.revertTo(snap);
             console.log("  %d WBTC: %s", probe[i] / 1e8, passed ? "pass" : "FAIL");
             if (passed) { lo = probe[i]; }
@@ -1033,11 +1114,15 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
             uint256 mid = lo + ((hi - lo) / 2 / uint256(1e8)) * 1e8;
             uint256 snap = vm.snapshot();
             bool ok;
-            try this.runSlippageScenario(slippage, mid) returns (bool r) { ok = r; } catch {}
+            try this.runSlippageScenario(slippage, mid) returns (bool r) {
+                ok = r;
+            }
+                catch { }
             vm.revertTo(snap);
-            if (ok) lo = mid; else hi = mid;
+            if (ok) lo = mid;
+            else hi = mid;
         }
-        uint256 safeCap   = lo;
+        uint256 safeCap = lo;
         uint256 firstFail = hi;
 
         // ── Stage 3: measure bps and USD value at safeCap ───────────────────────────
@@ -1048,7 +1133,8 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
             _syncAndMockOracles();
             _deployVault();
             deal(WBTC, user1, safeCap);
-            vm.prank(owner); swapper.setSlippage(slippage);
+            vm.prank(owner);
+            swapper.setSlippage(slippage);
             _depositAs(user1, safeCap);
             _syncAndMockOracles();
             uint256 received = _redeemAllAs(user1);
@@ -1071,13 +1157,13 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
     ///         Complements test_slippageSweep_bySlippage (which fixes size, varies slippage).
     function test_slippageSweep_bySize() public {
         uint256[] memory sizes = new uint256[](8);
-        sizes[0] = 1e8;   //   1 WBTC
-        sizes[1] = 5e8;   //   5 WBTC
-        sizes[2] = 10e8;  //  10 WBTC
-        sizes[3] = 20e8;  //  20 WBTC
-        sizes[4] = 30e8;  //  30 WBTC
-        sizes[5] = 50e8;  //  50 WBTC
-        sizes[6] = 75e8;  //  75 WBTC
+        sizes[0] = 1e8; //   1 WBTC
+        sizes[1] = 5e8; //   5 WBTC
+        sizes[2] = 10e8; //  10 WBTC
+        sizes[3] = 20e8; //  20 WBTC
+        sizes[4] = 30e8; //  30 WBTC
+        sizes[5] = 50e8; //  50 WBTC
+        sizes[6] = 75e8; //  75 WBTC
         sizes[7] = 100e8; // 100 WBTC
 
         uint256 slippage = 1e16;
@@ -1092,7 +1178,11 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
                 passed = false;
             }
             vm.revertTo(snap);
-            console.log("WBTC SizeSweep slippage=100bps deposit=%s WBTC passed=%s", sizes[i] / 1e8, passed ? 1 : 0);
+            console.log(
+                "WBTC SizeSweep slippage=100bps deposit=%s WBTC passed=%s",
+                sizes[i] / 1e8,
+                passed ? 1 : 0
+            );
             if (passed) lastPass = sizes[i];
         }
 
@@ -1104,10 +1194,11 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
     function test_slippageCapacity() public {
         _deployVault();
 
-        uint256[8] memory amounts =
-            [uint256(1e6), 1e7, 5e7, 1e8, 2e8, 3e8, 5e8, 10e8];
+        uint256[8] memory amounts = [uint256(1e6), 1e7, 5e7, 1e8, 2e8, 3e8, 5e8, 10e8];
 
-        console.log("=== WBTC LlamaLend round-trip slippage (UniV3 WBTC/WETH 0.05%% + Curve TriCRV) ===");
+        console.log(
+            "=== WBTC LlamaLend round-trip slippage (UniV3 WBTC/WETH 0.05%% + Curve TriCRV) ==="
+        );
         console.log("Simulating deposit -> 5-block wait -> full redeem");
         console.log("swap path on unwind: WBTC->WETH via UniV3, WETH->crvUSD via TriCRV");
         console.log("");
@@ -1145,5 +1236,4 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
             vm.revertTo(snap);
         }
     }
-
 }

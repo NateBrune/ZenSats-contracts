@@ -300,7 +300,8 @@ library ZenjiCoreLib {
         uint256 strategyBalance = yieldStrategy.balanceOf();
         if (strategyBalance <= debt) return strategyBalance;
 
-        uint256 targetDebtAtMaxRatio = (strategyBalance * precision) / maxStrategyToDebtRatioForBorrow;
+        uint256 targetDebtAtMaxRatio =
+            (strategyBalance * precision) / maxStrategyToDebtRatioForBorrow;
         if (targetDebtAtMaxRatio <= debt) return strategyBalance;
 
         (uint256 collateral,) = loanManager.getPositionValues();

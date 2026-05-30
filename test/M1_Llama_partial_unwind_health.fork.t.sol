@@ -156,7 +156,8 @@ contract M1_Llama_partial_unwind_health is ZenjiForkTestBase {
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
             address(swapper),
-            address(0)
+            address(0),
+            3600
         );
 
         llamaVault = new ZenjiWbtcLlamaStakeDao(
@@ -196,8 +197,7 @@ contract M1_Llama_partial_unwind_health is ZenjiForkTestBase {
         console.log("LTV before unwind: %d", ltvBefore);
 
         // Get BTC oracle data
-        (uint80 roundId, int256 btcPrice,,,) =
-            IChainlinkOracle(BTC_USD_ORACLE).latestRoundData();
+        (uint80 roundId, int256 btcPrice,,,) = IChainlinkOracle(BTC_USD_ORACLE).latestRoundData();
 
         // Decrease BTC price by 50% to push the position into liquidation territory
         // With ~60% LTV, a 50% price drop makes collateral value half, pushing LTV > 100%
@@ -265,8 +265,10 @@ contract M1_Llama_partial_unwind_health is ZenjiForkTestBase {
         uint256 vaultBtcAfter = IERC20(WBTC).balanceOf(address(llamaVault));
         assertGt(vaultBtcAfter, vaultBtcBefore, "Vault should receive WBTC from partial unwind");
 
-        console.log("M1 PoC: partial unwind succeeded with stable price, vault received %d WBTC",
-            vaultBtcAfter - vaultBtcBefore);
+        console.log(
+            "M1 PoC: partial unwind succeeded with stable price, vault received %d WBTC",
+            vaultBtcAfter - vaultBtcBefore
+        );
     }
 
     /// @dev M1: Demonstrates the health check gap — drop price after freshness check
@@ -279,8 +281,7 @@ contract M1_Llama_partial_unwind_health is ZenjiForkTestBase {
         _refreshOracles();
 
         // Get current BTC price
-        (uint80 roundId, int256 btcPrice,,,) =
-            IChainlinkOracle(BTC_USD_ORACLE).latestRoundData();
+        (uint80 roundId, int256 btcPrice,,,) = IChainlinkOracle(BTC_USD_ORACLE).latestRoundData();
 
         // Drop BTC price by 30%
         int256 newPrice = (btcPrice * 70) / 100;

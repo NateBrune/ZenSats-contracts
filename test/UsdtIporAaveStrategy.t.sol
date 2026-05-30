@@ -196,8 +196,11 @@ contract MockAavePool is IAavePool {
             .executeOperation(asset, amount, 0, receiverAddress, params);
         IERC20(asset).transferFrom(receiverAddress, address(this), amount);
     }
-    function setUserEMode(uint8) external {}
-    function getUserEMode(address) external pure returns (uint256) { return 0; }
+    function setUserEMode(uint8) external { }
+
+    function getUserEMode(address) external pure returns (uint256) {
+        return 0;
+    }
 }
 
 contract UsdtIporAaveStrategyTest is Test {

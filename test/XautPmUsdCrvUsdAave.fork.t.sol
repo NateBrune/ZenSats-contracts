@@ -6,9 +6,13 @@ import { AaveSecurityTestMixin } from "./base/AaveSecurityTestMixin.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { IAavePool } from "../src/interfaces/IAavePool.sol";
-import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
+import {
+    UniversalRouterV3SingleHopSwapper
+} from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
-import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
+import {
+    UsdtNgCrvUsdLpStakeDaoStrategy
+} from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { BaseSwapper } from "../src/swappers/base/BaseSwapper.sol";
@@ -279,9 +283,15 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
         vm.expectRevert(BaseSwapper.Unauthorized.selector);
         swapper.setSlippage(10e16);
 
+        // Gov can set slippage directly (at the 5% cap)
         vm.prank(owner);
-        swapper.setSlippage(10e16);
-        assertEq(swapper.slippage(), 10e16, "Slippage should be 10%");
+        swapper.setSlippage(5e16);
+        assertEq(swapper.slippage(), 5e16, "Slippage should be 5%");
+
+        // Above the 5% MAX_SLIPPAGE cap is rejected
+        vm.prank(owner);
+        vm.expectRevert(BaseSwapper.InvalidSlippage.selector);
+        swapper.setSlippage(5e16 + 1);
     }
 
     /// @notice A 100 XAUT position (~$300K) can fully exit at the 2% production default
@@ -296,7 +306,10 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
         assertFalse(passed, "100 XAUT full redeem should revert when slippage < pool fee (0.05%)");
     }
 
-    function _runSlippageScenario(uint256 targetSlippage, uint256 depositAmount) internal returns (bool) {
+    function _runSlippageScenario(uint256 targetSlippage, uint256 depositAmount)
+        internal
+        returns (bool)
+    {
         _syncAndMockOracles();
         _deployVault();
 
@@ -320,7 +333,10 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
         }
     }
 
-    function runSlippageScenario(uint256 targetSlippage, uint256 depositAmount) external returns (bool) {
+    function runSlippageScenario(uint256 targetSlippage, uint256 depositAmount)
+        external
+        returns (bool)
+    {
         return _runSlippageScenario(targetSlippage, depositAmount);
     }
 
@@ -331,26 +347,52 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
     }
 
     /// @dev Decode a low-level revert bytes into a human-readable string for test output.
-    function _decodeRevertReason(bytes memory err, string memory step) internal pure returns (string memory) {
+    function _decodeRevertReason(bytes memory err, string memory step)
+        internal
+        pure
+        returns (string memory)
+    {
         if (err.length < 4) return string(abi.encodePacked(step, ": revert (no data)"));
         bytes4 sel;
         assembly { sel := mload(add(err, 32)) }
 
-        if (sel == bytes4(keccak256("ExchangeFailed()")))
-            return string(abi.encodePacked(step, ": ExchangeFailed (step 1 USDT->crvUSD: pool get_dy output falls below oracle floor at 1% slippage)"));
-        if (sel == bytes4(keccak256("SwapperUnderperformed(uint256,uint256)")))
-            return string(abi.encodePacked(step, ": SwapperUnderperformed (Uniswap USDT->XAUT output below 1% oracle floor)"));
-        if (sel == bytes4(keccak256("SlippageExceeded()")))
-            return string(abi.encodePacked(step, ": SlippageExceeded (Uniswap minAmountOut not met)"));
-        if (sel == bytes4(keccak256("InsufficientCollateral()")))
-            return string(abi.encodePacked(step, ": InsufficientCollateral (recovered XAUT < minOut after unwind)"));
-        if (sel == bytes4(keccak256("HealthTooLow()")))
+        if (sel == bytes4(keccak256("ExchangeFailed()"))) {
+            return string(
+                abi.encodePacked(
+                    step,
+                    ": ExchangeFailed (step 1 USDT->crvUSD: pool get_dy output falls below oracle floor at 1% slippage)"
+                )
+            );
+        }
+        if (sel == bytes4(keccak256("SwapperUnderperformed(uint256,uint256)"))) {
+            return string(
+                abi.encodePacked(
+                    step,
+                    ": SwapperUnderperformed (Uniswap USDT->XAUT output below 1% oracle floor)"
+                )
+            );
+        }
+        if (sel == bytes4(keccak256("SlippageExceeded()"))) {
+            return
+                string(abi.encodePacked(step, ": SlippageExceeded (Uniswap minAmountOut not met)"));
+        }
+        if (sel == bytes4(keccak256("InsufficientCollateral()"))) {
+            return string(
+                abi.encodePacked(
+                    step, ": InsufficientCollateral (recovered XAUT < minOut after unwind)"
+                )
+            );
+        }
+        if (sel == bytes4(keccak256("HealthTooLow()"))) {
             return string(abi.encodePacked(step, ": HealthTooLow (Aave position health < 1.1)"));
+        }
         if (sel == bytes4(keccak256("Error(string)"))) {
             // ABI-decode the string message
             if (err.length > 68) {
                 bytes memory msg_ = new bytes(err.length - 68);
-                for (uint256 i = 0; i < msg_.length; i++) msg_[i] = err[68 + i];
+                for (uint256 i = 0; i < msg_.length; i++) {
+                    msg_[i] = err[68 + i];
+                }
                 return string(abi.encodePacked(step, ": require(", string(msg_), ")"));
             }
             return string(abi.encodePacked(step, ": require (empty message)"));
@@ -360,7 +402,7 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
         bytes memory h = new bytes(8);
         bytes16 chars = "0123456789abcdef";
         for (uint256 k = 0; k < 4; k++) {
-            h[k * 2]     = chars[uint8(sel[k]) >> 4];
+            h[k * 2] = chars[uint8(sel[k]) >> 4];
             h[k * 2 + 1] = chars[uint8(sel[k]) & 0xf];
         }
         return string(abi.encodePacked(step, ": unknown selector 0x", string(h)));
@@ -368,10 +410,10 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
 
     function test_slippageSweep_bySlippage() public {
         uint256[] memory levels = new uint256[](8);
-        levels[0] = 1e16;  // 1.0%
-        levels[1] = 2e16;  // 2.0%
-        levels[2] = 3e16;  // 3.0%
-        levels[3] = 5e16;  // 5.0%
+        levels[0] = 1e16; // 1.0%
+        levels[1] = 2e16; // 2.0%
+        levels[2] = 3e16; // 3.0%
+        levels[3] = 5e16; // 5.0%
         levels[4] = 10e16; // 10.0%
         levels[5] = 15e16; // 15.0%
         levels[6] = 20e16; // 20.0%
@@ -396,19 +438,21 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
         }
 
         console.log("XAUT Sweep firstPass(bps)=%s", firstPass == 0 ? 0 : firstPass / 1e14);
-        assertTrue(firstPass > 0 && firstPass <= 2e16, "Full redeem should succeed within 2% slippage");
+        assertTrue(
+            firstPass > 0 && firstPass <= 2e16, "Full redeem should succeed within 2% slippage"
+        );
     }
 
     function test_slippageSweep_bySize() public {
         uint256[] memory sizes = new uint256[](8);
-        sizes[0] = 1e6;    //    1 XAUT ~$3K
-        sizes[1] = 5e6;    //    5 XAUT ~$15K
-        sizes[2] = 10e6;   //   10 XAUT ~$30K
-        sizes[3] = 25e6;   //   25 XAUT ~$75K
-        sizes[4] = 50e6;   //   50 XAUT ~$150K
-        sizes[5] = 100e6;  //  100 XAUT ~$300K
-        sizes[6] = 250e6;  //  250 XAUT ~$750K
-        sizes[7] = 500e6;  //  500 XAUT ~$1.5M
+        sizes[0] = 1e6; //    1 XAUT ~$3K
+        sizes[1] = 5e6; //    5 XAUT ~$15K
+        sizes[2] = 10e6; //   10 XAUT ~$30K
+        sizes[3] = 25e6; //   25 XAUT ~$75K
+        sizes[4] = 50e6; //   50 XAUT ~$150K
+        sizes[5] = 100e6; //  100 XAUT ~$300K
+        sizes[6] = 250e6; //  250 XAUT ~$750K
+        sizes[7] = 500e6; //  500 XAUT ~$1.5M
 
         uint256 slippage = 1e16; // 1%
         uint256 lastPass = 0;
@@ -422,7 +466,11 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
                 passed = false;
             }
             vm.revertTo(snap);
-            console.log("XAUT SizeSweep slippage=100bps deposit=%s XAUT passed=%s", sizes[i] / 1e6, passed ? 1 : 0);
+            console.log(
+                "XAUT SizeSweep slippage=100bps deposit=%s XAUT passed=%s",
+                sizes[i] / 1e6,
+                passed ? 1 : 0
+            );
             if (passed) {
                 lastPass = sizes[i];
             }
@@ -435,8 +483,8 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
     /// @notice Refine the liquidity threshold at 1% slippage in a tighter XAUT band.
     function test_liquiditySweep_bySize_refined() public {
         uint256[] memory sizes = new uint256[](7);
-        sizes[0] = 50e6;  //  50 XAUT ~$150K
-        sizes[1] = 75e6;  //  75 XAUT ~$225K
+        sizes[0] = 50e6; //  50 XAUT ~$150K
+        sizes[1] = 75e6; //  75 XAUT ~$225K
         sizes[2] = 100e6; // 100 XAUT ~$300K
         sizes[3] = 125e6; // 125 XAUT ~$375K
         sizes[4] = 150e6; // 150 XAUT ~$450K
@@ -521,16 +569,16 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
     /// @dev Finds the Uniswap XAUT/USDT liquidity cliff for the borrowing-then-redeposit swap path.
     function test_liquiditySweep_bySize_extended() public {
         uint256[] memory sizes = new uint256[](10);
-        sizes[0] = 250e6;   //  250 XAUT ~$750K
-        sizes[1] = 350e6;   //  350 XAUT ~$1.05M
-        sizes[2] = 500e6;   //  500 XAUT ~$1.5M
-        sizes[3] = 650e6;   //  650 XAUT ~$1.95M
-        sizes[4] = 750e6;   //  750 XAUT ~$2.25M
-        sizes[5] = 900e6;   //  900 XAUT ~$2.7M
-        sizes[6] = 1000e6;  // 1000 XAUT ~$3M
-        sizes[7] = 1250e6;  // 1250 XAUT ~$3.75M
-        sizes[8] = 1500e6;  // 1500 XAUT ~$4.5M
-        sizes[9] = 2000e6;  // 2000 XAUT ~$6M
+        sizes[0] = 250e6; //  250 XAUT ~$750K
+        sizes[1] = 350e6; //  350 XAUT ~$1.05M
+        sizes[2] = 500e6; //  500 XAUT ~$1.5M
+        sizes[3] = 650e6; //  650 XAUT ~$1.95M
+        sizes[4] = 750e6; //  750 XAUT ~$2.25M
+        sizes[5] = 900e6; //  900 XAUT ~$2.7M
+        sizes[6] = 1000e6; // 1000 XAUT ~$3M
+        sizes[7] = 1250e6; // 1250 XAUT ~$3.75M
+        sizes[8] = 1500e6; // 1500 XAUT ~$4.5M
+        sizes[9] = 2000e6; // 2000 XAUT ~$6M
 
         uint256 slippage = 1e16; // 1%
         uint256 lastPass = 0;
@@ -559,8 +607,12 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
             }
         }
 
-        console.log("XAUT ExtendedSizeSweep lastPass=%s XAUT (~$%sK)", lastPass / 1e6, lastPass * 3 / 1e9);
-        console.log("XAUT ExtendedSizeSweep firstFail=%s XAUT (~$%sK)", firstFail / 1e6, firstFail * 3 / 1e9);
+        console.log(
+            "XAUT ExtendedSizeSweep lastPass=%s XAUT (~$%sK)", lastPass / 1e6, lastPass * 3 / 1e9
+        );
+        console.log(
+            "XAUT ExtendedSizeSweep firstFail=%s XAUT (~$%sK)", firstFail / 1e6, firstFail * 3 / 1e9
+        );
         assertGt(lastPass, 0, "Extended sweep: at least 250 XAUT should pass");
     }
 
@@ -575,15 +627,15 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
         // Max single-depositor TVL is ~$1.1M ≈ 333 XAUT at current gold prices.
         // Sweep 50–500 XAUT to locate the actual LP-oracle cliff.
         uint256[] memory sizes = new uint256[](9);
-        sizes[0] =  50e6;  //  50 XAUT ~$165k
-        sizes[1] = 100e6;  // 100 XAUT ~$330k
-        sizes[2] = 150e6;  // 150 XAUT ~$495k
-        sizes[3] = 200e6;  // 200 XAUT ~$660k
-        sizes[4] = 250e6;  // 250 XAUT ~$825k
-        sizes[5] = 300e6;  // 300 XAUT ~$990k  ← expected near ceiling
-        sizes[6] = 350e6;  // 350 XAUT ~$1.16M
-        sizes[7] = 400e6;  // 400 XAUT ~$1.32M
-        sizes[8] = 500e6;  // 500 XAUT ~$1.65M
+        sizes[0] = 50e6; //  50 XAUT ~$165k
+        sizes[1] = 100e6; // 100 XAUT ~$330k
+        sizes[2] = 150e6; // 150 XAUT ~$495k
+        sizes[3] = 200e6; // 200 XAUT ~$660k
+        sizes[4] = 250e6; // 250 XAUT ~$825k
+        sizes[5] = 300e6; // 300 XAUT ~$990k  ← expected near ceiling
+        sizes[6] = 350e6; // 350 XAUT ~$1.16M
+        sizes[7] = 400e6; // 400 XAUT ~$1.32M
+        sizes[8] = 500e6; // 500 XAUT ~$1.65M
 
         uint256 slippage = 1e16; // 1%
         uint256 lastPass = 0;
@@ -623,16 +675,16 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
     function test_uniswapSlippageCeiling_1pct_finegrain() public {
         // Expected cliff ~250–350 XAUT (≈ $825k–$1.16M single-depositor TVL at 1% slippage)
         uint256[] memory sizes = new uint256[](10);
-        sizes[0] = 200e6;  // 200 XAUT
-        sizes[1] = 220e6;  // 220 XAUT
-        sizes[2] = 240e6;  // 240 XAUT
-        sizes[3] = 260e6;  // 260 XAUT
-        sizes[4] = 280e6;  // 280 XAUT
-        sizes[5] = 300e6;  // 300 XAUT
-        sizes[6] = 320e6;  // 320 XAUT
-        sizes[7] = 340e6;  // 340 XAUT
-        sizes[8] = 360e6;  // 360 XAUT
-        sizes[9] = 380e6;  // 380 XAUT
+        sizes[0] = 200e6; // 200 XAUT
+        sizes[1] = 220e6; // 220 XAUT
+        sizes[2] = 240e6; // 240 XAUT
+        sizes[3] = 260e6; // 260 XAUT
+        sizes[4] = 280e6; // 280 XAUT
+        sizes[5] = 300e6; // 300 XAUT
+        sizes[6] = 320e6; // 320 XAUT
+        sizes[7] = 340e6; // 340 XAUT
+        sizes[8] = 360e6; // 360 XAUT
+        sizes[9] = 380e6; // 380 XAUT
 
         uint256 slippage = 1e16;
         uint256 lastPass = 0;
@@ -654,11 +706,13 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
                 passed ? 1 : 0
             );
 
-            if (passed) { lastPass = sizes[i]; }
-            else if (firstFail == 0) { firstFail = sizes[i]; }
+            if (passed) lastPass = sizes[i];
+            else if (firstFail == 0) firstFail = sizes[i];
         }
 
-        console.log("UniswapFine lastPass=%s XAUT  firstFail=%s XAUT", lastPass / 1e6, firstFail / 1e6);
+        console.log(
+            "UniswapFine lastPass=%s XAUT  firstFail=%s XAUT", lastPass / 1e6, firstFail / 1e6
+        );
         assertGt(lastPass, 0, "Fine-grain: at least 200 XAUT should pass at 1% slippage");
     }
 
@@ -706,7 +760,10 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
             for (uint256 i = 0; i < micro.length; i++) {
                 uint256 snap = vm.snapshot();
                 bool passed;
-                try this.runSlippageScenario(slippage, micro[i]) returns (bool ok) { passed = ok; } catch {}
+                try this.runSlippageScenario(slippage, micro[i]) returns (bool ok) {
+                    passed = ok;
+                }
+                    catch { }
                 vm.revertTo(snap);
                 if (passed) { clo = micro[i]; }
                 else if (chi == 0) { chi = micro[i]; break; }
@@ -720,11 +777,17 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
         } else {
             // ── Phase 1: coarse sweep at 500 XAUT steps ───────────────────────────────
             uint256[] memory coarse = new uint256[](20);
-            for (uint256 i = 0; i < 20; i++) coarse[i] = (i + 1) * 500e6; // 500..10000 XAUT
+            // 500..10000 XAUT
+            for (uint256 i = 0; i < 20; i++) {
+                coarse[i] = (i + 1) * 500e6;
+            }
             for (uint256 i = 0; i < coarse.length; i++) {
                 uint256 snap = vm.snapshot();
                 bool passed;
-                try this.runSlippageScenario(slippage, coarse[i]) returns (bool ok) { passed = ok; } catch {}
+                try this.runSlippageScenario(slippage, coarse[i]) returns (bool ok) {
+                    passed = ok;
+                }
+                    catch { }
                 vm.revertTo(snap);
                 if (passed) { clo = coarse[i]; }
                 else if (chi == 0) { chi = coarse[i]; break; }
@@ -739,12 +802,15 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
             uint256 mid = lo + ((hi - lo) / 2 / binaryStep) * binaryStep;
             uint256 snap = vm.snapshot();
             bool passed;
-            try this.runSlippageScenario(slippage, mid) returns (bool ok) { passed = ok; } catch {}
+            try this.runSlippageScenario(slippage, mid) returns (bool ok) {
+                passed = ok;
+            }
+                catch { }
             vm.revertTo(snap);
             if (passed) lo = mid;
-            else        hi = mid;
+            else hi = mid;
         }
-        uint256 safeCap  = lo; // last passing size
+        uint256 safeCap = lo; // last passing size
         uint256 firstFail = hi; // first failing size
 
         // ── Phase 3: clean measurement at safeCap ─────────────────────────────────────
@@ -756,7 +822,8 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
             _syncAndMockOracles();
             _deployVault();
             deal(XAUT, user1, safeCap);
-            vm.prank(owner); swapper.setSlippage(slippage);
+            vm.prank(owner);
+            swapper.setSlippage(slippage);
 
             _depositAs(user1, safeCap);
             _syncAndMockOracles();
@@ -768,8 +835,8 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
             // XAU/USD oracle: 8-decimal Chainlink price. 1 XAUT (1e6 units) = 1 troy oz.
             (, int256 rawPrice,,,) = IChainlinkOracle(XAU_USD_ORACLE).latestRoundData();
             uint256 price8 = uint256(rawPrice);
-            depositUsd   = (safeCap * price8) / 1e14; // whole dollars
-            redeemUsd    = (xautOut * price8) / 1e14;
+            depositUsd = (safeCap * price8) / 1e14; // whole dollars
+            redeemUsd = (xautOut * price8) / 1e14;
             roundTripBps = safeCap > xautOut ? ((safeCap - xautOut) * 10000) / safeCap : 0;
 
             vm.revertTo(snap);
@@ -783,7 +850,10 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
         for (uint256 probe = firstFail; probe <= firstFail + 20 * binaryStep; probe += binaryStep) {
             uint256 snap = vm.snapshot();
             bool passed;
-            try this.runSlippageScenario(slippage, probe) returns (bool ok) { passed = ok; } catch {}
+            try this.runSlippageScenario(slippage, probe) returns (bool ok) {
+                passed = ok;
+            }
+                catch { }
             vm.revertTo(snap);
             if (!passed) { traceTarget = probe; break; }
         }
@@ -793,7 +863,8 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
             _syncAndMockOracles();
             _deployVault();
             deal(XAUT, user1, traceTarget);
-            vm.prank(owner); swapper.setSlippage(slippage);
+            vm.prank(owner);
+            swapper.setSlippage(slippage);
 
             // Step A: try deposit (can fail if Curve strategy exchange exceeds slippage)
             vm.startPrank(user1);
@@ -824,12 +895,12 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
 
         // ── Report ─────────────────────────────────────────────────────────────────────
         console.log("=== Single-depositor safe TVL cap at 1%% slippage ===");
-        console.log("Max safe deposit:    %s XAUT",  safeCap / 1e6);
-        console.log("First failing size:  %s XAUT",  firstFail / 1e6);
-        console.log("Deposit value:      ~$%s",       depositUsd);
-        console.log("Redeem  value:      ~$%s",       redeemUsd);
-        console.log("Round-trip cost:     %s bps",    roundTripBps);
-        console.log("Failure reason:      %s",        failReason);
+        console.log("Max safe deposit:    %s XAUT", safeCap / 1e6);
+        console.log("First failing size:  %s XAUT", firstFail / 1e6);
+        console.log("Deposit value:      ~$%s", depositUsd);
+        console.log("Redeem  value:      ~$%s", redeemUsd);
+        console.log("Round-trip cost:     %s bps", roundTripBps);
+        console.log("Failure reason:      %s", failReason);
 
         assertGt(safeCap, 0, "Must find a passing size");
         assertLe(roundTripBps, 100, "Round-trip cost at cap must be within 1%%");
@@ -857,20 +928,23 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
 
         _syncAndMockOracles();
         _deployVault();
-        vm.prank(owner); swapper.setSlippage(slippage);
+        vm.prank(owner);
+        swapper.setSlippage(slippage);
 
         // ── Curve pool pre-trade analysis ──────────────────────────────────────
         console.log("");
         console.log("=== Deposit path analysis: XAUT vault two-hop Curve flow ===");
         console.log("  Flow: XAUT collateral -> borrow USDT -> [USDT/crvUSD pool] ->");
         console.log("        crvUSD -> [pmUSD/crvUSD pool] -> LP staked in Stake DAO");
-        console.log("  Slippage check 1: 1%% (user-set), Slippage check 2: 0.5%% (LP_SLIPPAGE hardcoded)");
+        console.log(
+            "  Slippage check 1: 1%% (user-set), Slippage check 2: 0.5%% (LP_SLIPPAGE hardcoded)"
+        );
         console.log("");
 
         (, int256 xauRawPrice,,,) = IChainlinkOracle(XAU_USD_ORACLE).latestRoundData();
         (, int256 usdtRawPrice,,,) = IChainlinkOracle(USDT_USD_ORACLE).latestRoundData();
         (, int256 crvUsdRawPrice,,,) = IChainlinkOracle(CRVUSD_USD_ORACLE).latestRoundData();
-        uint256 xauPrice8 = uint256(xauRawPrice);   // 8 dec, USD/oz
+        uint256 xauPrice8 = uint256(xauRawPrice); // 8 dec, USD/oz
         uint256 usdtPrice8 = uint256(usdtRawPrice); // 8 dec
         uint256 crvUsdPrice8 = uint256(crvUsdRawPrice); // 8 dec
 
@@ -930,23 +1004,23 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
     ///    minLp = max(calc_token_amount * 0.995, crvUsdIn * 0.995 / virtualPrice)
     function _logCurveAnalysis(
         string memory label,
-        uint256 depositXaut,   // XAUT amount (6 dec)
-        uint256 xauPrice8,     // XAU/USD 8-dec
-        uint256 usdtPrice8,    // USDT/USD 8-dec
-        uint256 crvUsdPrice8,  // crvUSD/USD 8-dec
-        uint256 slippage       // 1e16 = 1%
+        uint256 depositXaut, // XAUT amount (6 dec)
+        uint256 xauPrice8, // XAU/USD 8-dec
+        uint256 usdtPrice8, // USDT/USD 8-dec
+        uint256 crvUsdPrice8, // crvUSD/USD 8-dec
+        uint256 slippage // 1e16 = 1%
     ) internal view {
         uint256 LP_SLIPPAGE = 5e15; // 0.5% — hardcoded in NgCrvUsdLpStakeDaoStrategy
 
         // ── Step 1: USDT → crvUSD via USDT_CRVUSD_POOL ───────────────────────
         uint256 estimatedUsdt = (depositXaut * xauPrice8 * vault.targetLtv()) / 1e26;
 
-        uint256 s1PoolQuote    = ICurveStableSwapNG(USDT_CRVUSD_POOL).get_dy(0, 1, estimatedUsdt);
+        uint256 s1PoolQuote = ICurveStableSwapNG(USDT_CRVUSD_POOL).get_dy(0, 1, estimatedUsdt);
         uint256 s1OracleExpect = (estimatedUsdt * usdtPrice8 * 1e12) / crvUsdPrice8;
-        uint256 s1OracleFloor  = (s1OracleExpect * (1e18 - slippage)) / 1e18;
-        uint256 s1PoolMin      = (s1PoolQuote    * (1e18 - slippage)) / 1e18;
+        uint256 s1OracleFloor = (s1OracleExpect * (1e18 - slippage)) / 1e18;
+        uint256 s1PoolMin = (s1PoolQuote * (1e18 - slippage)) / 1e18;
         uint256 s1EffectiveMin = s1PoolMin > s1OracleFloor ? s1PoolMin : s1OracleFloor;
-        bool    s1Pass         = s1PoolQuote >= s1EffectiveMin;
+        bool s1Pass = s1PoolQuote >= s1EffectiveMin;
 
         uint256 s1DegBps;
         bool s1Below = s1PoolQuote < s1OracleExpect;
@@ -963,16 +1037,19 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
         amounts[uint256(uint128(lpCrvUsdIdx))] = s1PoolQuote; // crvUSD slot
         // pmUSD slot stays 0 (no pmUSD in normal deposit)
 
-        uint256 s2ExpectedLp  = ICurveStableSwapNG(PMUSD_CRVUSD_POOL).calc_token_amount(amounts, true);
-        uint256 s2VP          = ICurveStableSwapNG(PMUSD_CRVUSD_POOL).get_virtual_price();
-        uint256 s2PoolMin     = (s2ExpectedLp * (1e18 - LP_SLIPPAGE)) / 1e18;
+        uint256 s2ExpectedLp =
+            ICurveStableSwapNG(PMUSD_CRVUSD_POOL).calc_token_amount(amounts, true);
+        uint256 s2VP = ICurveStableSwapNG(PMUSD_CRVUSD_POOL).get_virtual_price();
+        uint256 s2PoolMin = (s2ExpectedLp * (1e18 - LP_SLIPPAGE)) / 1e18;
         // oracleMinLp = crvUsdIn * (1 - LP_SLIPPAGE) / VP
-        uint256 s2OracleMin   = (s1PoolQuote  * (1e18 - LP_SLIPPAGE)) / s2VP;
-        uint256 s2EffectiveMin= s2OracleMin > s2PoolMin ? s2OracleMin : s2PoolMin;
-        bool    s2Pass        = s2ExpectedLp >= s2EffectiveMin;
+        uint256 s2OracleMin = (s1PoolQuote * (1e18 - LP_SLIPPAGE)) / s2VP;
+        uint256 s2EffectiveMin = s2OracleMin > s2PoolMin ? s2OracleMin : s2PoolMin;
+        bool s2Pass = s2ExpectedLp >= s2EffectiveMin;
 
         console.log("  [%s] Deposit: %s XAUT", label, depositXaut / 1e6);
-        console.log("  Step 1: USDT -> crvUSD  (USDT/crvUSD pool, slippage=%s bps)", slippage / 1e14);
+        console.log(
+            "  Step 1: USDT -> crvUSD  (USDT/crvUSD pool, slippage=%s bps)", slippage / 1e14
+        );
         console.log("    USDT in (est.):      $%s", estimatedUsdt / 1e6);
         console.log("    Pool get_dy quote:    %s crvUSD", s1PoolQuote / 1e18);
         console.log("    Oracle expected out:  %s crvUSD", s1OracleExpect / 1e18);
@@ -982,7 +1059,9 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
         } else {
             console.log("    Pool premium:        +%s bps vs oracle  (pool gives MORE)", s1DegBps);
         }
-        console.log("    Result: %s", s1Pass ? "PASS" : "FAIL -> ExchangeFailed() at USDT_CRVUSD_POOL");
+        console.log(
+            "    Result: %s", s1Pass ? "PASS" : "FAIL -> ExchangeFailed() at USDT_CRVUSD_POOL"
+        );
 
         if (s1Pass) {
             console.log("  Step 2: crvUSD -> LP  (pmUSD/crvUSD pool, LP_SLIPPAGE=0.5%%)");
@@ -1000,8 +1079,10 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
     function test_multiDepositors_maxTvl() public {
         _deployVault();
 
-        vm.prank(vault.gov()); vault.setParam(1, 30e16);
-        vm.prank(vault.gov()); vault.setParam(4, 5e16);
+        vm.prank(vault.gov());
+        vault.setParam(1, 30e16);
+        vm.prank(vault.gov());
+        vault.setParam(4, 5e16);
 
         address[4] memory users = [user1, user2, makeAddr("user3"), makeAddr("user4")];
         uint256 targetTvlUsdt = 20_000_000e6; // push toward $20M
@@ -1041,12 +1122,14 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
     function test_tvlCeiling_exhaustive() public {
         _deployVault();
 
-        vm.prank(vault.gov()); vault.setParam(1, 30e16); // 30% target LTV
-        vm.prank(vault.gov()); vault.setParam(4, 5e16);  // 5% slippage
+        vm.prank(vault.gov()); // 30% target LTV
+        vault.setParam(1, 30e16);
+        vm.prank(vault.gov()); // 5% slippage
+        vault.setParam(4, 5e16);
 
         address[4] memory users = [user1, user2, makeAddr("user3"), makeAddr("user4")];
-        uint256 chunk = 500e6;   // 500 XAUT starting chunk
-        uint256 minChunk = 1e5;  // 0.1 XAUT floor
+        uint256 chunk = 500e6; // 500 XAUT starting chunk
+        uint256 minChunk = 1e5; // 0.1 XAUT floor
         uint256 consecutiveFails = 0;
         uint256 tvlUsdt = 0;
         string memory stopReason = "iter_cap";
@@ -1080,12 +1163,24 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
             tvlUsdt = loanManager.getCollateralValue(vault.getTotalCollateral());
 
             // Log progress at each order-of-magnitude milestone
-            if (tvlUsdt >= 5_000_000e6  && tvlUsdt < 5_001_000e6)  console.log("XAUT Ceiling milestone: $5M");
-            if (tvlUsdt >= 10_000_000e6 && tvlUsdt < 10_001_000e6) console.log("XAUT Ceiling milestone: $10M");
-            if (tvlUsdt >= 20_000_000e6 && tvlUsdt < 20_001_000e6) console.log("XAUT Ceiling milestone: $20M");
-            if (tvlUsdt >= 30_000_000e6 && tvlUsdt < 30_001_000e6) console.log("XAUT Ceiling milestone: $30M");
-            if (tvlUsdt >= 40_000_000e6 && tvlUsdt < 40_001_000e6) console.log("XAUT Ceiling milestone: $40M");
-            if (tvlUsdt >= 50_000_000e6 && tvlUsdt < 50_001_000e6) console.log("XAUT Ceiling milestone: $50M");
+            if (tvlUsdt >= 5_000_000e6 && tvlUsdt < 5_001_000e6) {
+                console.log("XAUT Ceiling milestone: $5M");
+            }
+            if (tvlUsdt >= 10_000_000e6 && tvlUsdt < 10_001_000e6) {
+                console.log("XAUT Ceiling milestone: $10M");
+            }
+            if (tvlUsdt >= 20_000_000e6 && tvlUsdt < 20_001_000e6) {
+                console.log("XAUT Ceiling milestone: $20M");
+            }
+            if (tvlUsdt >= 30_000_000e6 && tvlUsdt < 30_001_000e6) {
+                console.log("XAUT Ceiling milestone: $30M");
+            }
+            if (tvlUsdt >= 40_000_000e6 && tvlUsdt < 40_001_000e6) {
+                console.log("XAUT Ceiling milestone: $40M");
+            }
+            if (tvlUsdt >= 50_000_000e6 && tvlUsdt < 50_001_000e6) {
+                console.log("XAUT Ceiling milestone: $50M");
+            }
         }
 
         tvlUsdt = loanManager.getCollateralValue(vault.getTotalCollateral());
@@ -1339,7 +1434,9 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
             uint256 stratRatio = (stratAfter * 1e18) / stratBefore;
             uint256 diff = debtRatio > stratRatio ? debtRatio - stratRatio : stratRatio - debtRatio;
             assertLe(diff, 25e16, "Strategy/debt divergence >25% after partial withdraw");
-            console.log("Proportionality: debtRatio=%d stratRatio=%d diff=%d", debtRatio, stratRatio, diff);
+            console.log(
+                "Proportionality: debtRatio=%d stratRatio=%d diff=%d", debtRatio, stratRatio, diff
+            );
         }
     }
 
@@ -1473,8 +1570,12 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
             if (shares > 0) {
                 vm.prank(users[i]);
                 uint256 collateralReceived = vault.redeem(shares, users[i], users[i]);
-                assertGt(collateralReceived, 0, "Realistic deposit should redeem non-zero collateral");
-                console.log("User %d redeemed %d shares for %d units", i, shares, collateralReceived);
+                assertGt(
+                    collateralReceived, 0, "Realistic deposit should redeem non-zero collateral"
+                );
+                console.log(
+                    "User %d redeemed %d shares for %d units", i, shares, collateralReceived
+                );
             }
         }
     }
@@ -1510,8 +1611,10 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
         _deployVault();
         uint256 depositAmount = 1e4;
         deal(XAUT, user1, depositAmount);
-        vm.prank(user1); IERC20(XAUT).approve(address(vault), depositAmount);
-        vm.prank(user1); vault.deposit(depositAmount, user1);
+        vm.prank(user1);
+        IERC20(XAUT).approve(address(vault), depositAmount);
+        vm.prank(user1);
+        vault.deposit(depositAmount, user1);
 
         uint256 shares = vault.balanceOf(user1);
         (uint256 col, uint256 debt) = loanManager.getPositionValues();
@@ -1548,12 +1651,12 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
         uint256 depositAmount = 1e4; // 0.01 XAUT
 
         uint256[] memory slippageLevels = new uint256[](6);
-        slippageLevels[0] = 1e16;  //  1%
-        slippageLevels[1] = 2e16;  //  2%
-        slippageLevels[2] = 3e16;  //  3%
-        slippageLevels[3] = 5e16;  //  5%
-        slippageLevels[4] = 10e16; // 10%
-        slippageLevels[5] = 20e16; // 20%
+        slippageLevels[0] = 1e16; //  1%
+        slippageLevels[1] = 2e16; //  2%
+        slippageLevels[2] = 3e16; //  3%
+        slippageLevels[3] = 5e16; //  5%
+        slippageLevels[4] = 45e15; // 4.5%
+        slippageLevels[5] = 5e16; // 5% (cap)
 
         uint256 firstSuccess = 0;
 
@@ -1594,11 +1697,17 @@ contract XautPmUsdCrvUsdAave is AaveSecurityTestMixin {
                 assembly { selector := mload(add(errData, 32)) }
             }
 
-            console.log("slippage_bps=%d redeem=%d errLen=%d", slippageLevels[i] / 1e14, ok ? 1 : 0, errData.length);
+            console.log(
+                "slippage_bps=%d redeem=%d errLen=%d",
+                slippageLevels[i] / 1e14,
+                ok ? 1 : 0,
+                errData.length
+            );
             if (!ok) {
                 if (selector == bytes4(keccak256("InsufficientWithdrawal()"))) {
                     console.log("  => InsufficientWithdrawal");
-                } else if (selector == bytes4(keccak256("SwapperUnderperformed(uint256,uint256)"))) {
+                } else if (selector == bytes4(keccak256("SwapperUnderperformed(uint256,uint256)")))
+                {
                     console.log("  => SwapperUnderperformed (oracle floor not met)");
                 } else if (selector == bytes4(keccak256("V3TooLittleReceived()"))) {
                     console.log("  => V3TooLittleReceived (Uniswap minAmountOut not met)");

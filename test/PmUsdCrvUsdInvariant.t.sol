@@ -4,7 +4,9 @@ pragma solidity ^0.8.33;
 import { Test, console } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
-import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
+import {
+    UsdtNgCrvUsdLpStakeDaoStrategy
+} from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { ILoanManager } from "../src/interfaces/ILoanManager.sol";
 import { ISwapper } from "../src/interfaces/ISwapper.sol";
@@ -498,7 +500,9 @@ contract PmMockLoanManager is ILoanManager {
         return positionCollateral > debtInCollateral ? positionCollateral - debtInCollateral : 0;
     }
 
-    function maxLtvBps() external pure returns (uint256) { return type(uint256).max; }
+    function maxLtvBps() external pure returns (uint256) {
+        return type(uint256).max;
+    }
     function checkOracleFreshness() external pure { }
 
     function transferCollateral(address to, uint256 amount) external onlyVault {

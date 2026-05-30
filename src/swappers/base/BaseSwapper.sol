@@ -8,6 +8,9 @@ import { ISwapper } from "../../interfaces/ISwapper.sol";
 ///         Slippage can be set immediately by gov or by the registered vault.
 abstract contract BaseSwapper {
     uint256 public constant PRECISION = 1e18;
+    /// @notice Upper bound on slippage (5%) — mirrors the vault's MAX_VAULT_SLIPPAGE cap so a
+    ///         stale or compromised gov cannot widen the swap floor to near-zero.
+    uint256 public constant MAX_SLIPPAGE = 5e16;
     uint256 public slippage;
 
     address public gov;
@@ -48,7 +51,7 @@ abstract contract BaseSwapper {
     /// @param newSlippage New slippage in 1e18 precision (e.g. 5e16 = 5%)
     function setSlippage(uint256 newSlippage) external virtual {
         if (msg.sender != gov && msg.sender != vault) revert Unauthorized();
-        if (newSlippage == 0 || newSlippage >= PRECISION) revert InvalidSlippage();
+        if (newSlippage == 0 || newSlippage > MAX_SLIPPAGE) revert InvalidSlippage();
         slippage = newSlippage;
         emit SlippageUpdated(newSlippage);
     }

@@ -71,9 +71,11 @@ contract WstEthOracle is IChainlinkOracle {
         // (ratio * stEthEthPrice * ethUsdPrice) / (1e18 * 1e18) = 8 dec
         answer = int256((ratio * uint256(stEthEthPrice) * uint256(ethUsdPrice)) / (1e18 * 1e18));
 
-        // Pass through ETH/USD updatedAt — stETH/ETH staleness is validated above
-        // This lets the consumer's 1h staleness check apply to the ETH/USD feed only
-        updatedAt = ethUsdUpdatedAt;
+        // Report the OLDEST of the two component timestamps so a consumer's staleness check
+        // reflects the true age of the composite price. The stETH/ETH leg has a 24h Chainlink
+        // heartbeat, so consumers must allow up to ~25h staleness for wstETH. Both legs remain
+        // independently bounded above (stETH/ETH <= 25h, ETH/USD <= 2h, validated here).
+        updatedAt = stEthEthUpdatedAt < ethUsdUpdatedAt ? stEthEthUpdatedAt : ethUsdUpdatedAt;
         startedAt = ethUsdStartedAt;
         roundId = ethUsdRoundId;
         answeredInRound = ethUsdAnsweredInRound;

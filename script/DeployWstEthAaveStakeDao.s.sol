@@ -10,9 +10,13 @@ import { WstEthOracle } from "../src/WstEthOracle.sol";
 import { UniswapMixedTwoHopSwapper } from "../src/swappers/base/UniswapMixedTwoHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
+import {
+    UsdtNgCrvUsdLpStakeDaoStrategy
+} from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
-import { ZenjiWstEthAaveStakeDao } from "../src/implementations/stakedao/ZenjiWstEthAaveStakeDao.sol";
+import {
+    ZenjiWstEthAaveStakeDao
+} from "../src/implementations/stakedao/ZenjiWstEthAaveStakeDao.sol";
 
 /// @notice Deploys wstETH/USDT vault with pmUSD/crvUSD Stake DAO strategy on Aave
 contract DeployWstEthAaveStakeDao is Script {
@@ -78,7 +82,7 @@ contract DeployWstEthAaveStakeDao is Script {
             V4_TICK_SPACING,
             address(wstEthOracle),
             USDT_USD_ORACLE,
-            3_600
+            90000 // 25h — WstEthOracle's stETH/ETH leg has a 24h heartbeat
         );
 
         int128 lpCrvUsdIndex = _lpCrvUsdIndex();
@@ -113,7 +117,7 @@ contract DeployWstEthAaveStakeDao is Script {
             8100,
             address(0),
             0, // eMode: disabled
-            3600 // ETH/USD Chainlink heartbeat is 1h
+            90000 // 25h — WstEthOracle's stETH/ETH leg has a 24h heartbeat
         );
 
         ZenjiWstEthAaveStakeDao vault = new ZenjiWstEthAaveStakeDao(

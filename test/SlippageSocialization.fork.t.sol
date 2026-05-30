@@ -36,42 +36,45 @@ interface ICurvePoolNG {
 ///   MAINNET_RPC_URL=<url> forge test --match-contract SlippageSocialization -vvv
 contract SlippageSocialization is Test {
     // ─── Deployed (DeploymentV26.md: WBTC pmUSD/crvUSD strat) ───
-    address constant VAULT     = 0x617A6877f0a55D1eF2B64b5861A2bB5Fe6FEB739;
-    address constant STRATEGY  = 0x73B753F63175F003881Dc39710d40c8E2F027FD8;
-    address constant LOAN_MGR  = 0x25a1b8262f9644F00Fc80F11eF8cc2Ea1b74BDE3;
+    address constant VAULT = 0x617A6877f0a55D1eF2B64b5861A2bB5Fe6FEB739;
+    address constant STRATEGY = 0x73B753F63175F003881Dc39710d40c8E2F027FD8;
+    address constant LOAN_MGR = 0x25a1b8262f9644F00Fc80F11eF8cc2Ea1b74BDE3;
 
-    address constant WBTC             = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
-    address constant USDT             = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
-    address constant PMUSD_CRVUSD     = 0xEcb0F0d68C19BdAaDAEbE24f6752A4Db34e2c2cb;
-    address constant BTC_USD_ORACLE   = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
-    address constant USDT_USD_ORACLE  = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
+    address constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
+    address constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
+    address constant PMUSD_CRVUSD = 0xEcb0F0d68C19BdAaDAEbE24f6752A4Db34e2c2cb;
+    address constant BTC_USD_ORACLE = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
+    address constant USDT_USD_ORACLE = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
     address constant CRVUSD_USD_ORACLE = 0xEEf0C605546958c1f899b6fB336C20671f9cD49F;
-    address constant CRV_USD_ORACLE   = 0xCd627aA160A6fA45Eb793D19Ef54f5062F20f33f;
+    address constant CRV_USD_ORACLE = 0xCd627aA160A6fA45Eb793D19Ef54f5062F20f33f;
 
     Zenji vault;
     IYieldStrategy strategy;
     ILoanManager loanManager;
     IERC20 wbtc;
 
-    address alice;  // existing depositor
-    address bob;    // large attacker
+    address alice; // existing depositor
+    address bob; // large attacker
 
-    uint256 aliceShares;                         // set in setUp after Alice's initial deposit
+    uint256 aliceShares; // set in setUp after Alice's initial deposit
     uint256 constant ALICE_DEPOSIT = 15_000_000; // 0.15 WBTC (satoshis)
 
     function _initFork() internal {
         string memory rpcUrl = vm.envOr("MAINNET_RPC_URL", string(""));
         if (bytes(rpcUrl).length == 0) rpcUrl = vm.envOr("ETH_RPC_URL", string(""));
-        if (bytes(rpcUrl).length == 0) { vm.skip(true); return; }
+        if (bytes(rpcUrl).length == 0) {
+            vm.skip(true);
+            return;
+        }
         vm.createSelectFork(rpcUrl);
 
-        vault       = Zenji(VAULT);
-        strategy    = vault.yieldStrategy();
+        vault = Zenji(VAULT);
+        strategy = vault.yieldStrategy();
         loanManager = vault.loanManager();
-        wbtc        = IERC20(WBTC);
+        wbtc = IERC20(WBTC);
 
         alice = makeAddr("alice");
-        bob   = makeAddr("bob");
+        bob = makeAddr("bob");
 
         // Remove deposit cap
         uint256 cap = vault.depositCap();
@@ -102,16 +105,11 @@ contract SlippageSocialization is Test {
 
         // Mock strategy.vault() to return address(0) so the constructor
         // passes the "vault is bindable" check (stratVault == address(0)).
-        vm.mockCall(
-            _strat,
-            abi.encodeWithSignature("vault()"),
-            abi.encode(address(0))
-        );
+        vm.mockCall(_strat, abi.encodeWithSignature("vault()"), abi.encode(address(0)));
 
         // Deploy modified ZenjiWbtcAaveStakeDao at a temporary address
-        ZenjiWbtcAaveStakeDao patched = new ZenjiWbtcAaveStakeDao(
-            _lm, _strat, _swapper, _owner, _viewHelper
-        );
+        ZenjiWbtcAaveStakeDao patched =
+            new ZenjiWbtcAaveStakeDao(_lm, _strat, _swapper, _owner, _viewHelper);
 
         // Clear the mock so the real strategy.vault() works again
         vm.clearMockedCalls();
@@ -130,7 +128,8 @@ contract SlippageSocialization is Test {
     function testSlippageSocializedOntoExistingDepositor() public {
         // ─── Snapshot Alice's position ───
         uint256 existingShares = aliceShares;
-        uint256 aliceValueBefore = existingShares * (vault.totalAssets() + vault.VIRTUAL_SHARE_OFFSET())
+        uint256 aliceValueBefore = existingShares
+            * (vault.totalAssets() + vault.VIRTUAL_SHARE_OFFSET())
             / (vault.totalSupply() + vault.VIRTUAL_SHARE_OFFSET());
 
         console.log("=== BEFORE ATTACK ===");
@@ -140,7 +139,7 @@ contract SlippageSocialization is Test {
 
         // Log pool depth for context
         ICurvePoolNG pool = ICurvePoolNG(PMUSD_CRVUSD);
-        uint256 poolPmUsd  = pool.balances(0);
+        uint256 poolPmUsd = pool.balances(0);
         uint256 poolCrvUsd = pool.balances(1);
         console.log("Pool pmUSD (18-dec):        %d", poolPmUsd);
         console.log("Pool crvUSD (18-dec):       %d", poolCrvUsd);
@@ -162,7 +161,7 @@ contract SlippageSocialization is Test {
         console.log("Strategy oracle est (USDT): %d", strategy.balanceOf());
 
         // Pool state after deposit (LP was added)
-        uint256 poolPmUsdAfter  = pool.balances(0);
+        uint256 poolPmUsdAfter = pool.balances(0);
         uint256 poolCrvUsdAfter = pool.balances(1);
         console.log("Pool crvUSD after deposit:  %d", poolCrvUsdAfter);
         console.log("Pool crvUSD ADDED:          %d", poolCrvUsdAfter - poolCrvUsd);
@@ -174,11 +173,15 @@ contract SlippageSocialization is Test {
 
         // ─── Alice's share value BEFORE Bob redeems (should be ~same as before) ───
         // Alice's value = existingShares * totalCollateral / totalSupply
-        uint256 aliceValueMidpoint = (existingShares * (vault.totalAssets() + vault.VIRTUAL_SHARE_OFFSET()))
-            / (vault.totalSupply() + vault.VIRTUAL_SHARE_OFFSET());
+        uint256 aliceValueMidpoint =
+            (existingShares * (vault.totalAssets() + vault.VIRTUAL_SHARE_OFFSET()))
+                / (vault.totalSupply() + vault.VIRTUAL_SHARE_OFFSET());
         console.log("\n=== MIDPOINT: BEFORE BOB REDEEMS ===");
         console.log("Alice value (WBTC sat):     %d", aliceValueMidpoint);
-        console.log("Change from before attack:  %d sat", int256(aliceValueMidpoint) - int256(aliceValueBefore));
+        console.log(
+            "Change from before attack:  %d sat",
+            int256(aliceValueMidpoint) - int256(aliceValueBefore)
+        );
 
         // ─── Bob redeems everything ───
         vm.prank(bob);
@@ -191,7 +194,8 @@ contract SlippageSocialization is Test {
         console.log("Bob PnL:                    %d sat", bobPnl);
 
         // ─── Alice's value AFTER the attack ───
-        uint256 aliceValueAfter = existingShares * (vault.totalAssets() + vault.VIRTUAL_SHARE_OFFSET())
+        uint256 aliceValueAfter = existingShares
+            * (vault.totalAssets() + vault.VIRTUAL_SHARE_OFFSET())
             / (vault.totalSupply() + vault.VIRTUAL_SHARE_OFFSET());
         uint256 aliceSharesAfter = vault.balanceOf(alice);
 
@@ -200,7 +204,9 @@ contract SlippageSocialization is Test {
         console.log("Alice value AFTER  (sat):   %d", aliceValueAfter);
         int256 aliceLoss = int256(aliceValueAfter) - int256(aliceValueBefore);
         console.log("Alice loss (sat):           %d", aliceLoss);
-        console.log("Alice shares unchanged?     %s", existingShares == aliceSharesAfter ? "YES" : "NO");
+        console.log(
+            "Alice shares unchanged?     %s", existingShares == aliceSharesAfter ? "YES" : "NO"
+        );
 
         // Percentage loss (only compute if Alice actually lost)
         if (aliceValueBefore > 0 && aliceLoss < 0) {
@@ -224,13 +230,18 @@ contract SlippageSocialization is Test {
         console.log("If slippage were borne by Bob alone:");
         console.log("  Alice's value should be:  >= %d sat", aliceValueBefore);
         console.log("  Actual Alice value:         %d sat", aliceValueAfter);
-        console.log("  Shortfall socialized onto Alice: %d sat", aliceLoss < 0 ? uint256(-aliceLoss) : 0);
+        console.log(
+            "  Shortfall socialized onto Alice: %d sat", aliceLoss < 0 ? uint256(-aliceLoss) : 0
+        );
 
         // Observation: with the current vault implementation, Alice should not lose value.
         // If she gains, that's acceptable (rounding in her favour).
         // Log the net effect; only fail if she materially lost value.
         int256 aliceLossThreshold = -int256(aliceValueBefore / 200); // tolerate up to 0.5% loss
-        assertTrue(aliceLoss >= aliceLossThreshold, "Alice should not lose significant value from Bob's round-trip");
+        assertTrue(
+            aliceLoss >= aliceLossThreshold,
+            "Alice should not lose significant value from Bob's round-trip"
+        );
     }
 
     /// @notice With the fix: Bob absorbs slippage proportionally, Alice is protected
@@ -239,7 +250,8 @@ contract SlippageSocialization is Test {
         _patchVaultCode();
 
         uint256 existingShares = aliceShares;
-        uint256 aliceValueBefore = existingShares * (vault.totalAssets() + vault.VIRTUAL_SHARE_OFFSET())
+        uint256 aliceValueBefore = existingShares
+            * (vault.totalAssets() + vault.VIRTUAL_SHARE_OFFSET())
             / (vault.totalSupply() + vault.VIRTUAL_SHARE_OFFSET());
 
         console.log("=== PATCHED VAULT: BEFORE ATTACK ===");
@@ -260,7 +272,8 @@ contract SlippageSocialization is Test {
         vm.prank(bob);
         uint256 bobReturned = vault.redeem(bobShares, bob, bob);
 
-        uint256 aliceValueAfter = existingShares * (vault.totalAssets() + vault.VIRTUAL_SHARE_OFFSET())
+        uint256 aliceValueAfter = existingShares
+            * (vault.totalAssets() + vault.VIRTUAL_SHARE_OFFSET())
             / (vault.totalSupply() + vault.VIRTUAL_SHARE_OFFSET());
 
         console.log("\n=== PATCHED VAULT: AFTER ATTACK ===");
@@ -279,7 +292,11 @@ contract SlippageSocialization is Test {
             uint256 actualLoss = aliceValueBefore - aliceValueAfter;
             console.log("Alice loss (sat):           %d", actualLoss);
             console.log("Max acceptable (5%%):       %d", maxAcceptableLoss);
-            assertLe(actualLoss, maxAcceptableLoss, "Alice should not lose more than 5% from Bob's round-trip");
+            assertLe(
+                actualLoss,
+                maxAcceptableLoss,
+                "Alice should not lose more than 5% from Bob's round-trip"
+            );
         }
         // Bob should absorb the bulk of slippage (receive less than deposited)
         console.log("Bob net loss (slippage):    %d sat", int256(bobDeposit) - int256(bobReturned));
@@ -296,10 +313,10 @@ contract SlippageSocialization is Test {
             if (bytes(rpcUrl).length == 0) rpcUrl = vm.envOr("ETH_RPC_URL", string(""));
             vm.createSelectFork(rpcUrl);
 
-            vault       = Zenji(VAULT);
-            strategy    = vault.yieldStrategy();
+            vault = Zenji(VAULT);
+            strategy = vault.yieldStrategy();
             loanManager = vault.loanManager();
-            wbtc        = IERC20(WBTC);
+            wbtc = IERC20(WBTC);
 
             // Remove deposit cap
             uint256 cap = vault.depositCap();
@@ -316,7 +333,8 @@ contract SlippageSocialization is Test {
             uint256 aliceLocalShares = vault.deposit(ALICE_DEPOSIT, alice);
             vm.stopPrank();
 
-            uint256 valueBefore = aliceLocalShares * (vault.totalAssets() + vault.VIRTUAL_SHARE_OFFSET())
+            uint256 valueBefore = aliceLocalShares
+                * (vault.totalAssets() + vault.VIRTUAL_SHARE_OFFSET())
                 / (vault.totalSupply() + vault.VIRTUAL_SHARE_OFFSET());
             uint256 amt = depositSizes[i];
             address attacker = makeAddr(string(abi.encodePacked("attacker", i)));
@@ -334,7 +352,8 @@ contract SlippageSocialization is Test {
             vm.prank(attacker);
             vault.redeem(shares, attacker, attacker);
 
-            uint256 valueAfter = aliceLocalShares * (vault.totalAssets() + vault.VIRTUAL_SHARE_OFFSET())
+            uint256 valueAfter = aliceLocalShares
+                * (vault.totalAssets() + vault.VIRTUAL_SHARE_OFFSET())
                 / (vault.totalSupply() + vault.VIRTUAL_SHARE_OFFSET());
             aliceLosses[i] = int256(valueAfter) - int256(valueBefore);
         }
@@ -396,11 +415,11 @@ contract SlippageSocialization is Test {
         _patchVaultCode();
 
         address carol = makeAddr("carol");
-        address dave  = makeAddr("dave");
-        address eve   = makeAddr("eve");
+        address dave = makeAddr("dave");
+        address eve = makeAddr("eve");
         address frank = makeAddr("frank");
 
-        address[4] memory others  = [carol,  dave,   eve,  frank];
+        address[4] memory others = [carol, dave, eve, frank];
         uint256[4] memory amounts = [uint256(1e5), uint256(1e6), uint256(1e8), uint256(10e8)];
         // 0.001 WBTC, 0.01 WBTC, 1 WBTC, 10 WBTC
 
@@ -461,7 +480,9 @@ contract SlippageSocialization is Test {
         console.log("Bob returned:    %d sat", bobReturned);
         console.log("Bob PnL:         %d sat", int256(bobReturned) - int256(attackAmount));
         uint256 aliceAfterLog = aliceShares * (ta + offset) / (ts + offset);
-        console.log("Alice (0.15 WBTC) delta: %d sat", int256(aliceAfterLog) - int256(aliceValueBefore));
+        console.log(
+            "Alice (0.15 WBTC) delta: %d sat", int256(aliceAfterLog) - int256(aliceValueBefore)
+        );
         for (uint256 i = 0; i < 4; i++) {
             uint256 valueAfter = theirShares[i] * (ta + offset) / (ts + offset);
             if (valueAfter >= valuesBefore[i]) {
@@ -486,7 +507,8 @@ contract SlippageSocialization is Test {
 
     // ─── Oracle helper ───
     function _refreshOracles() internal {
-        address[4] memory oracles = [BTC_USD_ORACLE, USDT_USD_ORACLE, CRVUSD_USD_ORACLE, CRV_USD_ORACLE];
+        address[4] memory oracles =
+            [BTC_USD_ORACLE, USDT_USD_ORACLE, CRVUSD_USD_ORACLE, CRV_USD_ORACLE];
         for (uint256 i = 0; i < oracles.length; i++) {
             (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) =
                 IChainlinkOracle(oracles[i]).latestRoundData();

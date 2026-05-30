@@ -5,9 +5,13 @@ import { console } from "forge-std/Test.sol";
 import { ZenjiForkTestBase } from "./base/ZenjiForkTestBase.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
+import {
+    UniversalRouterV3SingleHopSwapper
+} from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
-import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
+import {
+    UsdtNgCrvUsdLpStakeDaoStrategy
+} from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
@@ -310,7 +314,9 @@ contract M6_balanceOf_stale_oracle is ZenjiForkTestBase {
         uint256 redeemed = vault.redeem(shares, user1, user1);
         assertEq(redeemed, 0, "Emergency redeem returns 0 when steps skipped");
 
-        console.log("M6 PoC: withdraw blocked by stale oracle, emergency redeem returns 0 (steps skipped)");
+        console.log(
+            "M6 PoC: withdraw blocked by stale oracle, emergency redeem returns 0 (steps skipped)"
+        );
     }
 
     /// @dev M6: Documents the desired post-fix behavior - balanceOf() should return

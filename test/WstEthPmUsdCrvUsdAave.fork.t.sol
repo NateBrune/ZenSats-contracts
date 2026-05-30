@@ -8,7 +8,9 @@ import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UniswapMixedTwoHopSwapper } from "../src/swappers/base/UniswapMixedTwoHopSwapper.sol";
 import { WstEthOracle } from "../src/WstEthOracle.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
-import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
+import {
+    UsdtNgCrvUsdLpStakeDaoStrategy
+} from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { BaseSwapper } from "../src/swappers/base/BaseSwapper.sol";
@@ -18,6 +20,12 @@ import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
 /// @title WstEthPmUsdCrvUsdAave
 /// @notice Fork tests for wstETH + USDT + pmUSD/crvUSD (Stake DAO) strategy on Aave
 contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
+    /// @dev WstEthOracle composite reports the OLDER feed timestamp; its stETH/ETH leg has a
+    ///      24h Chainlink heartbeat, so the collateral staleness window is 90000s.
+    function _collateralStalenessWarp() internal pure override returns (uint256) {
+        return 90001;
+    }
+
     address constant WSTETH = 0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0;
     address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     address constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
@@ -35,8 +43,8 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
     address constant CRV_CRVUSD_TRICRYPTO = 0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14;
 
     address constant UNIVERSAL_ROUTER = 0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af;
-    uint24 constant FEE_WSTETH_WETH = 100;  // V3 wstETH/WETH 0.01%
-    uint24 constant FEE_ETH_USDT = 500;     // V4 ETH/USDT   0.05%
+    uint24 constant FEE_WSTETH_WETH = 100; // V3 wstETH/WETH 0.01%
+    uint24 constant FEE_ETH_USDT = 500; // V4 ETH/USDT   0.05%
     int24 constant V4_TICK_SPACING = 10;
 
     address constant STETH_ETH_ORACLE = 0x86392dC19c0b719886221c78AB11eb8Cf5c52812;
@@ -144,7 +152,7 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
             V4_TICK_SPACING,
             address(wstEthOracle),
             USDT_USD_ORACLE,
-            3_600
+            90000
         );
 
         strategy = new UsdtNgCrvUsdLpStakeDaoStrategy(
@@ -177,7 +185,7 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
             7600,
             expectedVaultAddress,
             0, // eMode: disabled
-            3600
+            90000
         );
 
         vault = new Zenji(
@@ -219,7 +227,7 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
             V4_TICK_SPACING,
             address(wstEthOracle),
             USDT_USD_ORACLE,
-            3_600
+            90000
         );
 
         vm.prank(vault.gov());
@@ -247,7 +255,7 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
             V4_TICK_SPACING,
             address(wstEthOracle),
             USDT_USD_ORACLE,
-            3_600
+            90000
         );
         vm.prank(vault.gov());
         vault.proposeSwapper(address(anotherSwapper));
@@ -270,10 +278,15 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
         vm.expectRevert(BaseSwapper.Unauthorized.selector);
         swapper.setSlippage(10e16);
 
-        // Gov can set slippage directly
+        // Gov can set slippage directly (at the 5% cap)
         vm.prank(owner);
-        swapper.setSlippage(10e16);
-        assertEq(swapper.slippage(), 10e16, "Slippage should be 10%");
+        swapper.setSlippage(5e16);
+        assertEq(swapper.slippage(), 5e16, "Slippage should be 5%");
+
+        // Above the 5% cap is rejected
+        vm.prank(owner);
+        vm.expectRevert(BaseSwapper.InvalidSlippage.selector);
+        swapper.setSlippage(5e16 + 1);
     }
 
     /// @notice A large position can fully exit in a single redeem at the 2% production ceiling.
@@ -286,8 +299,8 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
     function test_capacityCeiling_at2Percent() public {
         _requireAaveUsdt(2_000_000e6);
 
-        uint256 lo = 5e18;         // assumed-passing lower bound (~$17K)
-        uint256 hi = 250e18;       // assumed-failing upper bound
+        uint256 lo = 5e18; // assumed-passing lower bound (~$17K)
+        uint256 hi = 250e18; // assumed-failing upper bound
         uint256 granularity = 5e18; // 5 wstETH precision
         uint256 ceiling = 0;
 
@@ -295,8 +308,12 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
         {
             uint256 snap = vm.snapshot();
             bool passed;
-            try this.runSlippageScenario(2e16, lo) returns (bool ok) { passed = ok; }
-            catch { passed = false; }
+            try this.runSlippageScenario(2e16, lo) returns (bool ok) {
+                passed = ok;
+            }
+                catch {
+                passed = false;
+            }
             vm.revertTo(snap);
             console.log("CapacitySweep deposit=%s wstETH passed=%s", lo / 1e18, passed ? 1 : 0);
             if (passed) ceiling = lo;
@@ -308,17 +325,26 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
             if (mid <= lo || mid >= hi) break;
             uint256 snap = vm.snapshot();
             bool passed;
-            try this.runSlippageScenario(2e16, mid) returns (bool ok) { passed = ok; }
-            catch { passed = false; }
+            try this.runSlippageScenario(2e16, mid) returns (bool ok) {
+                passed = ok;
+            }
+                catch {
+                passed = false;
+            }
             vm.revertTo(snap);
             console.log("CapacitySweep deposit=%s wstETH passed=%s", mid / 1e18, passed ? 1 : 0);
-            if (passed) { lo = mid; ceiling = mid; }
-            else { hi = mid; }
+            if (passed) {
+                lo = mid;
+                ceiling = mid;
+            } else {
+                hi = mid;
+            }
         }
 
         console.log("Capacity ceiling at 2%% slippage: %s wstETH", ceiling / 1e18);
         assertGe(
-            ceiling, 5e18,
+            ceiling,
+            5e18,
             "Pool capacity at 2% slippage must support >= 5 wstETH (~$17K) round-trips"
         );
     }
@@ -351,16 +377,16 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
         uint256 crvUsdTarget = crvUsdAfter - crvUsdBefore; // crvUSD to remove from pool
         ICurveStableSwapNG pool = ICurveStableSwapNG(PMUSD_CRVUSD_POOL);
         int128 crvUsdIdx = _getLpCrvUsdIndex();
-        int128 pmUsdIdx  = crvUsdIdx == int128(0) ? int128(1) : int128(0);
+        int128 pmUsdIdx = crvUsdIdx == int128(0) ? int128(1) : int128(0);
 
         // Binary search for the pmUSD input that yields ≥ crvUsdTarget crvUSD output.
-        uint256 lo = crvUsdTarget;          // pmUSD ≈ crvUSD since both ~$1
-        uint256 hi = crvUsdTarget * 3;      // 3x ceiling for heavily imbalanced pool
+        uint256 lo = crvUsdTarget; // pmUSD ≈ crvUSD since both ~$1
+        uint256 hi = crvUsdTarget * 3; // 3x ceiling for heavily imbalanced pool
         for (uint256 i = 0; i < 32; i++) {
             uint256 mid = (lo + hi) / 2;
             uint256 out = pool.get_dy(pmUsdIdx, crvUsdIdx, mid);
             if (out >= crvUsdTarget) hi = mid;
-            else                     lo = mid;
+            else lo = mid;
         }
         uint256 pmUsdIn = hi;
 
@@ -372,7 +398,10 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
         vm.stopPrank();
     }
 
-    function _runSlippageScenario(uint256 targetSlippage, uint256 depositAmount) internal returns (bool) {
+    function _runSlippageScenario(uint256 targetSlippage, uint256 depositAmount)
+        internal
+        returns (bool)
+    {
         _syncAndMockOracles(); // re-anchor oracle mocks to current block.timestamp after any vm.revertTo
         _deployVault();
 
@@ -400,7 +429,10 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
         }
     }
 
-    function runSlippageScenario(uint256 targetSlippage, uint256 depositAmount) external returns (bool) {
+    function runSlippageScenario(uint256 targetSlippage, uint256 depositAmount)
+        external
+        returns (bool)
+    {
         return _runSlippageScenario(targetSlippage, depositAmount);
     }
 
@@ -415,13 +447,13 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
     ///         Each level is isolated via vm.snapshot/revertTo so timelock warps don't accumulate.
     function test_slippageSweep_bySlippage() public {
         uint256[] memory levels = new uint256[](8);
-        levels[0] = 5e13;  //  5 bps (below pool fees — should fail)
+        levels[0] = 5e13; //  5 bps (below pool fees — should fail)
         levels[1] = 25e13; // 25 bps
         levels[2] = 50e13; // 50 bps
-        levels[3] = 1e16;  //  1.0% (production default)
-        levels[4] = 2e16;  //  2.0%
-        levels[5] = 3e16;  //  3.0%
-        levels[6] = 5e16;  //  5.0%
+        levels[3] = 1e16; //  1.0% (production default)
+        levels[4] = 2e16; //  2.0%
+        levels[5] = 3e16; //  3.0%
+        levels[6] = 5e16; //  5.0%
         levels[7] = 10e16; // 10.0%
 
         uint256 depositAmt = 400e18; // ~400 wstETH ≈ $1.4M (within current pmUSD/crvUSD pool depth)
@@ -436,14 +468,17 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
                 passed = false;
             }
             vm.revertTo(snap); // isolate: undo warp + state before logging
-            console.log("SlippageSweep deposit=400 slippage=%s bps passed=%s", levels[i] / 1e14, passed ? 1 : 0);
+            console.log(
+                "SlippageSweep deposit=400 slippage=%s bps passed=%s",
+                levels[i] / 1e14,
+                passed ? 1 : 0
+            );
             if (passed && firstPass == 0) firstPass = levels[i];
         }
 
         console.log("SlippageSweep firstPass(bps)=%s", firstPass == 0 ? 0 : firstPass / 1e14);
         assertTrue(firstPass <= 2e16, "400 wstETH exit should need <= 2% slippage");
     }
-
 
     // ============ Strategy-Specific Tests ============
 
@@ -497,12 +532,29 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
 
     // ============ TVL Helpers ============
 
-    function _tvlTarget() internal pure returns (uint256) { return 20_000_000e6; }
-    function _tvlChunk() internal pure returns (uint256) { return 300e18; }
-    function _tvlMinChunk() internal pure returns (uint256) { return 10e18; }
-    function _tvlIterCap() internal pure returns (uint256) { return 200; }
-    function _requireTvlSetup() internal { _requireAaveUsdt(25_000_000e6); }
-    function _tvlLabel() internal pure returns (string memory) { return "wstETH multi-user TVL(USDT 6d)="; }
+    function _tvlTarget() internal pure returns (uint256) {
+        return 20_000_000e6;
+    }
+
+    function _tvlChunk() internal pure returns (uint256) {
+        return 300e18;
+    }
+
+    function _tvlMinChunk() internal pure returns (uint256) {
+        return 10e18;
+    }
+
+    function _tvlIterCap() internal pure returns (uint256) {
+        return 200;
+    }
+
+    function _requireTvlSetup() internal {
+        _requireAaveUsdt(25_000_000e6);
+    }
+
+    function _tvlLabel() internal pure returns (string memory) {
+        return "wstETH multi-user TVL(USDT 6d)=";
+    }
 
     // ============ Multi-Depositor TVL Test ============
 
@@ -520,9 +572,9 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
 
         address[4] memory users = [user1, user2, user3, user4];
         uint256 targetTvl = _tvlTarget();
-        uint256 chunk     = _tvlChunk();
-        uint256 minChunk  = _tvlMinChunk();
-        uint256 tvl       = loanManager.getCollateralValue(vault.getTotalCollateral());
+        uint256 chunk = _tvlChunk();
+        uint256 minChunk = _tvlMinChunk();
+        uint256 tvl = loanManager.getCollateralValue(vault.getTotalCollateral());
 
         for (uint256 i = 0; i < _tvlIterCap() && tvl < targetTvl; i++) {
             address depositor = users[i % users.length];
@@ -869,7 +921,9 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
                 if (selector == Zenji.InsufficientWithdrawal.selector) {
                     console.log("=> InsufficientWithdrawal: strategy LP underperformed maxSlippage");
                 } else if (selector == Zenji.InsufficientCollateral.selector) {
-                    console.log("=> InsufficientCollateral: not enough wstETH recovered after unwind");
+                    console.log(
+                        "=> InsufficientCollateral: not enough wstETH recovered after unwind"
+                    );
                 } else if (selector == Zenji.SwapperUnderperformed.selector) {
                     console.log("=> SwapperUnderperformed: Uniswap/oracle divergence on small swap");
                 } else if (selector == bytes4(keccak256("V3TooLittleReceived()"))) {
@@ -910,7 +964,9 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
             if (shares > 0) {
                 vm.prank(users[i]);
                 uint256 collateralReceived = vault.redeem(shares, users[i], users[i]);
-                assertGt(collateralReceived, 0, "Realistic deposit should redeem non-zero collateral");
+                assertGt(
+                    collateralReceived, 0, "Realistic deposit should redeem non-zero collateral"
+                );
                 console.log("User redeemed shares for wei");
                 console.log(i);
                 console.log(shares);
@@ -952,8 +1008,10 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
         _deployVault();
         uint256 depositAmount = 3e16; // 0.03 wstETH ~$105
         deal(WSTETH, user1, depositAmount);
-        vm.prank(user1); IERC20(WSTETH).approve(address(vault), depositAmount);
-        vm.prank(user1); vault.deposit(depositAmount, user1);
+        vm.prank(user1);
+        IERC20(WSTETH).approve(address(vault), depositAmount);
+        vm.prank(user1);
+        vault.deposit(depositAmount, user1);
 
         uint256 shares = vault.balanceOf(user1);
         (uint256 col, uint256 debt) = loanManager.getPositionValues();
@@ -972,12 +1030,12 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
         uint256 depositAmount = 3e16; // 0.03 wstETH ~$105
 
         uint256[] memory slippageLevels = new uint256[](6);
-        slippageLevels[0] = 1e16;  //  1%
-        slippageLevels[1] = 2e16;  //  2%
-        slippageLevels[2] = 3e16;  //  3%
-        slippageLevels[3] = 5e16;  //  5%
-        slippageLevels[4] = 10e16; // 10%
-        slippageLevels[5] = 20e16; // 20%
+        slippageLevels[0] = 1e16; //  1%
+        slippageLevels[1] = 2e16; //  2%
+        slippageLevels[2] = 3e16; //  3%
+        slippageLevels[3] = 5e16; //  5%
+        slippageLevels[4] = 45e15; // 4.5%
+        slippageLevels[5] = 5e16; // 5% (MAX_SLIPPAGE cap)
 
         uint256 firstSuccess = 0;
 
@@ -1018,13 +1076,21 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
                 assembly { selector := mload(add(errData, 32)) }
             }
 
-            console.log("slippage_bps=%d redeem=%d errLen=%d", slippageLevels[i] / 1e14, ok ? 1 : 0, errData.length);
+            console.log(
+                "slippage_bps=%d redeem=%d errLen=%d",
+                slippageLevels[i] / 1e14,
+                ok ? 1 : 0,
+                errData.length
+            );
             if (!ok) {
                 if (selector == bytes4(keccak256("InsufficientWithdrawal()"))) {
-                    console.log("  => InsufficientWithdrawal (strategy LP underperformed maxSlippage)");
+                    console.log(
+                        "  => InsufficientWithdrawal (strategy LP underperformed maxSlippage)"
+                    );
                 } else if (selector == bytes4(keccak256("InsufficientCollateral()"))) {
                     console.log("  => InsufficientCollateral (shortfall exceeds maxSlippage)");
-                } else if (selector == bytes4(keccak256("SwapperUnderperformed(uint256,uint256)"))) {
+                } else if (selector == bytes4(keccak256("SwapperUnderperformed(uint256,uint256)")))
+                {
                     console.log("  => SwapperUnderperformed (oracle floor not met)");
                 } else if (selector == bytes4(keccak256("V3TooLittleReceived()"))) {
                     console.log("  => V3TooLittleReceived (Uniswap minAmountOut not met)");
@@ -1049,24 +1115,49 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
     // ============ TVL Ceiling / Uniswap Liquidity Tests ============
 
     /// @dev Decode a low-level revert into a human-readable label for console output.
-    function _decodeRevertReason(bytes memory err, string memory step) internal pure returns (string memory) {
+    function _decodeRevertReason(bytes memory err, string memory step)
+        internal
+        pure
+        returns (string memory)
+    {
         if (err.length < 4) return string(abi.encodePacked(step, ": revert (no data)"));
         bytes4 sel;
         assembly { sel := mload(add(err, 32)) }
-        if (sel == bytes4(keccak256("ExchangeFailed()")))
-            return string(abi.encodePacked(step, ": ExchangeFailed (Curve USDT->crvUSD output below oracle floor at 1% slippage)"));
-        if (sel == bytes4(keccak256("SwapperUnderperformed(uint256,uint256)")))
-            return string(abi.encodePacked(step, ": SwapperUnderperformed (Uniswap USDT->wstETH output below oracle floor)"));
-        if (sel == bytes4(keccak256("SlippageExceeded()")))
-            return string(abi.encodePacked(step, ": SlippageExceeded (Uniswap minAmountOut not met)"));
-        if (sel == bytes4(keccak256("InsufficientCollateral()")))
-            return string(abi.encodePacked(step, ": InsufficientCollateral (recovered wstETH < minOut after unwind)"));
-        if (sel == bytes4(keccak256("HealthTooLow()")))
+        if (sel == bytes4(keccak256("ExchangeFailed()"))) {
+            return string(
+                abi.encodePacked(
+                    step,
+                    ": ExchangeFailed (Curve USDT->crvUSD output below oracle floor at 1% slippage)"
+                )
+            );
+        }
+        if (sel == bytes4(keccak256("SwapperUnderperformed(uint256,uint256)"))) {
+            return string(
+                abi.encodePacked(
+                    step, ": SwapperUnderperformed (Uniswap USDT->wstETH output below oracle floor)"
+                )
+            );
+        }
+        if (sel == bytes4(keccak256("SlippageExceeded()"))) {
+            return
+                string(abi.encodePacked(step, ": SlippageExceeded (Uniswap minAmountOut not met)"));
+        }
+        if (sel == bytes4(keccak256("InsufficientCollateral()"))) {
+            return string(
+                abi.encodePacked(
+                    step, ": InsufficientCollateral (recovered wstETH < minOut after unwind)"
+                )
+            );
+        }
+        if (sel == bytes4(keccak256("HealthTooLow()"))) {
             return string(abi.encodePacked(step, ": HealthTooLow (Aave health < 1.1)"));
+        }
         if (sel == bytes4(keccak256("Error(string)"))) {
             if (err.length > 68) {
                 bytes memory msg_ = new bytes(err.length - 68);
-                for (uint256 i = 0; i < msg_.length; i++) msg_[i] = err[68 + i];
+                for (uint256 i = 0; i < msg_.length; i++) {
+                    msg_[i] = err[68 + i];
+                }
                 return string(abi.encodePacked(step, ": require(", string(msg_), ")"));
             }
             return string(abi.encodePacked(step, ": require (empty message)"));
@@ -1074,12 +1165,11 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
         bytes memory h = new bytes(8);
         bytes16 chars = "0123456789abcdef";
         for (uint256 k = 0; k < 4; k++) {
-            h[k * 2]     = chars[uint8(sel[k]) >> 4];
+            h[k * 2] = chars[uint8(sel[k]) >> 4];
             h[k * 2 + 1] = chars[uint8(sel[k]) & 0xf];
         }
         return string(abi.encodePacked(step, ": unknown selector 0x", string(h)));
     }
-
 
     /// @notice Determines the current single-depositor TVL cap at 1% swapper slippage.
     ///         Coarse sweep locates the cliff, binary search narrows to 1-wstETH resolution,
@@ -1090,8 +1180,20 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
 
         // ── Stage 1: coarse sweep to locate the cliff bracket ───────────────────────
         uint256[14] memory probe = [
-            uint256(1e18), 5e18, 10e18, 25e18, 50e18, 75e18,
-            100e18, 125e18, 150e18, 175e18, 200e18, 250e18, 300e18, 500e18
+            uint256(1e18),
+            5e18,
+            10e18,
+            25e18,
+            50e18,
+            75e18,
+            100e18,
+            125e18,
+            150e18,
+            175e18,
+            200e18,
+            250e18,
+            300e18,
+            500e18
         ];
         uint256 lo = 0;
         uint256 hi = 0;
@@ -1099,7 +1201,10 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
         for (uint256 i = 0; i < probe.length; i++) {
             uint256 snap = vm.snapshot();
             bool passed;
-            try this.runSlippageScenario(slippage, probe[i]) returns (bool ok) { passed = ok; } catch {}
+            try this.runSlippageScenario(slippage, probe[i]) returns (bool ok) {
+                passed = ok;
+            }
+                catch { }
             vm.revertTo(snap);
             console.log("  %d wstETH: %s", probe[i] / 1e18, passed ? "pass" : "FAIL");
             if (passed) { lo = probe[i]; }
@@ -1113,11 +1218,15 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
             uint256 mid = lo + ((hi - lo) / 2 / uint256(1e18)) * 1e18;
             uint256 snap = vm.snapshot();
             bool ok;
-            try this.runSlippageScenario(slippage, mid) returns (bool r) { ok = r; } catch {}
+            try this.runSlippageScenario(slippage, mid) returns (bool r) {
+                ok = r;
+            }
+                catch { }
             vm.revertTo(snap);
-            if (ok) lo = mid; else hi = mid;
+            if (ok) lo = mid;
+            else hi = mid;
         }
-        uint256 safeCap   = lo;
+        uint256 safeCap = lo;
         uint256 firstFail = hi;
 
         // ── Stage 3: measure bps and USD value at safeCap ───────────────────────────
@@ -1128,7 +1237,8 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
             _syncAndMockOracles();
             _deployVault();
             deal(WSTETH, user1, safeCap);
-            vm.prank(owner); swapper.setSlippage(slippage);
+            vm.prank(owner);
+            swapper.setSlippage(slippage);
             _depositAs(user1, safeCap);
             _syncAndMockOracles();
             uint256 received = _redeemAllAs(user1);
@@ -1146,5 +1256,4 @@ contract WstEthPmUsdCrvUsdAave is AaveSecurityTestMixin {
         assertGt(safeCap, 0, "Must find a passing size");
         assertLe(bpsAtCap, 100, "Round-trip cost at safe cap must be within 1%%");
     }
-
 }

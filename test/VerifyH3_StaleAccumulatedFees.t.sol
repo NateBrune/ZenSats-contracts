@@ -76,7 +76,10 @@ contract ControlledMockStrategy is IYieldStrategy {
         return toSend;
     }
 
-    function harvest() external pure returns (uint256) { return 0; }
+    function harvest() external pure returns (uint256) {
+        return 0;
+    }
+
     function emergencyWithdraw() external onlyVault returns (uint256) {
         uint256 toSend = _balance;
         _balance = 0;
@@ -84,20 +87,42 @@ contract ControlledMockStrategy is IYieldStrategy {
         if (toSend > 0) _asset.transfer(_vault, toSend);
         return toSend;
     }
-    function asset() external view returns (address) { return address(_asset); }
-    function underlyingAsset() external view returns (address) { return address(_asset); }
-    function balanceOf() external view returns (uint256) { return _balance; }
-    function costBasis() external view returns (uint256) { return _costBasis; }
+
+    function asset() external view returns (address) {
+        return address(_asset);
+    }
+
+    function underlyingAsset() external view returns (address) {
+        return address(_asset);
+    }
+
+    function balanceOf() external view returns (uint256) {
+        return _balance;
+    }
+
+    function costBasis() external view returns (uint256) {
+        return _costBasis;
+    }
+
     function unrealizedProfit() external view returns (uint256) {
         return _balance > _costBasis ? _balance - _costBasis : 0;
     }
-    function pendingRewards() external pure returns (uint256) { return 0; }
+
+    function pendingRewards() external pure returns (uint256) {
+        return 0;
+    }
     function transferOwnerFromVault(address) external pure { }
     function setSlippage(uint256) external pure { }
 
     function updateCachedVirtualPrice() external { }
-    function name() external pure returns (string memory) { return "ControlledMock"; }
-    function vault() external view returns (address) { return _vault; }
+
+    function name() external pure returns (string memory) {
+        return "ControlledMock";
+    }
+
+    function vault() external view returns (address) {
+        return _vault;
+    }
 }
 
 // ============ Mock loan manager that implements full ILoanManager ============
@@ -114,44 +139,104 @@ contract MockLoanManager_H3 is ILoanManager {
         _vault = vault_;
     }
 
-    function collateralAsset() external view returns (address) { return _coll; }
-    function debtAsset() external view returns (address) { return _debt; }
+    function collateralAsset() external view returns (address) {
+        return _coll;
+    }
+
+    function debtAsset() external view returns (address) {
+        return _debt;
+    }
 
     // 1:1 ratio for both directions in this simplified mock
-    function getDebtValue(uint256 debtAmount) external pure returns (uint256) { return debtAmount; }
-    function getCollateralValue(uint256 collateralAmount) external pure returns (uint256) { return collateralAmount; }
-    function getNetCollateralValue() external pure returns (uint256) { return 0; }
-    function getPositionValues() external pure returns (uint256, uint256) { return (0, 0); }
-    function loanExists() external pure returns (bool) { return false; }
-    function getCurrentLTV() external pure returns (uint256) { return 0; }
-    function getCurrentCollateral() external pure returns (uint256) { return 0; }
-    function getCurrentDebt() external pure returns (uint256) { return 0; }
-    function getHealth() external pure returns (int256) { return 0; }
-    function getCollateralBalance() external pure returns (uint256) { return 0; }
-    function getDebtBalance() external pure returns (uint256) { return 0; }
-    function calculateBorrowAmount(uint256, uint256) external pure returns (uint256) { return 0; }
-    function healthCalculator(int256, int256) external pure returns (int256) { return 0; }
-    function minCollateral(uint256, uint256) external pure returns (uint256) { return 0; }
-    function maxLtvBps() external pure returns (uint256) { return type(uint256).max; }
-    function checkOracleFreshness() external view {} // view, not pure (matches interface)
-    function initializeVault(address v) external { _vault = v; }
+    function getDebtValue(uint256 debtAmount) external pure returns (uint256) {
+        return debtAmount;
+    }
 
-    function createLoan(uint256, uint256) external {}
-    function addCollateral(uint256) external {}
-    function borrowMore(uint256, uint256) external {}
-    function repayDebt(uint256) external {}
-    function removeCollateral(uint256) external {}
-    function unwindPosition(uint256) external {}
-    function transferCollateral(address, uint256) external {}
-    function transferDebt(address, uint256) external {}
+    function getCollateralValue(uint256 collateralAmount) external pure returns (uint256) {
+        return collateralAmount;
+    }
+
+    function getNetCollateralValue() external pure returns (uint256) {
+        return 0;
+    }
+
+    function getPositionValues() external pure returns (uint256, uint256) {
+        return (0, 0);
+    }
+
+    function loanExists() external pure returns (bool) {
+        return false;
+    }
+
+    function getCurrentLTV() external pure returns (uint256) {
+        return 0;
+    }
+
+    function getCurrentCollateral() external pure returns (uint256) {
+        return 0;
+    }
+
+    function getCurrentDebt() external pure returns (uint256) {
+        return 0;
+    }
+
+    function getHealth() external pure returns (int256) {
+        return 0;
+    }
+
+    function getCollateralBalance() external pure returns (uint256) {
+        return 0;
+    }
+
+    function getDebtBalance() external pure returns (uint256) {
+        return 0;
+    }
+
+    function calculateBorrowAmount(uint256, uint256) external pure returns (uint256) {
+        return 0;
+    }
+
+    function healthCalculator(int256, int256) external pure returns (int256) {
+        return 0;
+    }
+
+    function minCollateral(uint256, uint256) external pure returns (uint256) {
+        return 0;
+    }
+
+    function maxLtvBps() external pure returns (uint256) {
+        return type(uint256).max;
+    }
+    function checkOracleFreshness() external view { } // view, not pure (matches interface)
+
+    function initializeVault(address v) external {
+        _vault = v;
+    }
+
+    function createLoan(uint256, uint256) external { }
+    function addCollateral(uint256) external { }
+    function borrowMore(uint256, uint256) external { }
+    function repayDebt(uint256) external { }
+    function removeCollateral(uint256) external { }
+    function unwindPosition(uint256) external { }
+    function transferCollateral(address, uint256) external { }
+    function transferDebt(address, uint256) external { }
 }
 
 // ============ Minimal mock swapper ============
 
 contract MockSwapper_H3 is ISwapper {
-    function swapDebtForCollateral(uint256) external pure returns (uint256) { return 0; }
-    function swapCollateralForDebt(uint256) external pure returns (uint256) { return 0; }
-    function quoteCollateralForDebt(uint256 amt) external pure returns (uint256) { return amt; }
+    function swapDebtForCollateral(uint256) external pure returns (uint256) {
+        return 0;
+    }
+
+    function swapCollateralForDebt(uint256) external pure returns (uint256) {
+        return 0;
+    }
+
+    function quoteCollateralForDebt(uint256 amt) external pure returns (uint256) {
+        return amt;
+    }
 }
 
 // ============ Concrete Zenji subclass ============
@@ -165,7 +250,7 @@ contract ZenjiTestable_H3 is Zenji {
         address swapper,
         address owner_,
         address helper
-    ) Zenji(coll, debt, lm, strategy, swapper, owner_, helper) {}
+    ) Zenji(coll, debt, lm, strategy, swapper, owner_, helper) { }
 
     function VIRTUAL_SHARE_OFFSET() public pure override returns (uint256) {
         return 1e5;
@@ -211,7 +296,8 @@ contract VerifyH3_StaleAccumulatedFees is Test {
         // nonce+0 = loanManager, nonce+1 = strategy, nonce+2 = vault
         address predictedVault = vm.computeCreateAddress(address(this), nonce + 2);
 
-        loanManager = new MockLoanManager_H3(address(collateral), address(debtToken), predictedVault);
+        loanManager =
+            new MockLoanManager_H3(address(collateral), address(debtToken), predictedVault);
         strategy = new ControlledMockStrategy(address(debtToken), predictedVault);
 
         vault = new ZenjiTestable_H3(
@@ -329,9 +415,8 @@ contract VerifyH3_StaleAccumulatedFees is Test {
         // Un-accrued fees = 100e6 USDT.  The view helper adds them dynamically, so the
         // stale and fresh readings must be identical.
 
-        uint256 navError = totalAssets_stale > totalAssets_fresh
-            ? totalAssets_stale - totalAssets_fresh
-            : 0;
+        uint256 navError =
+            totalAssets_stale > totalAssets_fresh ? totalAssets_stale - totalAssets_fresh : 0;
 
         console.log("=== FIX PROOF ===");
         console.log("NAV overstatement (stale - fresh totalAssets):", navError);
@@ -412,9 +497,8 @@ contract VerifyH3_StaleAccumulatedFees is Test {
         vault.accrueYieldFees();
         uint256 totalAssets_fresh = vault.totalAssets();
 
-        uint256 largeNavError = totalAssets_stale > totalAssets_fresh
-            ? totalAssets_stale - totalAssets_fresh
-            : 0;
+        uint256 largeNavError =
+            totalAssets_stale > totalAssets_fresh ? totalAssets_stale - totalAssets_fresh : 0;
 
         console.log("=== H-3 Boundary: Large yield staleness ===");
         console.log("totalAssets (stale):", totalAssets_stale);
@@ -425,7 +509,13 @@ contract VerifyH3_StaleAccumulatedFees is Test {
 
         // FIX VERIFIED: even large un-accrued yield produces zero NAV overstatement
         // because the view helper computes pending fees on-the-fly.
-        assertEq(totalAssets_stale, totalAssets_fresh, "FIX VERIFIED: large yield produces no NAV overstatement");
-        assertEq(largeNavError, 0, "FIX VERIFIED: NAV overstatement is zero even with large stale yield");
+        assertEq(
+            totalAssets_stale,
+            totalAssets_fresh,
+            "FIX VERIFIED: large yield produces no NAV overstatement"
+        );
+        assertEq(
+            largeNavError, 0, "FIX VERIFIED: NAV overstatement is zero even with large stale yield"
+        );
     }
 }

@@ -18,8 +18,8 @@ import { SafeTransferLib } from "../../src/libraries/SafeTransferLib.sol";
 abstract contract AaveBackedStrategyTestBase is ZenjiStrategyTestBase {
     using SafeTransferLib for IERC20;
 
-    address constant USDT_USD_ORACLE    = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
-    address constant CRVUSD_USD_ORACLE  = 0xEEf0C605546958c1f899b6fB336C20671f9cD49F;
+    address constant USDT_USD_ORACLE = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
+    address constant CRVUSD_USD_ORACLE = 0xEEf0C605546958c1f899b6fB336C20671f9cD49F;
 
     /// @notice Debt asset for all Aave-backed Zenji vaults is USDT.
     function _debtOracle() internal pure override returns (address) {

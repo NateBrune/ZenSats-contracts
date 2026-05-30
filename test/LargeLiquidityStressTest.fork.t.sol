@@ -36,25 +36,25 @@ interface IAToken {
 /// The deployed vault address is hard-coded from DeploymentV26.md.
 contract LargeLiquidityStressTest is Test {
     // ─── Deployed contracts (DeploymentV26.md: WBTC USDTcrvUSD/pmUSDYieldStrat) ───
-    address constant DEPLOYED_VAULT       = 0x617A6877f0a55D1eF2B64b5861A2bB5Fe6FEB739;
-    address constant DEPLOYED_STRATEGY    = 0x73B753F63175F003881Dc39710d40c8E2F027FD8;
-    address constant DEPLOYED_LOAN_MGR    = 0x25a1b8262f9644F00Fc80F11eF8cc2Ea1b74BDE3;
+    address constant DEPLOYED_VAULT = 0x617A6877f0a55D1eF2B64b5861A2bB5Fe6FEB739;
+    address constant DEPLOYED_STRATEGY = 0x73B753F63175F003881Dc39710d40c8E2F027FD8;
+    address constant DEPLOYED_LOAN_MGR = 0x25a1b8262f9644F00Fc80F11eF8cc2Ea1b74BDE3;
 
     // ─── Tokens ────────────────────────────────────────────────────────────────
-    address constant WBTC                 = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
-    address constant USDT                 = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
-    address constant AAVE_A_WBTC          = 0x5Ee5bf7ae06D1Be5997A1A72006FE6C607eC6DE8;
-    address constant AAVE_VAR_DEBT_USDT   = 0x6df1C1E379bC5a00a7b4C6e67A203333772f45A8;
-    address constant AAVE_POOL            = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
+    address constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
+    address constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
+    address constant AAVE_A_WBTC = 0x5Ee5bf7ae06D1Be5997A1A72006FE6C607eC6DE8;
+    address constant AAVE_VAR_DEBT_USDT = 0x6df1C1E379bC5a00a7b4C6e67A203333772f45A8;
+    address constant AAVE_POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
 
     // ─── Curve pool ────────────────────────────────────────────────────────────
-    address constant PMUSD_CRVUSD_POOL    = 0xEcb0F0d68C19BdAaDAEbE24f6752A4Db34e2c2cb;
+    address constant PMUSD_CRVUSD_POOL = 0xEcb0F0d68C19BdAaDAEbE24f6752A4Db34e2c2cb;
 
     // ─── Oracle addresses ──────────────────────────────────────────────────────
-    address constant BTC_USD_ORACLE       = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
-    address constant USDT_USD_ORACLE      = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
-    address constant CRVUSD_USD_ORACLE    = 0xEEf0C605546958c1f899b6fB336C20671f9cD49F;
-    address constant CRV_USD_ORACLE       = 0xCd627aA160A6fA45Eb793D19Ef54f5062F20f33f;
+    address constant BTC_USD_ORACLE = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
+    address constant USDT_USD_ORACLE = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
+    address constant CRVUSD_USD_ORACLE = 0xEEf0C605546958c1f899b6fB336C20671f9cD49F;
+    address constant CRV_USD_ORACLE = 0xCd627aA160A6fA45Eb793D19Ef54f5062F20f33f;
 
     Zenji vault;
     IYieldStrategy strategy;
@@ -74,12 +74,12 @@ contract LargeLiquidityStressTest is Test {
         }
         vm.createSelectFork(rpcUrl);
 
-        vault       = Zenji(DEPLOYED_VAULT);
-        strategy    = vault.yieldStrategy();
+        vault = Zenji(DEPLOYED_VAULT);
+        strategy = vault.yieldStrategy();
         loanManager = vault.loanManager();
-        wbtc        = IERC20(WBTC);
-        usdt        = IERC20(USDT);
-        user        = makeAddr("bigDepositor");
+        wbtc = IERC20(WBTC);
+        usdt = IERC20(USDT);
+        user = makeAddr("bigDepositor");
 
         deal(WBTC, user, LARGE_DEPOSIT + 1e8); // give slightly more than needed
 
@@ -141,9 +141,13 @@ contract LargeLiquidityStressTest is Test {
         if (totalPoolUsdt > 0 && strategyUsdt > 0) {
             console.log("Strategy as %% of pool: %d%%", (strategyUsdt * 100) / totalPoolUsdt);
         }
-        console.log("\nNOTE: If strategy + new deposit > pool TVL, massive price impact will occur on withdrawal.");
+        console.log(
+            "\nNOTE: If strategy + new deposit > pool TVL, massive price impact will occur on withdrawal."
+        );
         console.log("A 100 WBTC at 65% LTV is roughly $6.5M of new USDT debt deployed to strategy.");
-        console.log("If pool TVL < $6.5M, the withdrawal will cause severe (>10%) slippage on the crvUSD->USDT step.");
+        console.log(
+            "If pool TVL < $6.5M, the withdrawal will cause severe (>10%) slippage on the crvUSD->USDT step."
+        );
     }
 
     // ─── Test B: Full scenario with verbose intermediate logging ───────────────
@@ -153,13 +157,14 @@ contract LargeLiquidityStressTest is Test {
         _logState("=== INITIAL STATE (pre-deposit) ===");
 
         // ── Phase 1: deposit ───────────────────────────────────────────────────
-        /* uint256 totalCollateralBefore = */ vault.totalAssets();
-        uint256 totalSupplyBefore     = vault.totalSupply();
-        uint256 stratBalBefore        = strategy.balanceOf();
-        uint256 aaveCollBefore        = IAToken(AAVE_A_WBTC).balanceOf(DEPLOYED_LOAN_MGR);
-        uint256 aaveDebtBefore        = IAToken(AAVE_VAR_DEBT_USDT).balanceOf(DEPLOYED_LOAN_MGR);
-        uint256 poolBal0Before        = ICurvePool(PMUSD_CRVUSD_POOL).balances(0);
-        uint256 poolBal1Before        = ICurvePool(PMUSD_CRVUSD_POOL).balances(1);
+        /* uint256 totalCollateralBefore = */
+        vault.totalAssets();
+        uint256 totalSupplyBefore = vault.totalSupply();
+        uint256 stratBalBefore = strategy.balanceOf();
+        uint256 aaveCollBefore = IAToken(AAVE_A_WBTC).balanceOf(DEPLOYED_LOAN_MGR);
+        uint256 aaveDebtBefore = IAToken(AAVE_VAR_DEBT_USDT).balanceOf(DEPLOYED_LOAN_MGR);
+        uint256 poolBal0Before = ICurvePool(PMUSD_CRVUSD_POOL).balances(0);
+        uint256 poolBal1Before = ICurvePool(PMUSD_CRVUSD_POOL).balances(1);
 
         vm.startPrank(user);
         wbtc.approve(address(vault), LARGE_DEPOSIT);
@@ -168,8 +173,12 @@ contract LargeLiquidityStressTest is Test {
 
         console.log("\n=== AFTER DEPOSIT ===");
         console.log("Shares received             : %d", sharesReceived);
-        console.log("Shares expected at 1:1      : %d (WBTC units = %d sat)", LARGE_DEPOSIT, LARGE_DEPOSIT);
-        console.log("Entry discount vs 1:1 (sat) : %d", int256(LARGE_DEPOSIT) - int256(sharesReceived));
+        console.log(
+            "Shares expected at 1:1      : %d (WBTC units = %d sat)", LARGE_DEPOSIT, LARGE_DEPOSIT
+        );
+        console.log(
+            "Entry discount vs 1:1 (sat) : %d", int256(LARGE_DEPOSIT) - int256(sharesReceived)
+        );
 
         uint256 stratBalAfterDeposit = strategy.balanceOf();
         uint256 aaveCollAfterDeposit = IAToken(AAVE_A_WBTC).balanceOf(DEPLOYED_LOAN_MGR);
@@ -183,10 +192,16 @@ contract LargeLiquidityStressTest is Test {
         console.log("--- Aave position ---");
         console.log("Aave aWBTC before (sat)        : %d", aaveCollBefore);
         console.log("Aave aWBTC after  (sat)        : %d", aaveCollAfterDeposit);
-        console.log("Aave aWBTC delta  (sat)        : %d", int256(aaveCollAfterDeposit) - int256(aaveCollBefore));
+        console.log(
+            "Aave aWBTC delta  (sat)        : %d",
+            int256(aaveCollAfterDeposit) - int256(aaveCollBefore)
+        );
         console.log("Aave varDebt USDT before (6-dec): %d", aaveDebtBefore);
         console.log("Aave varDebt USDT after  (6-dec): %d", aaveDebtAfterDeposit);
-        console.log("Aave varDebt USDT delta  (6-dec): %d", int256(aaveDebtAfterDeposit) - int256(aaveDebtBefore));
+        console.log(
+            "Aave varDebt USDT delta  (6-dec): %d",
+            int256(aaveDebtAfterDeposit) - int256(aaveDebtBefore)
+        );
 
         uint256 poolBal0AfterDeposit = ICurvePool(PMUSD_CRVUSD_POOL).balances(0);
         uint256 poolBal1AfterDeposit = ICurvePool(PMUSD_CRVUSD_POOL).balances(1);
@@ -237,15 +252,17 @@ contract LargeLiquidityStressTest is Test {
         console.log("WBTC returned       : %d sat", wbtcReturned);
         int256 userPnl = int256(wbtcReturned) - int256(LARGE_DEPOSIT);
         console.log("User PnL            : %d sat (negative = loss)", userPnl);
-        console.log("User WBTC balance delta check: %d", int256(userWbtcAfter) - int256(userWbtcBefore));
+        console.log(
+            "User WBTC balance delta check: %d", int256(userWbtcAfter) - int256(userWbtcBefore)
+        );
 
         uint256 stratBalPostRedeem = strategy.balanceOf();
         uint256 aaveCollPostRedeem = IAToken(AAVE_A_WBTC).balanceOf(DEPLOYED_LOAN_MGR);
         uint256 aaveDebtPostRedeem = IAToken(AAVE_VAR_DEBT_USDT).balanceOf(DEPLOYED_LOAN_MGR);
-        uint256 vaultWbtcPost      = wbtc.balanceOf(DEPLOYED_VAULT);
-        uint256 vaultUsdtPost      = usdt.balanceOf(DEPLOYED_VAULT);
-        uint256 lmWbtcPost         = wbtc.balanceOf(DEPLOYED_LOAN_MGR);
-        uint256 lmUsdtPost         = usdt.balanceOf(DEPLOYED_LOAN_MGR);
+        uint256 vaultWbtcPost = wbtc.balanceOf(DEPLOYED_VAULT);
+        uint256 vaultUsdtPost = usdt.balanceOf(DEPLOYED_VAULT);
+        uint256 lmWbtcPost = wbtc.balanceOf(DEPLOYED_LOAN_MGR);
+        uint256 lmUsdtPost = usdt.balanceOf(DEPLOYED_LOAN_MGR);
 
         console.log("--- Residual state ---");
         console.log("Strategy balance (oracle USDT): %d", stratBalPostRedeem);
@@ -261,25 +278,35 @@ contract LargeLiquidityStressTest is Test {
         uint256 poolBal0PostRedeem = ICurvePool(PMUSD_CRVUSD_POOL).balances(0);
         uint256 poolBal1PostRedeem = ICurvePool(PMUSD_CRVUSD_POOL).balances(1);
         console.log("--- Pool state after redeem ---");
-        console.log("pmUSD/crvUSD pool balance[0] before: %d | after: %d",
-            poolBal0PreRedeem, poolBal0PostRedeem);
-        console.log("pmUSD/crvUSD pool balance[1] before: %d | after: %d",
-            poolBal1PreRedeem, poolBal1PostRedeem);
+        console.log(
+            "pmUSD/crvUSD pool balance[0] before: %d | after: %d",
+            poolBal0PreRedeem,
+            poolBal0PostRedeem
+        );
+        console.log(
+            "pmUSD/crvUSD pool balance[1] before: %d | after: %d",
+            poolBal1PreRedeem,
+            poolBal1PostRedeem
+        );
 
         // ── Key diagnostic: what ate the remaining depositor's value? ──────────
         console.log("\n=== ROOT CAUSE DIAGNOSTICS ===");
 
         // 1. Strategy withdrawal slippage: oracle value vs actual amount repaid to Aave
         int256 stratDeltaRedeem = int256(stratBalPreRedeem) - int256(stratBalPostRedeem);
-        int256 aaveDebtRepaid   = int256(aaveDebtPreRedeem) - int256(aaveDebtPostRedeem);
+        int256 aaveDebtRepaid = int256(aaveDebtPreRedeem) - int256(aaveDebtPostRedeem);
         console.log("Strategy USDT withdrawn (oracle estimate, 6-dec): %d", stratDeltaRedeem);
         console.log("Aave debt actually repaid (USDT, 6-dec)         : %d", aaveDebtRepaid);
         if (aaveDebtRepaid > 0 && stratDeltaRedeem > 0) {
             int256 shortfallUsdt = stratDeltaRedeem - aaveDebtRepaid;
             console.log("Strategy-to-repayment shortfall (USDT, 6-dec)   : %d", shortfallUsdt);
             if (shortfallUsdt > 0) {
-                console.log("  => Shortfall means strategy returned less USDT than oracle predicted.");
-                console.log("     Flash loan was likely needed to cover gap, consuming WBTC collateral.");
+                console.log(
+                    "  => Shortfall means strategy returned less USDT than oracle predicted."
+                );
+                console.log(
+                    "     Flash loan was likely needed to cover gap, consuming WBTC collateral."
+                );
             }
         }
 
@@ -293,8 +320,10 @@ contract LargeLiquidityStressTest is Test {
         console.log("Expected collateral withdrawal for user (sat)    : %d", expectedCollWithdrawal);
         if (uint256(aaveCollDelta) > expectedCollWithdrawal) {
             console.log("  => More collateral was consumed than user's share.");
-            console.log("     Excess WBTC sold in flash loan: %d sat",
-                uint256(aaveCollDelta) - expectedCollWithdrawal);
+            console.log(
+                "     Excess WBTC sold in flash loan: %d sat",
+                uint256(aaveCollDelta) - expectedCollWithdrawal
+            );
         }
 
         // 3. Pool imbalance (price impact indicator)
@@ -309,12 +338,14 @@ contract LargeLiquidityStressTest is Test {
 
         // 4. Final TVL breakdown
         console.log("\n=== FINAL TVL DECOMPOSITION ===");
-        uint256 finalTvl     = vault.totalAssets();
+        uint256 finalTvl = vault.totalAssets();
         uint256 remainShares = vault.totalSupply();
         console.log("Final TVL (WBTC sat)    : %d", finalTvl);
         console.log("Remaining shares        : %d", remainShares);
-        console.log("Net Aave collateral     : %d sat (collateral - debtInCollateral)",
-            loanManager.getNetCollateralValue());
+        console.log(
+            "Net Aave collateral     : %d sat (collateral - debtInCollateral)",
+            loanManager.getNetCollateralValue()
+        );
         console.log("Strategy residual       : %d oracle-USDT", stratBalPostRedeem);
         console.log("Vault idle WBTC         : %d sat", vaultWbtcPost);
         console.log("Vault idle USDT         : %d (should be ~0)", vaultUsdtPost);
@@ -347,11 +378,16 @@ contract LargeLiquidityStressTest is Test {
         uint256 returnedSingle = vault.redeem(sharesSingle, user, user);
 
         uint256 finalTvlSingle = vault.totalAssets();
-        console.log("TVL before: %d sat | after 100 WBTC round-trip: %d sat",
-            tvlBeforeSingle, finalTvlSingle);
+        console.log(
+            "TVL before: %d sat | after 100 WBTC round-trip: %d sat",
+            tvlBeforeSingle,
+            finalTvlSingle
+        );
         int256 tvlChangeSingle = int256(finalTvlSingle) - int256(tvlBeforeSingle);
         console.log("TVL change (original depositor impact): %d sat", tvlChangeSingle);
-        console.log("100 WBTC depositor got back: %d sat (deposited %d)", returnedSingle, LARGE_DEPOSIT);
+        console.log(
+            "100 WBTC depositor got back: %d sat (deposited %d)", returnedSingle, LARGE_DEPOSIT
+        );
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -362,13 +398,19 @@ contract LargeLiquidityStressTest is Test {
         console.log("totalSupply (shares)        : %d", vault.totalSupply());
         console.log("strategy.balanceOf (USDT)   : %d", strategy.balanceOf());
         console.log("accumulatedFees (USDT)      : %d", vault.accumulatedFees());
-        console.log("Aave aWBTC (sat)            : %d", IAToken(AAVE_A_WBTC).balanceOf(DEPLOYED_LOAN_MGR));
-        console.log("Aave varDebt USDT           : %d", IAToken(AAVE_VAR_DEBT_USDT).balanceOf(DEPLOYED_LOAN_MGR));
+        console.log(
+            "Aave aWBTC (sat)            : %d", IAToken(AAVE_A_WBTC).balanceOf(DEPLOYED_LOAN_MGR)
+        );
+        console.log(
+            "Aave varDebt USDT           : %d",
+            IAToken(AAVE_VAR_DEBT_USDT).balanceOf(DEPLOYED_LOAN_MGR)
+        );
         console.log("block.number                : %d", block.number);
     }
 
     function _refreshOracles() internal {
-        address[4] memory oracles = [BTC_USD_ORACLE, USDT_USD_ORACLE, CRVUSD_USD_ORACLE, CRV_USD_ORACLE];
+        address[4] memory oracles =
+            [BTC_USD_ORACLE, USDT_USD_ORACLE, CRVUSD_USD_ORACLE, CRV_USD_ORACLE];
         for (uint256 i = 0; i < oracles.length; i++) {
             (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) =
                 IChainlinkOracle(oracles[i]).latestRoundData();

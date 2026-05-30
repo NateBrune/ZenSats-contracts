@@ -257,7 +257,9 @@ abstract contract ZenjiForkTestBase is Test {
         if (newCap < cur) {
             vm.warp(block.timestamp + vault.PARAM_TIMELOCK_DELAY());
             address[] memory oracles = _oracleList();
-            for (uint256 i = 0; i < oracles.length; i++) _mockOracle(oracles[i]);
+            for (uint256 i = 0; i < oracles.length; i++) {
+                _mockOracle(oracles[i]);
+            }
             vm.prank(vault.gov());
             vault.executeParamChange(2);
         }
@@ -271,7 +273,9 @@ abstract contract ZenjiForkTestBase is Test {
         if (newBounty > cur) {
             vm.warp(block.timestamp + vault.PARAM_TIMELOCK_DELAY());
             address[] memory oracles = _oracleList();
-            for (uint256 i = 0; i < oracles.length; i++) _mockOracle(oracles[i]);
+            for (uint256 i = 0; i < oracles.length; i++) {
+                _mockOracle(oracles[i]);
+            }
             vm.prank(vault.gov());
             vault.executeParamChange(3);
         }
@@ -285,7 +289,9 @@ abstract contract ZenjiForkTestBase is Test {
         if (newSlip > cur) {
             vm.warp(block.timestamp + vault.PARAM_TIMELOCK_DELAY());
             address[] memory oracles = _oracleList();
-            for (uint256 i = 0; i < oracles.length; i++) _mockOracle(oracles[i]);
+            for (uint256 i = 0; i < oracles.length; i++) {
+                _mockOracle(oracles[i]);
+            }
             vm.prank(vault.gov());
             vault.executeParamChange(4);
         }
@@ -777,9 +783,9 @@ abstract contract ZenjiForkTestBase is Test {
         vm.stopPrank();
 
         // depositCap: raises are immediate, drops are now timelocked.
-        _setDepositCap(type(uint256).max);   // raise: immediate
+        _setDepositCap(type(uint256).max); // raise: immediate
         assertEq(vault.depositCap(), type(uint256).max, "Should accept max cap");
-        _setDepositCap(0);                    // drop: timelocked, helper handles
+        _setDepositCap(0); // drop: timelocked, helper handles
         assertEq(vault.depositCap(), 0, "Should accept 0 cap");
     }
 

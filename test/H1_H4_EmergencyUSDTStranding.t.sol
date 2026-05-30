@@ -44,31 +44,75 @@ contract MockLoanManagerH1 is ILoanManager {
         debtAsset = _debt;
     }
 
-    function createLoan(uint256, uint256) external override {}
-    function addCollateral(uint256) external override {}
-    function borrowMore(uint256, uint256) external override {}
-    function repayDebt(uint256) external override {}
-    function removeCollateral(uint256) external override {}
-    function unwindPosition(uint256) external override {}
-    function transferCollateral(address, uint256) external override {}
-    function transferDebt(address, uint256) external override {}
-    function maxLtvBps() external pure override returns (uint256) { return type(uint256).max; }
-    function checkOracleFreshness() external view override {}
+    function createLoan(uint256, uint256) external override { }
+    function addCollateral(uint256) external override { }
+    function borrowMore(uint256, uint256) external override { }
+    function repayDebt(uint256) external override { }
+    function removeCollateral(uint256) external override { }
+    function unwindPosition(uint256) external override { }
+    function transferCollateral(address, uint256) external override { }
+    function transferDebt(address, uint256) external override { }
 
-    function getCurrentLTV() external pure override returns (uint256) { return 0; }
-    function getCurrentCollateral() external pure override returns (uint256) { return 0; }
-    function getCurrentDebt() external pure override returns (uint256) { return 0; }
-    function getHealth() external pure override returns (int256) { return 1e18; }
-    function loanExists() external pure override returns (bool) { return false; }
-    function getCollateralValue(uint256 a) external pure override returns (uint256) { return a; }
-    function getDebtValue(uint256 a) external pure override returns (uint256) { return a; }
-    function calculateBorrowAmount(uint256, uint256) external pure override returns (uint256) { return 0; }
-    function healthCalculator(int256, int256) external pure override returns (int256) { return 1e18; }
-    function minCollateral(uint256, uint256) external pure override returns (uint256) { return 0; }
-    function getPositionValues() external pure override returns (uint256, uint256) { return (0, 0); }
-    function getNetCollateralValue() external pure override returns (uint256) { return 0; }
-    function getCollateralBalance() external pure override returns (uint256) { return 0; }
-    function getDebtBalance() external pure override returns (uint256) { return 0; }
+    function maxLtvBps() external pure override returns (uint256) {
+        return type(uint256).max;
+    }
+    function checkOracleFreshness() external view override { }
+
+    function getCurrentLTV() external pure override returns (uint256) {
+        return 0;
+    }
+
+    function getCurrentCollateral() external pure override returns (uint256) {
+        return 0;
+    }
+
+    function getCurrentDebt() external pure override returns (uint256) {
+        return 0;
+    }
+
+    function getHealth() external pure override returns (int256) {
+        return 1e18;
+    }
+
+    function loanExists() external pure override returns (bool) {
+        return false;
+    }
+
+    function getCollateralValue(uint256 a) external pure override returns (uint256) {
+        return a;
+    }
+
+    function getDebtValue(uint256 a) external pure override returns (uint256) {
+        return a;
+    }
+
+    function calculateBorrowAmount(uint256, uint256) external pure override returns (uint256) {
+        return 0;
+    }
+
+    function healthCalculator(int256, int256) external pure override returns (int256) {
+        return 1e18;
+    }
+
+    function minCollateral(uint256, uint256) external pure override returns (uint256) {
+        return 0;
+    }
+
+    function getPositionValues() external pure override returns (uint256, uint256) {
+        return (0, 0);
+    }
+
+    function getNetCollateralValue() external pure override returns (uint256) {
+        return 0;
+    }
+
+    function getCollateralBalance() external pure override returns (uint256) {
+        return 0;
+    }
+
+    function getDebtBalance() external pure override returns (uint256) {
+        return 0;
+    }
 }
 
 /// @notice Minimal yield strategy stub. withdrawAll() transfers any held USDT to the vault.
@@ -94,14 +138,21 @@ contract MockYieldStrategyH1 is IYieldStrategy {
         return bal;
     }
 
-    function deposit(uint256) external pure override returns (uint256) { return 0; }
+    function deposit(uint256) external pure override returns (uint256) {
+        return 0;
+    }
+
     function withdraw(uint256 amt) external override returns (uint256) {
         uint256 bal = _token.balanceOf(address(this));
         uint256 out = amt < bal ? amt : bal;
         if (out > 0) _token.transfer(vault, out);
         return out;
     }
-    function harvest() external pure override returns (uint256) { return 0; }
+
+    function harvest() external pure override returns (uint256) {
+        return 0;
+    }
+
     function emergencyWithdraw() external override returns (uint256) {
         uint256 bal = _token.balanceOf(address(this));
         if (bal > 0) {
@@ -109,16 +160,32 @@ contract MockYieldStrategyH1 is IYieldStrategy {
         }
         return bal;
     }
-    function underlyingAsset() external view override returns (address) { return asset; }
+
+    function underlyingAsset() external view override returns (address) {
+        return asset;
+    }
+
     function balanceOf() external view override returns (uint256) {
         return _token.balanceOf(address(this));
     }
-    function costBasis() external pure override returns (uint256) { return 0; }
-    function unrealizedProfit() external pure override returns (uint256) { return 0; }
-    function pendingRewards() external pure override returns (uint256) { return 0; }
-    function name() external pure override returns (string memory) { return "MockStrategy"; }
-    function transferOwnerFromVault(address) external override {}
-    function setSlippage(uint256) external override {}
+
+    function costBasis() external pure override returns (uint256) {
+        return 0;
+    }
+
+    function unrealizedProfit() external pure override returns (uint256) {
+        return 0;
+    }
+
+    function pendingRewards() external pure override returns (uint256) {
+        return 0;
+    }
+
+    function name() external pure override returns (string memory) {
+        return "MockStrategy";
+    }
+    function transferOwnerFromVault(address) external override { }
+    function setSlippage(uint256) external override { }
 
     function updateCachedVirtualPrice() external { }
 }
@@ -133,11 +200,15 @@ contract MockSwapperH1 is ISwapper {
         debtToken = MockERC20H1(_debt);
     }
 
-    function quoteCollateralForDebt(uint256 d) external pure returns (uint256) { return d; }
+    function quoteCollateralForDebt(uint256 d) external pure returns (uint256) {
+        return d;
+    }
+
     function swapCollateralForDebt(uint256 a) external returns (uint256) {
         debtToken.mint(msg.sender, a);
         return a;
     }
+
     function swapDebtForCollateral(uint256 a) external returns (uint256) {
         collateralToken.mint(msg.sender, a);
         return a;
@@ -180,8 +251,8 @@ contract H1_H4_EmergencyUSDTStranding is Test {
     address user1 = makeAddr("user1");
 
     // Amounts
-    uint256 constant COLLATERAL_DEPOSIT = 100e18;  // 100 units collateral
-    uint256 constant USDT_IN_STRATEGY   = 65e6;    // 65 USDT deployed to yield strategy
+    uint256 constant COLLATERAL_DEPOSIT = 100e18; // 100 units collateral
+    uint256 constant USDT_IN_STRATEGY = 65e6; // 65 USDT deployed to yield strategy
 
     /// @notice Helper for the new 2-call emergencySkipStep timelock pattern.
     function _emergencySkipStep(uint8 step) internal {
@@ -195,16 +266,16 @@ contract H1_H4_EmergencyUSDTStranding is Test {
     function setUp() public {
         // Deploy tokens
         collateral = new MockERC20H1("WBTC", "WBTC", 18);
-        usdt       = new MockERC20H1("USDT", "USDT", 6);
+        usdt = new MockERC20H1("USDT", "USDT", 6);
 
         // Predict vault address so strategy can be given the correct vault reference
         uint256 startNonce = vm.getNonce(address(this));
         // After tokens: lm=+0, strategy=+1, swapper=+2, viewHelper=+3, vault=+4
         address expectedVault = vm.computeCreateAddress(address(this), startNonce + 4);
 
-        lm       = new MockLoanManagerH1(address(collateral), address(usdt));
+        lm = new MockLoanManagerH1(address(collateral), address(usdt));
         strategy = new MockYieldStrategyH1(address(usdt), expectedVault);
-        swapper  = new MockSwapperH1(address(collateral), address(usdt));
+        swapper = new MockSwapperH1(address(collateral), address(usdt));
         viewHelper = new ZenjiViewHelper();
 
         vault = new Zenji(
@@ -278,14 +349,12 @@ contract H1_H4_EmergencyUSDTStranding is Test {
         );
 
         // ASSERTION 2: No USDT remains stranded after full redemption
-        assertEq(
-            vaultUsdtAfter,
-            0,
-            "H4 FIXED: no USDT stranded after emergency redemption"
-        );
+        assertEq(vaultUsdtAfter, 0, "H4 FIXED: no USDT stranded after emergency redemption");
 
         console.log("H4: user1 collateral received:  %d", collateralReceived);
-        console.log("H4: user1 USDT received:        %d (6 decimals)", user1UsdtAfter - user1UsdtBefore);
+        console.log(
+            "H4: user1 USDT received:        %d (6 decimals)", user1UsdtAfter - user1UsdtBefore
+        );
         console.log("[H4 FIXED] _redeemEmergency now distributes debtAsset proportionally");
     }
 
@@ -366,11 +435,7 @@ contract H1_H4_EmergencyUSDTStranding is Test {
         );
 
         // ASSERTION 2: No USDT stranded after full redemption
-        assertEq(
-            vaultUsdtAfterRedeem,
-            0,
-            "H1 FIXED: USDT fully distributed to shareholders"
-        );
+        assertEq(vaultUsdtAfterRedeem, 0, "H1 FIXED: USDT fully distributed to shareholders");
 
         console.log("H1: total supply before redeem:  %d shares", totalSupply);
         console.log("H1: vault collateral before:     %d", vaultCollateral);
@@ -385,6 +450,8 @@ contract H1_H4_EmergencyUSDTStranding is Test {
         vault.rescueAssets(address(usdt), guardian);
 
         console.log("[H1 FIXED] _redeemEmergency now distributes debtAsset proportionally");
-        console.log("H1 SUMMARY: %d USDT (6 dec) properly returned to shareholders", USDT_IN_STRATEGY);
+        console.log(
+            "H1 SUMMARY: %d USDT (6 dec) properly returned to shareholders", USDT_IN_STRATEGY
+        );
     }
 }

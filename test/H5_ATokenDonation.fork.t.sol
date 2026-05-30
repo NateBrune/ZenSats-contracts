@@ -5,7 +5,9 @@ import { Test, console } from "forge-std/Test.sol";
 import { ZenjiForkTestBase } from "./base/ZenjiForkTestBase.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
+import {
+    UniversalRouterV3SingleHopSwapper
+} from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { UsdtIporStrategy } from "../src/strategies/vault/UsdtIporStrategy.sol";
 import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
@@ -75,7 +77,14 @@ contract H5_ATokenDonation is ZenjiForkTestBase {
         address expectedVaultAddress = computeCreateAddress(address(this), startNonce + 3);
 
         swapper = new UniversalRouterV3SingleHopSwapper(
-            owner, WBTC, USDT, UNIVERSAL_ROUTER, WBTC_USDT_V3_FEE, BTC_USD_ORACLE, USDT_USD_ORACLE, 3_600
+            owner,
+            WBTC,
+            USDT,
+            UNIVERSAL_ROUTER,
+            WBTC_USDT_V3_FEE,
+            BTC_USD_ORACLE,
+            USDT_USD_ORACLE,
+            3_600
         );
 
         UsdtIporStrategy strategy = new UsdtIporStrategy(
@@ -199,9 +208,7 @@ contract H5_ATokenDonation is ZenjiForkTestBase {
         // donated aTokens -> aToken.balanceOf(lm) > 0, debt = 0
         // getNetCollateralValue = collateral - debtInCollateral = attackerATokenBalance - 0
         assertGt(
-            totalCollateralBefore,
-            0,
-            "H5: totalCollateral should be non-zero from donated aTokens"
+            totalCollateralBefore, 0, "H5: totalCollateral should be non-zero from donated aTokens"
         );
         console.log(
             "[CONFIRMED] Donated aTokens inflate totalCollateral before any real deposit: %d",
@@ -272,7 +279,9 @@ contract H5_ATokenDonation is ZenjiForkTestBase {
         vm.stopPrank();
 
         console.log("CLEAN: shares for 1 WBTC = %d", sharesClean);
-        console.log("[CONFIRMED] donated-aToken scenario blocks deposit instead of repricing shares");
+        console.log(
+            "[CONFIRMED] donated-aToken scenario blocks deposit instead of repricing shares"
+        );
     }
 
     // ============================================================
@@ -393,9 +402,7 @@ contract H5_ATokenDonation is ZenjiForkTestBase {
         vm.startPrank(attacker);
         IERC20(WBTC).approve(AAVE_POOL, donationWbtc);
         IAavePool(AAVE_POOL).supply(WBTC, donationWbtc, attacker, 0);
-        IERC20(AAVE_A_WBTC).transfer(
-            address(loanManager), IERC20(AAVE_A_WBTC).balanceOf(attacker)
-        );
+        IERC20(AAVE_A_WBTC).transfer(address(loanManager), IERC20(AAVE_A_WBTC).balanceOf(attacker));
         vm.stopPrank();
 
         assertTrue(loanManager.loanExists(), "H5: donation forces loanExists = true");
@@ -408,9 +415,7 @@ contract H5_ATokenDonation is ZenjiForkTestBase {
         vault.deposit(depositAmount, user1);
         vm.stopPrank();
 
-        assertTrue(
-            loanManager.loanExists(), "H5: loanExists remains true after donation"
-        );
+        assertTrue(loanManager.loanExists(), "H5: loanExists remains true after donation");
         console.log("[CONFIRMED] Donation forces addCollateral path and deposit reverts");
         console.log(
             "aToken balance of loanManager after: %d",

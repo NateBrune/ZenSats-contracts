@@ -92,20 +92,50 @@ contract VerifyH6ForkTest is Test {
 
         viewHelper = new ZenjiViewHelper();
         swapper = new CbBtcUniswapV3TwoHopSwapper(
-            owner, CBBTC, USDT, WBTC, UNISWAP_ROUTER,
-            CBBTC_WBTC_FEE, WBTC_USDT_FEE, CBBTC_USD_ORACLE, USDT_USD_ORACLE
+            owner,
+            CBBTC,
+            USDT,
+            WBTC,
+            UNISWAP_ROUTER,
+            CBBTC_WBTC_FEE,
+            WBTC_USDT_FEE,
+            CBBTC_USD_ORACLE,
+            USDT_USD_ORACLE
         );
         loanManager = new AaveLoanManager(
-            CBBTC, USDT, AAVE_A_CBBTC, AAVE_VAR_DEBT_USDT, AAVE_POOL,
-            CBBTC_USD_ORACLE, USDT_USD_ORACLE, address(swapper), 7500, 8000, address(0), 0, 3600
+            CBBTC,
+            USDT,
+            AAVE_A_CBBTC,
+            AAVE_VAR_DEBT_USDT,
+            AAVE_POOL,
+            CBBTC_USD_ORACLE,
+            USDT_USD_ORACLE,
+            address(swapper),
+            7500,
+            8000,
+            address(0),
+            0,
+            3600
         );
         strategy = new UsdtIporStrategy(
-            USDT, CRVUSD, address(0), CURVE_USDT_CRVUSD_POOL, IPOR_PLASMA_VAULT,
-            USDT_INDEX, CRVUSD_INDEX, CRVUSD_USD_ORACLE, USDT_USD_ORACLE
+            USDT,
+            CRVUSD,
+            address(0),
+            CURVE_USDT_CRVUSD_POOL,
+            IPOR_PLASMA_VAULT,
+            USDT_INDEX,
+            CRVUSD_INDEX,
+            CRVUSD_USD_ORACLE,
+            USDT_USD_ORACLE
         );
         vault = new Zenji(
-            CBBTC, USDT, address(loanManager), address(strategy),
-            address(swapper), owner, address(viewHelper)
+            CBBTC,
+            USDT,
+            address(loanManager),
+            address(strategy),
+            address(swapper),
+            owner,
+            address(viewHelper)
         );
         loanManager.initializeVault(address(vault));
         strategy.initializeVault(address(vault));
@@ -181,10 +211,7 @@ contract VerifyH6ForkTest is Test {
             console.logBytes4(revertSelector);
         }
 
-        assertTrue(
-            reverted,
-            "Expected redeem to remain blocked after only 1 block"
-        );
+        assertTrue(reverted, "Expected redeem to remain blocked after only 1 block");
         console.log("CONFIRMED: redeem remains blocked after only 1 block");
     }
 

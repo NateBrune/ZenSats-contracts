@@ -5,10 +5,16 @@ import { console } from "forge-std/Test.sol";
 import { ZenjiForkTestBase } from "./base/ZenjiForkTestBase.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
+import {
+    UniversalRouterV3SingleHopSwapper
+} from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
-import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
-import { BaseNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/BaseNgCrvUsdLpStakeDaoStrategy.sol";
+import {
+    UsdtNgCrvUsdLpStakeDaoStrategy
+} from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
+import {
+    BaseNgCrvUsdLpStakeDaoStrategy
+} from "../src/strategies/lp/BaseNgCrvUsdLpStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { ICurveStableSwap } from "../src/interfaces/ICurveStableSwap.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
@@ -213,7 +219,9 @@ contract M2_UsdtPmUsdCrvUsd_withdraw_stuck_crvUSD is ZenjiForkTestBase {
         vm.mockCall(
             USDT_USD_ORACLE,
             abi.encodeWithSelector(IChainlinkOracle.latestRoundData.selector),
-            abi.encode(usdtRoundId, deflatedUsdtPrice, block.timestamp, block.timestamp, usdtRoundId)
+            abi.encode(
+                usdtRoundId, deflatedUsdtPrice, block.timestamp, block.timestamp, usdtRoundId
+            )
         );
 
         // Try to withdraw from the strategy.
@@ -227,8 +235,9 @@ contract M2_UsdtPmUsdCrvUsd_withdraw_stuck_crvUSD is ZenjiForkTestBase {
         vm.prank(address(vault));
         bool reverted = false;
         try strategy.withdraw(strategyBalance) {
-            // If we get here, the swap succeeded (unexpected)
-        } catch {
+        // If we get here, the swap succeeded (unexpected)
+        }
+        catch {
             reverted = true;
         }
 
@@ -262,7 +271,9 @@ contract M2_UsdtPmUsdCrvUsd_withdraw_stuck_crvUSD is ZenjiForkTestBase {
         vm.mockCall(
             USDT_USD_ORACLE,
             abi.encodeWithSelector(IChainlinkOracle.latestRoundData.selector),
-            abi.encode(usdtRoundId, deflatedUsdtPrice2, block.timestamp, block.timestamp, usdtRoundId)
+            abi.encode(
+                usdtRoundId, deflatedUsdtPrice2, block.timestamp, block.timestamp, usdtRoundId
+            )
         );
 
         uint256 crvUsdBefore = IERC20(CRVUSD).balanceOf(address(strategy));

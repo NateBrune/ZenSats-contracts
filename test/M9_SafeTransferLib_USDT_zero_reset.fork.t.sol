@@ -101,11 +101,7 @@ contract M9_SafeTransferLib_USDT_zero_reset is Test {
         // Set initial allowance to 1000 using standard ERC20 allowance selector
         vm.mockCall(
             address(mockUSDT),
-            abi.encodeWithSelector(
-                0xdd62ed3e,
-                address(testContract),
-                SPENDER
-            ),
+            abi.encodeWithSelector(0xdd62ed3e, address(testContract), SPENDER),
             abi.encode(1000)
         );
 
@@ -126,11 +122,7 @@ contract M9_SafeTransferLib_USDT_zero_reset is Test {
         // Set initial allowance to 0 (no existing allowance)
         vm.mockCall(
             address(mockUSDT),
-            abi.encodeWithSelector(
-                0xdd62ed3e,
-                address(testContract),
-                SPENDER
-            ),
+            abi.encodeWithSelector(0xdd62ed3e, address(testContract), SPENDER),
             abi.encode(0)
         );
 
@@ -151,11 +143,7 @@ contract M9_SafeTransferLib_USDT_zero_reset is Test {
         // Set initial allowance to 1000
         vm.mockCall(
             address(mockUSDTVoid),
-            abi.encodeWithSelector(
-                0xdd62ed3e,
-                address(testContract),
-                SPENDER
-            ),
+            abi.encodeWithSelector(0xdd62ed3e, address(testContract), SPENDER),
             abi.encode(1000)
         );
 
@@ -176,11 +164,7 @@ contract M9_SafeTransferLib_USDT_zero_reset is Test {
         // Set initial allowance to 1000
         vm.mockCall(
             address(mockUSDT),
-            abi.encodeWithSelector(
-                0xdd62ed3e,
-                address(testContract),
-                SPENDER
-            ),
+            abi.encodeWithSelector(0xdd62ed3e, address(testContract), SPENDER),
             abi.encode(1000)
         );
 

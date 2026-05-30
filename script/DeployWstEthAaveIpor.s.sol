@@ -61,7 +61,7 @@ contract DeployWstEthAaveIpor is Script {
             FEE_WETH_USDT,
             address(wstEthOracle),
             USDT_USD_ORACLE,
-            3_600
+            90000 // 25h — WstEthOracle's stETH/ETH leg has a 24h heartbeat
         );
 
         AaveLoanManager loanManager = new AaveLoanManager(
@@ -77,7 +77,7 @@ contract DeployWstEthAaveIpor is Script {
             8100,
             address(0),
             0, // eMode: disabled
-            3600 // ETH/USD Chainlink heartbeat is 1h
+            90000 // 25h — WstEthOracle's stETH/ETH leg has a 24h heartbeat
         );
 
         UsdtIporStrategy strategy = new UsdtIporStrategy(

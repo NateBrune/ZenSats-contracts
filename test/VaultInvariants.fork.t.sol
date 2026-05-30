@@ -6,8 +6,12 @@ import { Zenji } from "../src/Zenji.sol";
 import { ZenjiWbtcAaveStakeDao } from "../src/implementations/stakedao/ZenjiWbtcAaveStakeDao.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
-import { UniversalRouterV3SingleHopSwapper } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
+import {
+    UsdtNgCrvUsdLpStakeDaoStrategy
+} from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
+import {
+    UniversalRouterV3SingleHopSwapper
+} from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
 import { ILoanManager } from "../src/interfaces/ILoanManager.sol";
@@ -29,35 +33,35 @@ import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
 
 contract VaultInvariants is Test {
     // ─── Mainnet protocol addresses (used by freshly-deployed contracts) ───────
-    address constant WBTC              = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
-    address constant USDT              = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
-    address constant BTC_USD_ORACLE    = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
-    address constant USDT_USD_ORACLE   = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
+    address constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
+    address constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
+    address constant BTC_USD_ORACLE = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
+    address constant USDT_USD_ORACLE = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
     address constant CRVUSD_USD_ORACLE = 0xEEf0C605546958c1f899b6fB336C20671f9cD49F;
-    address constant CRV_USD_ORACLE    = 0xCd627aA160A6fA45Eb793D19Ef54f5062F20f33f;
+    address constant CRV_USD_ORACLE = 0xCd627aA160A6fA45Eb793D19Ef54f5062F20f33f;
 
     // Aave V3
-    address constant AAVE_POOL           = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
-    address constant AAVE_A_WBTC         = 0x5Ee5bf7ae06D1Be5997A1A72006FE6C607eC6DE8;
-    address constant AAVE_VAR_DEBT_USDT  = 0x6df1C1E379bC5a00a7b4C6e67A203333772f45A8;
+    address constant AAVE_POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
+    address constant AAVE_A_WBTC = 0x5Ee5bf7ae06D1Be5997A1A72006FE6C607eC6DE8;
+    address constant AAVE_VAR_DEBT_USDT = 0x6df1C1E379bC5a00a7b4C6e67A203333772f45A8;
     // aUSDT holds underlying USDT available for borrowing; check for near-100% utilization.
-    address constant AAVE_A_USDT         = 0x23878914EFE38d27C4D67Ab83ed1b93A74D4086a;
+    address constant AAVE_A_USDT = 0x23878914EFE38d27C4D67Ab83ed1b93A74D4086a;
 
     // Uniswap V3
-    address constant UNIVERSAL_ROUTER    = 0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af;
-    uint24  constant WBTC_USDT_V3_FEE    = 3000;
+    address constant UNIVERSAL_ROUTER = 0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af;
+    uint24 constant WBTC_USDT_V3_FEE = 3000;
 
     // pmUSD/crvUSD Stake DAO strategy
-    address constant CRVUSD              = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
-    address constant CRV                 = 0xD533a949740bb3306d119CC777fa900bA034cd52;
-    address constant PMUSD               = 0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF;
-    address constant USDT_CRVUSD_POOL    = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
-    address constant PMUSD_CRVUSD_POOL   = 0xEcb0F0d68C19BdAaDAEbE24f6752A4Db34e2c2cb;
-    address constant PMUSD_CRVUSD_GAUGE  = 0xF3c43E7D722963b9569d1E39873dF9E2dFE8C087;
-    address constant STAKE_DAO_VAULT     = 0x7d3CDe9cCf0109423E672c17bD36481CF8CE437D;
-    address constant CRV_CRVUSD_TRI      = 0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14;
-    int128  constant USDT_INDEX          = 0;
-    int128  constant CRVUSD_INDEX        = 1;
+    address constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
+    address constant CRV = 0xD533a949740bb3306d119CC777fa900bA034cd52;
+    address constant PMUSD = 0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF;
+    address constant USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
+    address constant PMUSD_CRVUSD_POOL = 0xEcb0F0d68C19BdAaDAEbE24f6752A4Db34e2c2cb;
+    address constant PMUSD_CRVUSD_GAUGE = 0xF3c43E7D722963b9569d1E39873dF9E2dFE8C087;
+    address constant STAKE_DAO_VAULT = 0x7d3CDe9cCf0109423E672c17bD36481CF8CE437D;
+    address constant CRV_CRVUSD_TRI = 0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14;
+    int128 constant USDT_INDEX = 0;
+    int128 constant CRVUSD_INDEX = 1;
 
     Zenji vault;
     IYieldStrategy strategy;
@@ -74,8 +78,8 @@ contract VaultInvariants is Test {
     //     degradation (see LlamaLoanManager.unwindPosition try/catch escalation), not
     //     an accounting bug.
     //   - Slack for fork-test rounding: ~40 bps.
-    uint256 constant ROUNDING_LOSS_BPS = 150;  // 1.5% – LP pool asymmetry + escalation cost
-    uint256 constant SLIPPAGE_LOSS_BPS = 100;  // 1%   – acceptable unwind slippage per withdrawal
+    uint256 constant ROUNDING_LOSS_BPS = 150; // 1.5% – LP pool asymmetry + escalation cost
+    uint256 constant SLIPPAGE_LOSS_BPS = 100; // 1%   – acceptable unwind slippage per withdrawal
 
     // ─── Test accounts ─────────────────────────────────────────────────────────
     address alice;
@@ -93,16 +97,19 @@ contract VaultInvariants is Test {
     function setUp() public {
         string memory rpcUrl = vm.envOr("MAINNET_RPC_URL", string(""));
         if (bytes(rpcUrl).length == 0) rpcUrl = vm.envOr("ETH_RPC_URL", string(""));
-        if (bytes(rpcUrl).length == 0) { vm.skip(true); return; }
+        if (bytes(rpcUrl).length == 0) {
+            vm.skip(true);
+            return;
+        }
         vm.createSelectFork(rpcUrl);
 
-        wbtc  = IERC20(WBTC);
+        wbtc = IERC20(WBTC);
         owner = makeAddr("owner");
         alice = makeAddr("alice");
-        bob   = makeAddr("bob");
+        bob = makeAddr("bob");
         carol = makeAddr("carol");
-        dave  = makeAddr("dave");
-        eve   = makeAddr("eve");
+        dave = makeAddr("dave");
+        eve = makeAddr("eve");
 
         _refreshOracles();
         _deployFresh();
@@ -110,11 +117,15 @@ contract VaultInvariants is Test {
 
         // When Aave USDT hits ~100% utilization, DefaultReserveInterestRateStrategyV2
         // overflows (panic 0x11) on any new borrow. Skip the suite in that state.
-        if (IERC20(USDT).balanceOf(AAVE_A_USDT) < 1000e6) { vm.skip(true); return; }
+        if (IERC20(USDT).balanceOf(AAVE_A_USDT) < 1000e6) {
+            vm.skip(true);
+            return;
+        }
 
         // Snapshot clean state after deploy. Each test/fuzz-run reverts here.
         _forkSnapshot = vm.snapshotState();
     }
+
     // ═══════════════════════════════════════════════════════════════════════════
     //  Shared helpers
     // ═══════════════════════════════════════════════════════════════════════════
@@ -138,8 +149,14 @@ contract VaultInvariants is Test {
         );
 
         UniversalRouterV3SingleHopSwapper swapper = new UniversalRouterV3SingleHopSwapper(
-            owner, WBTC, address(IERC20(USDT)), UNIVERSAL_ROUTER,
-            WBTC_USDT_V3_FEE, BTC_USD_ORACLE, USDT_USD_ORACLE, 3_600
+            owner,
+            WBTC,
+            address(IERC20(USDT)),
+            UNIVERSAL_ROUTER,
+            WBTC_USDT_V3_FEE,
+            BTC_USD_ORACLE,
+            USDT_USD_ORACLE,
+            3_600
         );
 
         // Derive crvUSD LP index from the pool at fork time
@@ -150,22 +167,35 @@ contract VaultInvariants is Test {
         }
 
         UsdtNgCrvUsdLpStakeDaoStrategy strat = new UsdtNgCrvUsdLpStakeDaoStrategy(
-            address(IERC20(USDT)), address(0), owner,
-            USDT_CRVUSD_POOL, PMUSD_CRVUSD_POOL,
-            STAKE_DAO_VAULT, address(crvSwapper),
+            address(IERC20(USDT)),
+            address(0),
+            owner,
+            USDT_CRVUSD_POOL,
+            PMUSD_CRVUSD_POOL,
+            STAKE_DAO_VAULT,
+            address(crvSwapper),
             PMUSD_CRVUSD_GAUGE,
-            USDT_INDEX, CRVUSD_INDEX, lpCrvUsdIndex,
-            CRVUSD_USD_ORACLE, USDT_USD_ORACLE, CRV_USD_ORACLE
+            USDT_INDEX,
+            CRVUSD_INDEX,
+            lpCrvUsdIndex,
+            CRVUSD_USD_ORACLE,
+            USDT_USD_ORACLE,
+            CRV_USD_ORACLE
         );
 
         AaveLoanManager lm = new AaveLoanManager(
-            WBTC, address(IERC20(USDT)),
-            AAVE_A_WBTC, AAVE_VAR_DEBT_USDT, AAVE_POOL,
-            BTC_USD_ORACLE, USDT_USD_ORACLE,
+            WBTC,
+            address(IERC20(USDT)),
+            AAVE_A_WBTC,
+            AAVE_VAR_DEBT_USDT,
+            AAVE_POOL,
+            BTC_USD_ORACLE,
+            USDT_USD_ORACLE,
             address(swapper),
-            7300, 7800,
-            address(0),  // vault — set later
-            0,           // eMode disabled
+            7300,
+            7800,
+            address(0), // vault — set later
+            0, // eMode disabled
             3600
         );
 
@@ -178,13 +208,13 @@ contract VaultInvariants is Test {
         vm.prank(owner);
         swapper.setVault(address(v));
 
-        vault       = v;
-        strategy    = IYieldStrategy(address(strat));
+        vault = v;
+        strategy = IYieldStrategy(address(strat));
         loanManager = ILoanManager(address(lm));
     }
 
     /// @dev No-op — kept so existing test bodies don't need changing.
-    function _patchVaultCode() internal {}
+    function _patchVaultCode() internal { }
 
     function _refreshOracles() internal {
         vm.warp(block.timestamp + 2);
@@ -248,7 +278,7 @@ contract VaultInvariants is Test {
         pure
     {
         uint256 larger = a > b ? a : b;
-        uint256 diff   = a > b ? a - b : b - a;
+        uint256 diff = a > b ? a - b : b - a;
         // avoid division by zero on truly zero amounts
         if (larger == 0) return;
         uint256 deviationBps = diff * 10_000 / larger;
@@ -269,8 +299,10 @@ contract VaultInvariants is Test {
 
     /// @notice Scenario helper: three depositors, exits in given order, returns their recoveries
     function _threeDepositorRound(
-        uint256 d0, uint256 d1, uint256 d2,
-        uint256[3] memory order  // indices into [alice,bob,carol]
+        uint256 d0,
+        uint256 d1,
+        uint256 d2,
+        uint256[3] memory order // indices into [alice,bob,carol]
     )
         internal
         returns (uint256[3] memory got)
@@ -295,11 +327,13 @@ contract VaultInvariants is Test {
 
     function testInvariant_withdrawOrder_ABC() public {
         uint256[3] memory got = _threeDepositorRound(
-            3e8, 5e8, 2e8,
-            [uint256(0), 1, 2]  // A, B, C
+            3e8,
+            5e8,
+            2e8,
+            [uint256(0), 1, 2] // A, B, C
         );
 
-        uint256 r0 = got[0] * 10_000 / 3e8;  // recovery bps
+        uint256 r0 = got[0] * 10_000 / 3e8; // recovery bps
         uint256 r1 = got[1] * 10_000 / 5e8;
         uint256 r2 = got[2] * 10_000 / 2e8;
 
@@ -320,8 +354,10 @@ contract VaultInvariants is Test {
 
     function testInvariant_withdrawOrder_CBA() public {
         uint256[3] memory got = _threeDepositorRound(
-            3e8, 5e8, 2e8,
-            [uint256(2), 1, 0]  // C, B, A
+            3e8,
+            5e8,
+            2e8,
+            [uint256(2), 1, 0] // C, B, A
         );
 
         uint256 r0 = got[0] * 10_000 / 3e8;
@@ -343,9 +379,9 @@ contract VaultInvariants is Test {
 
     /// @notice Fuzz: for any three deposit amounts, the last-to-exit never recovers
     ///         materially less than the first-to-exit when the vault is healthy.
-    function testFuzz_withdrawOrder_lastNotPunished(
-        uint256 rawA, uint256 rawB, uint256 rawC
-    ) public {
+    function testFuzz_withdrawOrder_lastNotPunished(uint256 rawA, uint256 rawB, uint256 rawC)
+        public
+    {
         // Lower bound at 0.5 WBTC — sub-0.5 WBTC deposits fall below the economic minimum
         // for the pmUSD/crvUSD strategy and trigger retryable slippage reverts.
         uint256 dA = bound(rawA, 5e7, 5e8);
@@ -367,41 +403,47 @@ contract VaultInvariants is Test {
         console.log("Total TVL = %d sat (%d WBTC)", dA + dB + dC, (dA + dB + dC) / 1e8);
 
         // Run A-first then C-first orderings
-        uint256[3] memory gotFirst = _threeDepositorRound(
-            dA, dB, dC, [uint256(0), 1, 2]
-        );
-        uint256[3] memory gotLast = _threeDepositorRound(
-            dA, dB, dC, [uint256(2), 1, 0]
-        );
+        uint256[3] memory gotFirst = _threeDepositorRound(dA, dB, dC, [uint256(0), 1, 2]);
+        uint256[3] memory gotLast = _threeDepositorRound(dA, dB, dC, [uint256(2), 1, 0]);
 
         // ── Round-trip: in vs out ─────────────────────────────────────────────
         // Positive net = gained sats; negative net = lost sats (slippage/fees).
         bool firstNet_positive = gotFirst[0] >= dA;
-        uint256 firstNet_abs   = firstNet_positive ? gotFirst[0] - dA : dA - gotFirst[0];
-        bool lastNet_positive  = gotLast[0] >= dA;
-        uint256 lastNet_abs    = lastNet_positive  ? gotLast[0]  - dA : dA - gotLast[0];
+        uint256 firstNet_abs = firstNet_positive ? gotFirst[0] - dA : dA - gotFirst[0];
+        bool lastNet_positive = gotLast[0] >= dA;
+        uint256 lastNet_abs = lastNet_positive ? gotLast[0] - dA : dA - gotLast[0];
 
         console.log("Alice deposited:   %d sat", dA);
         console.log("Alice first-out:   %d sat", gotFirst[0]);
         if (firstNet_positive) {
-            console.log("  net (first):    +%d sat (+%d bps)", firstNet_abs, firstNet_abs * 10_000 / dA);
+            console.log(
+                "  net (first):    +%d sat (+%d bps)", firstNet_abs, firstNet_abs * 10_000 / dA
+            );
         } else {
-            console.log("  net (first):    -%d sat (-%d bps)", firstNet_abs, firstNet_abs * 10_000 / dA);
+            console.log(
+                "  net (first):    -%d sat (-%d bps)", firstNet_abs, firstNet_abs * 10_000 / dA
+            );
         }
         console.log("Alice last-out:    %d sat", gotLast[0]);
         if (lastNet_positive) {
-            console.log("  net (last):     +%d sat (+%d bps)", lastNet_abs, lastNet_abs * 10_000 / dA);
+            console.log(
+                "  net (last):     +%d sat (+%d bps)", lastNet_abs, lastNet_abs * 10_000 / dA
+            );
         } else {
-            console.log("  net (last):     -%d sat (-%d bps)", lastNet_abs, lastNet_abs * 10_000 / dA);
+            console.log(
+                "  net (last):     -%d sat (-%d bps)", lastNet_abs, lastNet_abs * 10_000 / dA
+            );
         }
 
         // ── Ordering sensitivity ──────────────────────────────────────────────
         uint256 larger = gotFirst[0] > gotLast[0] ? gotFirst[0] : gotLast[0];
-        uint256 diff   = gotFirst[0] > gotLast[0] ? gotFirst[0] - gotLast[0] : gotLast[0] - gotFirst[0];
+        uint256 diff =
+            gotFirst[0] > gotLast[0] ? gotFirst[0] - gotLast[0] : gotLast[0] - gotFirst[0];
         uint256 devBps = larger > 0 ? diff * 10_000 / larger : 0;
         uint256 orderingLoss = diff / 2; // each side differs by half the spread vs midpoint
 
-        console.log("Ordering spread:   %d sat  (%d bps of deposit, tolerance: %d)",
+        console.log(
+            "Ordering spread:   %d sat  (%d bps of deposit, tolerance: %d)",
             orderingLoss,
             orderingLoss * 10_000 / dA,
             SLIPPAGE_LOSS_BPS
@@ -414,7 +456,8 @@ contract VaultInvariants is Test {
         // (SLIPPAGE_LOSS_BPS + ROUNDING_LOSS_BPS = 200 bps to absorb observed up to ~180 bps
         // LP pool-composition asymmetry that is not a bug in vault accounting.)
         _assertWithinBps(
-            gotFirst[0], gotLast[0],
+            gotFirst[0],
+            gotLast[0],
             SLIPPAGE_LOSS_BPS + ROUNDING_LOSS_BPS,
             "Alice recovery changed by ordering"
         );
@@ -448,7 +491,7 @@ contract VaultInvariants is Test {
         uint256 singleWithdrawal = _redeemAll(alice);
 
         // ─── Run B: 5×20% withdrawals ───────────────────────────────────────
-        _initFork();  // fresh fork resets all state
+        _initFork(); // fresh fork resets all state
         _patchVaultCode();
 
         _deposit(alice, depositAmount);
@@ -485,14 +528,13 @@ contract VaultInvariants is Test {
 
     /// @notice Fuzz: for random chunk counts (2–10) and deposit sizes, chunking does not
     ///         compound materially more slippage than a single withdrawal.
-    function testFuzz_chunkedWithdrawal_noCumulativeTax(
-        uint256 rawDeposit,
-        uint256 rawChunks
-    ) public {
+    function testFuzz_chunkedWithdrawal_noCumulativeTax(uint256 rawDeposit, uint256 rawChunks)
+        public
+    {
         // 10 WBTC (max) + 20 WBTC from bob = ~$2.94M USDT borrow; skip when Aave is jacked up.
         if (IERC20(USDT).balanceOf(AAVE_A_USDT) < 3_000_000e6) vm.skip(true);
-        uint256 depositAmount = bound(rawDeposit, 1e8, 10e8);  // 1–10 WBTC
-        uint256 chunks        = bound(rawChunks,  2,    8);
+        uint256 depositAmount = bound(rawDeposit, 1e8, 10e8); // 1–10 WBTC
+        uint256 chunks = bound(rawChunks, 2, 8);
 
         // ─── Single withdrawal baseline ─────────────────────────────────────
         _initFork();
@@ -560,19 +602,21 @@ contract VaultInvariants is Test {
 
         // All positions fully closed
         assertEq(loanManager.getCurrentDebt(), 0, "Debt not cleared after final withdrawal");
-        assertEq(loanManager.getCurrentCollateral(), 0, "Collateral not cleared after final withdrawal");
+        assertEq(
+            loanManager.getCurrentCollateral(), 0, "Collateral not cleared after final withdrawal"
+        );
 
         // Strategy fully exited
         assertEq(strategy.balanceOf(), 0, "Strategy not cleared after final withdrawal");
 
         // Vault holds nothing (no dust USDT, no orphaned collateral)
         assertEq(
-            IERC20(USDT).balanceOf(address(vault)), 0,
+            IERC20(USDT).balanceOf(address(vault)),
+            0,
             "Vault holds residual USDT after final withdrawal"
         );
         assertEq(
-            wbtc.balanceOf(address(vault)), 0,
-            "Vault holds residual WBTC after final withdrawal"
+            wbtc.balanceOf(address(vault)), 0, "Vault holds residual WBTC after final withdrawal"
         );
 
         // totalSupply is 0
@@ -611,7 +655,7 @@ contract VaultInvariants is Test {
 
         // Check storage: lastStrategyBalance and accumulatedFees should both be 0
         uint256 lastStratBal = vault.lastStrategyBalance();
-        uint256 accFees      = vault.accumulatedFees();
+        uint256 accFees = vault.accumulatedFees();
 
         console.log("=== FEE CHECKPOINT AFTER DRAIN ===");
         console.log("lastStrategyBalance after drain: %d", lastStratBal);
@@ -634,7 +678,7 @@ contract VaultInvariants is Test {
         // Allow a tiny rounding tolerance but no structural fee overcharge
         assertLe(
             pendingFees,
-            lastStratBalAfterBob / 1000,  // < 0.1% of strategy balance = rounding, not a real charge
+            lastStratBalAfterBob / 1000, // < 0.1% of strategy balance = rounding, not a real charge
             "New depositor charged fees from prior era's strategy balance"
         );
 
@@ -668,13 +712,13 @@ contract VaultInvariants is Test {
     function _runFlashLoanFeeTest(uint256 feeBps) internal {
         // Deploy mock infrastructure
         MockERC20Flash collateral = new MockERC20Flash("WBTC", "WBTC", 8);
-        MockERC20Flash debt       = new MockERC20Flash("USDT", "USDT", 6);
-        MockERC20Flash aToken     = new MockERC20Flash("aWBTC", "aWBTC", 8);
-        MockERC20Flash vDebt      = new MockERC20Flash("vUSDT", "vUSDT", 6);
-        MockSwapper    swapper    = new MockSwapper(collateral, debt);
-        MockOracle collOracle     = new MockOracle(8,  int256(85_000e8));  // $85k BTC
-        MockOracle debtOracle     = new MockOracle(8,  int256(1e8));       // $1 USDT
-        FeeAwareAavePool pool     = new FeeAwareAavePool(
+        MockERC20Flash debt = new MockERC20Flash("USDT", "USDT", 6);
+        MockERC20Flash aToken = new MockERC20Flash("aWBTC", "aWBTC", 8);
+        MockERC20Flash vDebt = new MockERC20Flash("vUSDT", "vUSDT", 6);
+        MockSwapper swapper = new MockSwapper(collateral, debt);
+        MockOracle collOracle = new MockOracle(8, int256(85_000e8)); // $85k BTC
+        MockOracle debtOracle = new MockOracle(8, int256(1e8)); // $1 USDT
+        FeeAwareAavePool pool = new FeeAwareAavePool(
             address(collateral), address(debt), address(aToken), address(vDebt)
         );
         pool.setFeeBps(feeBps);
@@ -709,7 +753,11 @@ contract VaultInvariants is Test {
         console.log("Collateral returned:     %d", collateral.balanceOf(vaultAddr));
 
         assertEq(vDebt.balanceOf(address(mgr)), 0, "Residual debt after fee-bearing flash loan");
-        assertGt(collateral.balanceOf(vaultAddr), 0, "No collateral returned after fee-bearing flash loan");
+        assertGt(
+            collateral.balanceOf(vaultAddr),
+            0,
+            "No collateral returned after fee-bearing flash loan"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -731,7 +779,7 @@ contract VaultInvariants is Test {
 
         // ─── Step 1: Alice deposits ───────────────────────────────────────────
         uint256 aliceDeposit = 3e8;
-        uint256 aliceShares  = _deposit(alice, aliceDeposit);
+        uint256 aliceShares = _deposit(alice, aliceDeposit);
         assertGt(strategy.balanceOf(), 0, "Strategy should be funded after Alice's deposit");
 
         // ─── Step 2: Enter idle ───────────────────────────────────────────────
@@ -747,13 +795,13 @@ contract VaultInvariants is Test {
         console.log("Strategy balance:        %d", strategy.balanceOf());
 
         // Position should be unwound
-        assertEq(debtAfterIdle, 0,      "Debt should be 0 after entering idle");
-        assertEq(debtAfterIdle, 0,      "Debt should be 0 after entering idle"); // repeated for clarity
+        assertEq(debtAfterIdle, 0, "Debt should be 0 after entering idle");
+        assertEq(debtAfterIdle, 0, "Debt should be 0 after entering idle"); // repeated for clarity
         assertEq(strategy.balanceOf(), 0, "Strategy should be cleared after entering idle");
 
         // ─── Step 3: Bob deposits during idle ────────────────────────────────
         uint256 bobDeposit = 2e8;
-        uint256 bobShares  = _deposit(bob, bobDeposit);
+        uint256 bobShares = _deposit(bob, bobDeposit);
         assertEq(strategy.balanceOf(), 0, "Strategy should stay 0 in idle mode");
 
         // ─── Step 4: Exit idle — redeploy ────────────────────────────────────
@@ -767,44 +815,44 @@ contract VaultInvariants is Test {
         console.log("Strategy balance:        %d", strategy.balanceOf());
         console.log("Loan manager debt:       %d", loanManager.getCurrentDebt());
 
-        assertGt(loanManager.getCurrentDebt(), 0,      "Position should be re-established");
-        assertGt(strategy.balanceOf(), 0,              "Strategy should be re-funded");
+        assertGt(loanManager.getCurrentDebt(), 0, "Position should be re-established");
+        assertGt(strategy.balanceOf(), 0, "Strategy should be re-funded");
 
         // ─── Step 5: Both redeem ─────────────────────────────────────────────
         uint256 aliceGot = _redeemAll(alice);
-        uint256 bobGot   = _redeemAll(bob);
+        uint256 bobGot = _redeemAll(bob);
 
         console.log("=== IDLE TRANSITION RESULTS ===");
         console.log("Alice deposited: %d sat, received: %d sat", aliceDeposit, aliceGot);
         console.log("Bob   deposited: %d sat, received: %d sat", bobDeposit, bobGot);
         int256 aliceDelta = int256(aliceGot) - int256(aliceDeposit);
-        int256 bobDelta   = int256(bobGot)   - int256(bobDeposit);
+        int256 bobDelta = int256(bobGot) - int256(bobDeposit);
         console.log("Alice delta: %d sat", aliceDelta);
         console.log("Bob   delta: %d sat", bobDelta);
 
         // Both should recover at least 95% (2× slippage budget: enter idle + re-enter)
         assertGe(aliceGot, aliceDeposit * 95 / 100, "Alice recovered <95% through idle transition");
-        assertGe(bobGot,   bobDeposit   * 95 / 100, "Bob recovered <95% depositing into idle vault");
+        assertGe(bobGot, bobDeposit * 95 / 100, "Bob recovered <95% depositing into idle vault");
 
         // Neither user should have extracted value from the other at mode transition.
         // Proportional fairness: ratio of (received/deposited) should be within 5% for both.
         uint256 aliceRatioBps = aliceGot * 10_000 / aliceDeposit;
-        uint256 bobRatioBps   = bobGot   * 10_000 / bobDeposit;
+        uint256 bobRatioBps = bobGot * 10_000 / bobDeposit;
         console.log("Alice recovery bps: %d", aliceRatioBps);
         console.log("Bob   recovery bps: %d", bobRatioBps);
 
-        _assertWithinBps(aliceRatioBps, bobRatioBps, 500, "Idle transition creates unfair value split");
+        _assertWithinBps(
+            aliceRatioBps, bobRatioBps, 500, "Idle transition creates unfair value split"
+        );
 
         // Verify supply is zero after both exit (no orphaned shares)
         assertEq(vault.totalSupply(), 0, "Shares stranded after both users exit");
     }
 
     /// @notice Fuzz: for any deposit sizes, the idle transition stays fair
-    function testFuzz_idleTransition_bothUsersProtected(
-        uint256 rawAlice, uint256 rawBob
-    ) public {
-        uint256 aliceDeposit = bound(rawAlice, 5e7, 5e8);  // 0.5–5 WBTC
-        uint256 bobDeposit   = bound(rawBob,   5e7, 5e8);
+    function testFuzz_idleTransition_bothUsersProtected(uint256 rawAlice, uint256 rawBob) public {
+        uint256 aliceDeposit = bound(rawAlice, 5e7, 5e8); // 0.5–5 WBTC
+        uint256 bobDeposit = bound(rawBob, 5e7, 5e8);
 
         _initFork();
         _patchVaultCode();
@@ -823,13 +871,13 @@ contract VaultInvariants is Test {
         _refreshOracles();
 
         uint256 aliceGot = _redeemAll(alice);
-        uint256 bobGot   = _redeemAll(bob);
+        uint256 bobGot = _redeemAll(bob);
 
         assertGe(aliceGot, aliceDeposit * 95 / 100, "Alice <95% through fuzz idle transition");
-        assertGe(bobGot,   bobDeposit   * 95 / 100, "Bob   <95% through fuzz idle transition");
+        assertGe(bobGot, bobDeposit * 95 / 100, "Bob   <95% through fuzz idle transition");
 
         uint256 aliceRatioBps = aliceGot * 10_000 / aliceDeposit;
-        uint256 bobRatioBps   = bobGot   * 10_000 / bobDeposit;
+        uint256 bobRatioBps = bobGot * 10_000 / bobDeposit;
         _assertWithinBps(aliceRatioBps, bobRatioBps, 500, "Fuzz idle transition unfair");
     }
 }
@@ -852,34 +900,41 @@ contract MockERC20Flash {
     uint256 public totalSupply;
     address public minter;
 
-    constructor(string memory n, string memory s, uint8 d) { name = n; symbol = s; decimals = d; }
+    constructor(string memory n, string memory s, uint8 d) {
+        name = n;
+        symbol = s;
+        decimals = d;
+    }
 
-    function setMinter(address m) external { minter = m; }
+    function setMinter(address m) external {
+        minter = m;
+    }
 
     function mint(address to, uint256 amt) external {
         balanceOf[to] += amt;
-        totalSupply    += amt;
+        totalSupply += amt;
     }
 
     function burnFrom(address from, uint256 amt) external {
         require(balanceOf[from] >= amt, "burn exceeds balance");
         balanceOf[from] -= amt;
-        totalSupply     -= amt;
+        totalSupply -= amt;
     }
 
     function transfer(address to, uint256 amt) external returns (bool) {
         require(balanceOf[msg.sender] >= amt);
         balanceOf[msg.sender] -= amt;
-        balanceOf[to]         += amt;
+        balanceOf[to] += amt;
         return true;
     }
 
     function transferFrom(address from, address to, uint256 amt) external returns (bool) {
-        if (allowance[from][msg.sender] != type(uint256).max)
+        if (allowance[from][msg.sender] != type(uint256).max) {
             allowance[from][msg.sender] -= amt;
+        }
         require(balanceOf[from] >= amt, "ERC20: insufficient");
         balanceOf[from] -= amt;
-        balanceOf[to]   += amt;
+        balanceOf[to] += amt;
         return true;
     }
 
@@ -893,7 +948,10 @@ contract MockSwapper is ISwapper {
     MockERC20Flash public immutable collateralToken;
     MockERC20Flash public immutable debtToken;
 
-    constructor(MockERC20Flash c, MockERC20Flash d) { collateralToken = c; debtToken = d; }
+    constructor(MockERC20Flash c, MockERC20Flash d) {
+        collateralToken = c;
+        debtToken = d;
+    }
 
     /// @dev 1 WBTC ≈ $85,000 → 1 sat = 850 micro-USDT (8-dec in, 6-dec out)
     function quoteCollateralForDebt(uint256 debtAmount) external pure returns (uint256) {
@@ -901,12 +959,18 @@ contract MockSwapper is ISwapper {
     }
 
     /// @dev AaveLoanManager pushes collateral here before calling; we mint debt to caller.
-    function swapCollateralForDebt(uint256 collateralAmount) external returns (uint256 debtReceived) {
+    function swapCollateralForDebt(uint256 collateralAmount)
+        external
+        returns (uint256 debtReceived)
+    {
         debtReceived = collateralAmount * 850;
         debtToken.mint(msg.sender, debtReceived);
     }
 
-    function swapDebtForCollateral(uint256 debtAmount) external returns (uint256 collateralReceived) {
+    function swapDebtForCollateral(uint256 debtAmount)
+        external
+        returns (uint256 collateralReceived)
+    {
         collateralReceived = debtAmount / 850;
         collateralToken.mint(msg.sender, collateralReceived);
     }
@@ -916,13 +980,12 @@ contract MockOracle {
     uint8 public immutable decimals;
     int256 public price;
 
-    constructor(uint8 d, int256 p) { decimals = d; price = p; }
+    constructor(uint8 d, int256 p) {
+        decimals = d;
+        price = p;
+    }
 
-    function latestRoundData()
-        external
-        view
-        returns (uint80, int256, uint256, uint256, uint80)
-    {
+    function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) {
         return (1, price, block.timestamp, block.timestamp, 1);
     }
 }
@@ -942,7 +1005,9 @@ contract FeeAwareAavePool is IAavePool {
         variableDebtToken = MockERC20Flash(v);
     }
 
-    function setFeeBps(uint256 bps) external { feeBps = bps; }
+    function setFeeBps(uint256 bps) external {
+        feeBps = bps;
+    }
 
     function supply(address asset, uint256 amount, address onBehalfOf, uint16) external {
         MockERC20Flash(asset).transferFrom(msg.sender, address(this), amount);
@@ -988,8 +1053,11 @@ contract FeeAwareAavePool is IAavePool {
         MockERC20Flash(asset).transferFrom(receiverAddress, address(this), amount + premium);
     }
 
-    function setUserEMode(uint8) external {}
-    function getUserEMode(address) external pure returns (uint256) { return 0; }
+    function setUserEMode(uint8) external { }
+
+    function getUserEMode(address) external pure returns (uint256) {
+        return 0;
+    }
 }
 
 /// @notice Thin AaveLoanManager subclass wired to the full 14-arg constructor.
@@ -1014,11 +1082,11 @@ contract AaveLoanManagerFlash is AaveLoanManager {
             collOracle_,
             debtOracle_,
             swapper_,
-            7500,   // maxLtvBps
-            8000,   // liquidationThresholdBps
+            7500, // maxLtvBps
+            8000, // liquidationThresholdBps
             vault_,
-            0,      // emodeCategory — disabled
-            3600    // maxCollateralStaleness — 1 hour
+            0, // emodeCategory — disabled
+            3600 // maxCollateralStaleness — 1 hour
         )
-    {}
+    { }
 }

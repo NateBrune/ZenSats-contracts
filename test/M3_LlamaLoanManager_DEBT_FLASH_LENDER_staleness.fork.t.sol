@@ -156,7 +156,8 @@ contract M3_LlamaLoanManager_DEBT_FLASH_LENDER_staleness is ZenjiForkTestBase {
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
             address(swapper),
-            address(0)
+            address(0),
+            3600
         );
 
         llamaVault = new ZenjiWbtcLlamaStakeDao(
@@ -227,10 +228,7 @@ contract M3_LlamaLoanManager_DEBT_FLASH_LENDER_staleness is ZenjiForkTestBase {
         address accountant = IStakeDaoRewardVault(STAKE_DAO_REWARD_VAULT).ACCOUNTANT();
         vm.mockCall(
             accountant,
-            abi.encodeWithSelector(
-                bytes4(keccak256("claim(address)")),
-                STAKE_DAO_REWARD_VAULT
-            ),
+            abi.encodeWithSelector(bytes4(keccak256("claim(address)")), STAKE_DAO_REWARD_VAULT),
             abi.encode()
         );
 
@@ -240,10 +238,7 @@ contract M3_LlamaLoanManager_DEBT_FLASH_LENDER_staleness is ZenjiForkTestBase {
         // Re-apply accountant.claim mock after refreshOracles
         vm.mockCall(
             accountant,
-            abi.encodeWithSelector(
-                bytes4(keccak256("claim(address)")),
-                STAKE_DAO_REWARD_VAULT
-            ),
+            abi.encodeWithSelector(bytes4(keccak256("claim(address)")), STAKE_DAO_REWARD_VAULT),
             abi.encode()
         );
 
@@ -274,8 +269,10 @@ contract M3_LlamaLoanManager_DEBT_FLASH_LENDER_staleness is ZenjiForkTestBase {
         uint256 vaultBtcAfter = IERC20(WBTC).balanceOf(address(llamaVault));
         assertGt(vaultBtcAfter, vaultBtcBefore, "Vault should receive WBTC from partial unwind");
 
-        console.log("M3 PoC: partial unwind succeeded, vault received %d WBTC",
-            vaultBtcAfter - vaultBtcBefore);
+        console.log(
+            "M3 PoC: partial unwind succeeded, vault received %d WBTC",
+            vaultBtcAfter - vaultBtcBefore
+        );
     }
 
     /// @dev M3: Demonstrates the emergency recovery path when flash lender is deprecated.
@@ -298,13 +295,7 @@ contract M3_LlamaLoanManager_DEBT_FLASH_LENDER_staleness is ZenjiForkTestBase {
         // Mock the DEBT_FLASH_LENDER to revert on flashLoan
         vm.mockCall(
             DEBT_FLASH_LENDER,
-            abi.encodeWithSelector(
-                0x1601b8f4,
-                address(llamaManager),
-                CRVUSD,
-                1,
-                new bytes(0)
-            ),
+            abi.encodeWithSelector(0x1601b8f4, address(llamaManager), CRVUSD, 1, new bytes(0)),
             abi.encode(false)
         );
 

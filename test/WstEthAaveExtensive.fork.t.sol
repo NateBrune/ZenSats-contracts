@@ -12,6 +12,12 @@ import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
 /// @title WstEthAaveExtensive
 /// @notice Fork tests for wstETH + USDT + IPOR (Aave) vault configuration
 contract WstEthAaveExtensive is IporVaultStrategyTestBase {
+    /// @dev WstEthOracle composite reports the OLDER feed timestamp; its stETH/ETH leg has a
+    ///      24h Chainlink heartbeat, so the collateral staleness window is 90000s.
+    function _collateralStalenessWarp() internal pure override returns (uint256) {
+        return 90001;
+    }
+
     address constant WSTETH = 0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0;
     address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     address constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
@@ -77,25 +83,54 @@ contract WstEthAaveExtensive is IporVaultStrategyTestBase {
         address expectedVaultAddress = computeCreateAddress(address(this), startNonce + 3);
 
         swapper = new UniswapV3TwoHopSwapper(
-            owner, WSTETH, USDT, WETH, UNISWAP_ROUTER, FEE_WSTETH_WETH, FEE_WETH_USDT,
-            address(wstEthOracle), USDT_USD_ORACLE, 3_600
+            owner,
+            WSTETH,
+            USDT,
+            WETH,
+            UNISWAP_ROUTER,
+            FEE_WSTETH_WETH,
+            FEE_WETH_USDT,
+            address(wstEthOracle),
+            USDT_USD_ORACLE,
+            90000
         );
 
         UsdtIporStrategy strategy = new UsdtIporStrategy(
-            USDT, CRVUSD, expectedVaultAddress, USDT_CRVUSD_POOL, IPOR_PLASMA_VAULT, 0, 1,
-            CRVUSD_USD_ORACLE, USDT_USD_ORACLE
+            USDT,
+            CRVUSD,
+            expectedVaultAddress,
+            USDT_CRVUSD_POOL,
+            IPOR_PLASMA_VAULT,
+            0,
+            1,
+            CRVUSD_USD_ORACLE,
+            USDT_USD_ORACLE
         );
         strategy.transferOwner(owner);
 
         loanManager = new AaveLoanManager(
-            WSTETH, USDT, AAVE_A_WSTETH, AAVE_VAR_DEBT_USDT, AAVE_POOL, address(wstEthOracle),
-            USDT_USD_ORACLE, address(swapper), 7100, 7600, expectedVaultAddress,
+            WSTETH,
+            USDT,
+            AAVE_A_WSTETH,
+            AAVE_VAR_DEBT_USDT,
+            AAVE_POOL,
+            address(wstEthOracle),
+            USDT_USD_ORACLE,
+            address(swapper),
+            7100,
+            7600,
+            expectedVaultAddress,
             0, // eMode: disabled
-            3600
+            90000
         );
 
         vault = new Zenji(
-            WSTETH, USDT, address(loanManager), address(strategy), address(swapper), owner,
+            WSTETH,
+            USDT,
+            address(loanManager),
+            address(strategy),
+            address(swapper),
+            owner,
             address(viewHelper)
         );
         require(address(vault) == expectedVaultAddress, "Vault address mismatch");
@@ -110,8 +145,16 @@ contract WstEthAaveExtensive is IporVaultStrategyTestBase {
     function _newSwapper() internal override returns (address) {
         return address(
             new UniswapV3TwoHopSwapper(
-                owner, WSTETH, USDT, WETH, UNISWAP_ROUTER, FEE_WSTETH_WETH, FEE_WETH_USDT,
-                address(wstEthOracle), USDT_USD_ORACLE, 3_600
+                owner,
+                WSTETH,
+                USDT,
+                WETH,
+                UNISWAP_ROUTER,
+                FEE_WSTETH_WETH,
+                FEE_WETH_USDT,
+                address(wstEthOracle),
+                USDT_USD_ORACLE,
+                90000
             )
         );
     }

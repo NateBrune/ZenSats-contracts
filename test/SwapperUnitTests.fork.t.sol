@@ -99,8 +99,8 @@ contract CbBtcUniswapV3TwoHopSwapperTest is SwapperTestBase {
     // cbBTC/WBTC 0.01% pool: 0xe8f7c89C5eFa061e340f2d2F206EC78FD8f7e124
     // WBTC/USDT  0.3%  pool: 0x9Db9e0e53058C89e5B94e29621a205198648425B
     address constant UNISWAP_ROUTER = 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45;
-    uint24 constant CBBTC_WBTC_FEE = 100;    // 0.01%
-    uint24 constant WBTC_USDT_FEE = 3000;    // 0.3%
+    uint24 constant CBBTC_WBTC_FEE = 100; // 0.01%
+    uint24 constant WBTC_USDT_FEE = 3000; // 0.3%
 
     CbBtcUniswapV3TwoHopSwapper public swapper;
 
@@ -159,8 +159,8 @@ contract UniswapMixedTwoHopSwapperTest is SwapperTestBase {
     address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     address constant UNIVERSAL_ROUTER = 0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af;
     address constant WSTETH_USD_ORACLE = 0xCfE54B5cD566aB89272946F602D76Ea879CAb4a8;
-    uint24 constant FEE_WSTETH_WETH = 100;  // V3 wstETH/WETH 0.01%
-    uint24 constant FEE_ETH_USDT = 500;     // V4 ETH/USDT   0.05%
+    uint24 constant FEE_WSTETH_WETH = 100; // V3 wstETH/WETH 0.01%
+    uint24 constant FEE_ETH_USDT = 500; // V4 ETH/USDT   0.05%
     int24 constant V4_TICK_SPACING = 10;
 
     UniswapMixedTwoHopSwapper public swapper;

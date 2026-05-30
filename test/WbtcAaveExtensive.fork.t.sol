@@ -4,8 +4,9 @@ pragma solidity ^0.8.33;
 import { IporVaultStrategyTestBase } from "./base/IporVaultStrategyTestBase.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
-import { UniversalRouterV3SingleHopSwapper } from
-    "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
+import {
+    UniversalRouterV3SingleHopSwapper
+} from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { UsdtIporStrategy } from "../src/strategies/vault/UsdtIporStrategy.sol";
 import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
 
@@ -58,12 +59,26 @@ contract WbtcAaveExtensive is IporVaultStrategyTestBase {
         address expectedVaultAddress = computeCreateAddress(address(this), startNonce + 3);
 
         swapper = new UniversalRouterV3SingleHopSwapper(
-            owner, WBTC, USDT, UNIVERSAL_ROUTER, WBTC_USDT_V3_FEE, BTC_USD_ORACLE, USDT_USD_ORACLE, 3_600
+            owner,
+            WBTC,
+            USDT,
+            UNIVERSAL_ROUTER,
+            WBTC_USDT_V3_FEE,
+            BTC_USD_ORACLE,
+            USDT_USD_ORACLE,
+            3_600
         );
 
         UsdtIporStrategy strategy = new UsdtIporStrategy(
-            USDT, CRVUSD, expectedVaultAddress, USDT_CRVUSD_POOL, IPOR_PLASMA_VAULT, 0, 1,
-            CRVUSD_USD_ORACLE, USDT_USD_ORACLE
+            USDT,
+            CRVUSD,
+            expectedVaultAddress,
+            USDT_CRVUSD_POOL,
+            IPOR_PLASMA_VAULT,
+            0,
+            1,
+            CRVUSD_USD_ORACLE,
+            USDT_USD_ORACLE
         );
         // Hand off strategy ownership to `owner` so vault.verifyStrategyOwnership()
         // returns true. Not enforced at construction (see Zenji.sol comment) but operationally
@@ -71,14 +86,28 @@ contract WbtcAaveExtensive is IporVaultStrategyTestBase {
         strategy.transferOwner(owner);
 
         loanManager = new AaveLoanManager(
-            WBTC, USDT, AAVE_A_WBTC, AAVE_VAR_DEBT_USDT, AAVE_POOL, BTC_USD_ORACLE,
-            USDT_USD_ORACLE, address(swapper), 7500, 8000, expectedVaultAddress,
+            WBTC,
+            USDT,
+            AAVE_A_WBTC,
+            AAVE_VAR_DEBT_USDT,
+            AAVE_POOL,
+            BTC_USD_ORACLE,
+            USDT_USD_ORACLE,
+            address(swapper),
+            7500,
+            8000,
+            expectedVaultAddress,
             0, // eMode: disabled
             3600
         );
 
         vault = new Zenji(
-            WBTC, USDT, address(loanManager), address(strategy), address(swapper), owner,
+            WBTC,
+            USDT,
+            address(loanManager),
+            address(strategy),
+            address(swapper),
+            owner,
             address(viewHelper)
         );
         require(address(vault) == expectedVaultAddress, "Vault address mismatch");
@@ -101,8 +130,14 @@ contract WbtcAaveExtensive is IporVaultStrategyTestBase {
     function _newSwapper() internal override returns (address) {
         return address(
             new UniversalRouterV3SingleHopSwapper(
-                owner, WBTC, USDT, UNIVERSAL_ROUTER, WBTC_USDT_V3_FEE, BTC_USD_ORACLE,
-                USDT_USD_ORACLE, 3_600
+                owner,
+                WBTC,
+                USDT,
+                UNIVERSAL_ROUTER,
+                WBTC_USDT_V3_FEE,
+                BTC_USD_ORACLE,
+                USDT_USD_ORACLE,
+                3_600
             )
         );
     }

@@ -2,7 +2,9 @@
 pragma solidity ^0.8.33;
 
 import { Test } from "forge-std/Test.sol";
-import { UsdtNgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
+import {
+    UsdtNgCrvUsdLpStakeDaoStrategy
+} from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { IAavePool } from "../src/interfaces/IAavePool.sol";
 import { IFlashLoanSimpleReceiver } from "../src/interfaces/IFlashLoanSimpleReceiver.sol";
@@ -19,16 +21,27 @@ contract MockERC20H4 is ERC20 {
         _dec = dec_;
     }
 
-    function decimals() public view override returns (uint8) { return _dec; }
-    function mint(address to, uint256 amount) external { _mint(to, amount); }
-    function burnFrom(address from, uint256 amount) external { _burn(from, amount); }
+    function decimals() public view override returns (uint8) {
+        return _dec;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function burnFrom(address from, uint256 amount) external {
+        _burn(from, amount);
+    }
 }
 
 contract MockOracleH4 {
     int256 public price;
     uint256 public updatedAt;
 
-    constructor(int256 price_) { price = price_; updatedAt = block.timestamp; }
+    constructor(int256 price_) {
+        price = price_;
+        updatedAt = block.timestamp;
+    }
 
     function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) {
         return (1, price, block.timestamp, updatedAt, 1);
@@ -53,8 +66,13 @@ contract MockLpPoolH4 {
         virtualPrice = 1e18;
     }
 
-    function setVirtualPrice(uint256 vp) external { virtualPrice = vp; }
-    function get_virtual_price() external view returns (uint256) { return virtualPrice; }
+    function setVirtualPrice(uint256 vp) external {
+        virtualPrice = vp;
+    }
+
+    function get_virtual_price() external view returns (uint256) {
+        return virtualPrice;
+    }
 
     function add_liquidity(uint256[] calldata amounts, uint256) external returns (uint256) {
         uint256 c = amounts[uint256(uint128(crvUsdIdx))];
@@ -67,7 +85,8 @@ contract MockLpPoolH4 {
     }
 
     function remove_liquidity_one_coin(uint256 burn_amount, int128, uint256)
-        external returns (uint256)
+        external
+        returns (uint256)
     {
         lpToken.transferFrom(msg.sender, address(this), burn_amount);
         crvUSD.mint(msg.sender, burn_amount);
@@ -84,13 +103,25 @@ contract MockLpPoolH4 {
         return (burn_amount * virtualPrice) / 1e18;
     }
 
-    function N_COINS() external pure returns (uint256) { return 2; }
+    function N_COINS() external pure returns (uint256) {
+        return 2;
+    }
+
     function coins(uint256 i) external view returns (address) {
         return i == uint256(uint128(crvUsdIdx)) ? address(crvUSD) : address(pmUSD);
     }
-    function balances(uint256) external pure returns (uint256) { return 0; }
-    function exchange(int128, int128, uint256, uint256) external pure returns (uint256) { return 0; }
-    function get_dy(int128, int128, uint256) external pure returns (uint256) { return 0; }
+
+    function balances(uint256) external pure returns (uint256) {
+        return 0;
+    }
+
+    function exchange(int128, int128, uint256, uint256) external pure returns (uint256) {
+        return 0;
+    }
+
+    function get_dy(int128, int128, uint256) external pure returns (uint256) {
+        return 0;
+    }
 }
 
 contract MockUsdtCrvUsdPoolH4 {
@@ -103,8 +134,18 @@ contract MockUsdtCrvUsdPoolH4 {
     }
 
     function exchange(int128 i, int128 j, uint256 dx, uint256) external returns (uint256) {
-        if (i == 0 && j == 1) { usdt.transferFrom(msg.sender, address(this), dx); uint256 out = dx * 1e12; crvUSD.mint(msg.sender, out); return out; }
-        if (i == 1 && j == 0) { crvUSD.transferFrom(msg.sender, address(this), dx); uint256 out = dx / 1e12; usdt.mint(msg.sender, out); return out; }
+        if (i == 0 && j == 1) {
+            usdt.transferFrom(msg.sender, address(this), dx);
+            uint256 out = dx * 1e12;
+            crvUSD.mint(msg.sender, out);
+            return out;
+        }
+        if (i == 1 && j == 0) {
+            crvUSD.transferFrom(msg.sender, address(this), dx);
+            uint256 out = dx / 1e12;
+            usdt.mint(msg.sender, out);
+            return out;
+        }
         return 0;
     }
 
@@ -120,12 +161,19 @@ contract MockUsdtCrvUsdPoolH4 {
         return address(0);
     }
 
-    function balances(uint256) external pure returns (uint256) { return 0; }
-    function get_virtual_price() external pure returns (uint256) { return 1e18; }
+    function balances(uint256) external pure returns (uint256) {
+        return 0;
+    }
+
+    function get_virtual_price() external pure returns (uint256) {
+        return 1e18;
+    }
 }
 
 contract MockAccountantH4 {
-    function getPendingRewards(address, address) external pure returns (uint256) { return 0; }
+    function getPendingRewards(address, address) external pure returns (uint256) {
+        return 0;
+    }
     function claim(address[] calldata, bytes[] calldata, address) external { }
 }
 
@@ -139,13 +187,23 @@ contract MockRewardVaultH4 is ERC4626 {
         _accountant = accountant_;
     }
 
-    function ACCOUNTANT() external view returns (address) { return _accountant; }
-    function claim() external returns (uint256[] memory) { return new uint256[](0); }
+    function ACCOUNTANT() external view returns (address) {
+        return _accountant;
+    }
+
+    function claim() external returns (uint256[] memory) {
+        return new uint256[](0);
+    }
 }
 
 contract MockCrvSwapperH4 {
-    function swap(uint256) external pure returns (uint256) { return 0; }
-    function quote(uint256) external pure returns (uint256) { return 0; }
+    function swap(uint256) external pure returns (uint256) {
+        return 0;
+    }
+
+    function quote(uint256) external pure returns (uint256) {
+        return 0;
+    }
 }
 
 // ============ H4 Verification Test ============
@@ -175,8 +233,8 @@ contract H4_VirtualPriceLagTest is Test {
     address vaultAddr;
 
     function setUp() public {
-        usdt    = new MockERC20H4("USDT", "USDT", 6);
-        lpToken = new MockERC20H4("LP",   "LP",   18);
+        usdt = new MockERC20H4("USDT", "USDT", 6);
+        lpToken = new MockERC20H4("LP", "LP", 18);
 
         // BaseNgCrvUsdLpStakeDaoStrategy declares crv, pmUSD, and CRVUSD as `public constant`
         // singleton addresses rather than constructor parameters. The same three mainnet
@@ -190,12 +248,12 @@ contract H4_VirtualPriceLagTest is Test {
         vm.etch(0xD533a949740bb3306d119CC777fa900bA034cd52, erc20Code); // CRV
         vm.etch(0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF, erc20Code); // pmUSD
         crvUSD = MockERC20H4(0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E);
-        crv    = MockERC20H4(0xD533a949740bb3306d119CC777fa900bA034cd52);
-        pmUSD  = MockERC20H4(0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF);
+        crv = MockERC20H4(0xD533a949740bb3306d119CC777fa900bA034cd52);
+        pmUSD = MockERC20H4(0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF);
 
         crvUsdOracle = new MockOracleH4(1e8); // $1.00
-        usdtOracle   = new MockOracleH4(1e8); // $1.00
-        crvOracle    = new MockOracleH4(0.5e8);
+        usdtOracle = new MockOracleH4(1e8); // $1.00
+        crvOracle = new MockOracleH4(0.5e8);
 
         usdtCrvUsdPool = new MockUsdtCrvUsdPoolH4(address(usdt), address(crvUSD));
         lpPool = new MockLpPoolH4(address(crvUSD), address(pmUSD), address(lpToken), 1);
@@ -215,9 +273,9 @@ contract H4_VirtualPriceLagTest is Test {
             address(rewardVault),
             address(crvSwapper),
             makeAddr("gauge"),
-            0,   // usdtIndex
-            1,   // crvUsdIndex
-            1,   // lpCrvUsdIndex (crvUSD at index 1)
+            0, // usdtIndex
+            1, // crvUsdIndex
+            1, // lpCrvUsdIndex (crvUSD at index 1)
             address(crvUsdOracle),
             address(usdtOracle),
             address(crvOracle)
@@ -237,12 +295,12 @@ contract H4_VirtualPriceLagTest is Test {
     function test_H4_cachedVirtualPriceLagUnderstatesNAV() public {
         // Step 1: Record initial state
         uint256 cachedVP_initial = strategy.cachedVirtualPrice();
-        uint256 realVP_initial   = lpPool.get_virtual_price();
-        uint256 navBefore        = strategy.balanceOf();
+        uint256 realVP_initial = lpPool.get_virtual_price();
+        uint256 navBefore = strategy.balanceOf();
 
         assertEq(cachedVP_initial, realVP_initial, "Cache should equal real VP at deployment");
         emit log_named_uint("Initial cachedVP", cachedVP_initial);
-        emit log_named_uint("Initial realVP",   realVP_initial);
+        emit log_named_uint("Initial realVP", realVP_initial);
         emit log_named_uint("Initial NAV (USDT 6-dec)", navBefore);
 
         // Step 2: Simulate real virtual_price jumping 2% (e.g., fee accumulation + external liquidity events)
@@ -258,7 +316,8 @@ contract H4_VirtualPriceLagTest is Test {
 
         // The safe VP used by balanceOf() should be capped at cached + 0.5% = 1.005e18
         // NOT the real 1.02e18
-        uint256 expectedSafeVP = cachedVP_initial + (cachedVP_initial * MAX_VP_DEVIATION) / PRECISION;
+        uint256 expectedSafeVP =
+            cachedVP_initial + (cachedVP_initial * MAX_VP_DEVIATION) / PRECISION;
         emit log_named_uint("Expected safe VP (cached + 0.5%)", expectedSafeVP);
 
         // balanceOf() uses safeVP = 1.005e18, but real is 1.02e18
@@ -269,22 +328,25 @@ contract H4_VirtualPriceLagTest is Test {
 
         // Verify the safe VP cap is working
         // navAfterPriceJump should be based on 1.005e18, not 1.02e18
-        uint256 trueLpBal     = rewardVault.convertToAssets(rewardVault.balanceOf(address(strategy)));
+        uint256 trueLpBal = rewardVault.convertToAssets(rewardVault.balanceOf(address(strategy)));
         uint256 trueNavCrvUsd = (trueLpBal * realVP_2pct) / PRECISION;
         // Convert crvUSD (18 dec) to USDT (6 dec): divide by 1e12 (oracle prices equal at 1:1)
-        uint256 trueNavUsdt   = trueNavCrvUsd / 1e12;
+        uint256 trueNavUsdt = trueNavCrvUsd / 1e12;
 
         uint256 understatedNavCrvUsd = (trueLpBal * expectedSafeVP) / PRECISION;
-        uint256 understatedNavUsdt   = understatedNavCrvUsd / 1e12;
+        uint256 understatedNavUsdt = understatedNavCrvUsd / 1e12;
 
-        emit log_named_uint("True NAV (USDT 6-dec)",        trueNavUsdt);
+        emit log_named_uint("True NAV (USDT 6-dec)", trueNavUsdt);
         emit log_named_uint("Understated NAV (USDT 6-dec)", understatedNavUsdt);
         emit log_named_uint("Understatement delta (USDT 6-dec)", trueNavUsdt - understatedNavUsdt);
 
         // ASSERTION 1: NAV is understated after 2% VP divergence
         // balanceOf() should equal understatedNavUsdt (uses capped VP), not trueNavUsdt
-        assertEq(navAfterPriceJump, understatedNavUsdt,
-            "H4: balanceOf() must use capped VP = understated NAV");
+        assertEq(
+            navAfterPriceJump,
+            understatedNavUsdt,
+            "H4: balanceOf() must use capped VP = understated NAV"
+        );
 
         // Confirm the understatement magnitude is ~1.48% (15,000 USDT on 1,020,000)
         uint256 understamentPct = ((trueNavUsdt - navAfterPriceJump) * 10000) / trueNavUsdt;
@@ -334,20 +396,21 @@ contract H4_VirtualPriceLagTest is Test {
         emit log_named_uint("Cache after update 4", cacheAfter4);
 
         // ASSERTION 2: After 4 calls, cache should have converged to real VP (1.02e18)
-        assertEq(cacheAfter4, realVP_2pct,
-            "H4: Cache must converge to real VP after 4 update calls");
+        assertEq(
+            cacheAfter4, realVP_2pct, "H4: Cache must converge to real VP after 4 update calls"
+        );
 
         // ASSERTION 3: Confirm cache was NOT converged after only 1 update
-        assertLt(cacheAfter1, realVP_2pct,
-            "H4: Cache must still lag after only 1 update");
+        assertLt(cacheAfter1, realVP_2pct, "H4: Cache must still lag after only 1 update");
 
         // ASSERTION 4: Final balanceOf() after convergence must equal true NAV
         uint256 navAfterConvergence = strategy.balanceOf();
         emit log_named_uint("NAV after full convergence", navAfterConvergence);
         // After convergence, should reflect true VP
         // (Note: small deposits add tiny LP too, so we check approximate equality)
-        assertGe(navAfterConvergence, trueNavUsdt,
-            "H4: After convergence, NAV should reflect true VP");
+        assertGe(
+            navAfterConvergence, trueNavUsdt, "H4: After convergence, NAV should reflect true VP"
+        );
 
         emit log("=== H4 CONFIRMED: cachedVirtualPrice lags real VP, causing NAV understatement ===");
         emit log_named_uint("Periods of understatement (N calls needed to converge)", 4);
@@ -371,12 +434,15 @@ contract H4_VirtualPriceLagTest is Test {
         uint256 navAbove05 = strategy.balanceOf();
 
         emit log_named_uint("NAV at exactly 0.5% VP divergence", navAt05);
-        emit log_named_uint("NAV at 0.5%+1wei VP divergence",    navAbove05);
+        emit log_named_uint("NAV at 0.5%+1wei VP divergence", navAbove05);
 
         // At exactly 0.5%, safeVP = realVP = vp_exactly_05pct → navAt05 is accurate
         // At 0.5%+1wei, safeVP is clamped to vp_exactly_05pct → navAbove05 < true NAV
-        assertEq(navAt05, navAbove05,
-            "H4-BOUNDARY: At 0.5% and 0.5%+1wei, safeVP is the same (boundary is inclusive)");
+        assertEq(
+            navAt05,
+            navAbove05,
+            "H4-BOUNDARY: At 0.5% and 0.5%+1wei, safeVP is the same (boundary is inclusive)"
+        );
 
         emit log("H4-BOUNDARY: Clamping boundary confirmed at MAX_VP_DEVIATION");
     }

@@ -40,8 +40,10 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     /// @notice Minimum LLAMMA health required (0.1 = 1e17; liquidation threshold is 0)
     int256 public constant MIN_HEALTH = 1e17;
 
-    /// @notice Maximum acceptable collateral/USD oracle staleness (1 hour)
-    uint256 public constant MAX_ORACLE_STALENESS = 3600;
+    /// @notice Maximum acceptable collateral/USD oracle staleness (seconds), set per-deployment.
+    /// @dev 1h for single Chainlink feeds (e.g. BTC/USD); 25h for composite feeds whose slowest
+    ///      leg has a long heartbeat (e.g. WstEthOracle's stETH/ETH leg — 24h Chainlink heartbeat).
+    uint256 public immutable maxOracleStaleness;
 
     /// @notice Maximum acceptable debt/USD oracle staleness (7 hours — heartbeat is 6 hours)
     uint256 public constant MAX_DEBT_ORACLE_STALENESS = 25200;
@@ -155,7 +157,8 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
         address _collateralOracle,
         address _debtOracle,
         address _swapper,
-        address _vault
+        address _vault,
+        uint256 _maxOracleStaleness
     ) {
         if (
             _collateralAsset == address(0) || _debtAsset == address(0) || _llamaLend == address(0)
@@ -164,6 +167,8 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
         ) {
             revert InvalidAddress();
         }
+        if (_maxOracleStaleness == 0) revert InvalidAddress();
+        maxOracleStaleness = _maxOracleStaleness;
 
         collateralToken = IERC20(_collateralAsset);
         debtToken = IERC20(_debtAsset);
@@ -292,8 +297,9 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
                 llamaLend.repay(repayNow);
             } else {
                 try llamaLend.repay(repayNow) {
-                    // partial repay succeeded
-                } catch {
+                // partial repay succeeded
+                }
+                catch {
                     // Partial repay tripped LlamaLend's dust assertion. Escalate to
                     // full close. If we hold enough debt token, repay all now;
                     // otherwise leave repayNow=0 and let the flashloan path cover
@@ -368,15 +374,18 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
                             bool escalate;
                             try llamaLend.health_calculator(
                                 address(this), -int256(toRemove), 0, true
-                            ) returns (int256 projectedHealth) {
+                            ) returns (
+                                int256 projectedHealth
+                            ) {
                                 if (projectedHealth < MIN_HEALTH) revert HealthTooLow();
                             } catch {
                                 escalate = true;
                             }
                             if (!escalate) {
                                 try llamaLend.remove_collateral(toRemove) {
-                                    // success
-                                } catch {
+                                // success
+                                }
+                                catch {
                                     escalate = true;
                                 }
                             }
@@ -386,14 +395,14 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
                                 uint256 residual = llamaLend.debt(address(this));
                                 if (residual > 0) {
                                     uint256 flashloanAmount = (residual * 10300) / 10000;
-                                    bytes memory dataEsc =
-                                        abi.encode(collateralNeeded, fullyClose);
-                                    IERC3156FlashLender(DEBT_FLASH_LENDER).flashLoan(
-                                        IERC3156FlashBorrower(address(this)),
-                                        address(debtToken),
-                                        flashloanAmount,
-                                        dataEsc
-                                    );
+                                    bytes memory dataEsc = abi.encode(collateralNeeded, fullyClose);
+                                    IERC3156FlashLender(DEBT_FLASH_LENDER)
+                                        .flashLoan(
+                                            IERC3156FlashBorrower(address(this)),
+                                            address(debtToken),
+                                            flashloanAmount,
+                                            dataEsc
+                                        );
                                 }
                             }
                         }
@@ -664,7 +673,7 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
         return OracleLib.getCollateralValue(
             collateralAmount,
             collateralOracle,
-            MAX_ORACLE_STALENESS,
+            maxOracleStaleness,
             debtOracle,
             MAX_DEBT_ORACLE_STALENESS,
             collateralToken
@@ -677,7 +686,7 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
         return OracleLib.getDebtValue(
             debtAmount,
             collateralOracle,
-            MAX_ORACLE_STALENESS,
+            maxOracleStaleness,
             debtOracle,
             MAX_DEBT_ORACLE_STALENESS,
             collateralToken
@@ -687,7 +696,7 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     /// @notice Check oracle freshness (both collateral/USD and debt/USD)
     function _checkOracleFreshness() internal view {
         OracleLib.checkOracleFreshness(
-            collateralOracle, MAX_ORACLE_STALENESS, debtOracle, MAX_DEBT_ORACLE_STALENESS
+            collateralOracle, maxOracleStaleness, debtOracle, MAX_DEBT_ORACLE_STALENESS
         );
     }
 

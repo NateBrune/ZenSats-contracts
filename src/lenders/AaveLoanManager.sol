@@ -371,7 +371,9 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
                 if (toRepay == debt) {
                     // We have enough to clear it all — let Aave handle rounding
                     _ensureApprove(address(debtToken), address(aavePool), type(uint256).max);
-                    aavePool.repay(address(debtToken), type(uint256).max, VARIABLE_RATE_MODE, address(this));
+                    aavePool.repay(
+                        address(debtToken), type(uint256).max, VARIABLE_RATE_MODE, address(this)
+                    );
                 } else {
                     // Not enough to cover full debt — repay what we can
                     _ensureApprove(address(debtToken), address(aavePool), toRepay);

@@ -53,11 +53,7 @@ contract MockOraclehyp1 {
         updatedAt = ts;
     }
 
-    function latestRoundData()
-        external
-        view
-        returns (uint80, int256, uint256, uint256, uint80)
-    {
+    function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) {
         return (roundId, price, updatedAt, updatedAt, answeredInRound);
     }
 }
@@ -111,13 +107,15 @@ contract MockAavePoolhyp1 is IAavePool {
         uint16
     ) external {
         MockERC20hyp1(asset).mint(receiverAddress, amount);
-        IFlashLoanSimpleReceiver(receiverAddress).executeOperation(
-            asset, amount, 0, receiverAddress, params
-        );
+        IFlashLoanSimpleReceiver(receiverAddress)
+            .executeOperation(asset, amount, 0, receiverAddress, params);
         IERC20(asset).transferFrom(receiverAddress, address(this), amount);
     }
-    function setUserEMode(uint8) external {}
-    function getUserEMode(address) external pure returns (uint256) { return 0; }
+    function setUserEMode(uint8) external { }
+
+    function getUserEMode(address) external pure returns (uint256) {
+        return 0;
+    }
 }
 
 contract MockSwapperhyp1 is ISwapper {

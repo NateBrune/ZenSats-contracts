@@ -86,8 +86,11 @@ contract H8MockAavePool is IAavePool {
             .executeOperation(asset, amount, 0, receiverAddress, params);
         IERC20(asset).transferFrom(receiverAddress, address(this), amount);
     }
-    function setUserEMode(uint8) external {}
-    function getUserEMode(address) external pure returns (uint256) { return 0; }
+    function setUserEMode(uint8) external { }
+
+    function getUserEMode(address) external pure returns (uint256) {
+        return 0;
+    }
 }
 
 contract H8MockOracle {
@@ -167,7 +170,8 @@ contract H8_StaleOracle_RemoveCollateral_Test is Test {
         aToken = new H8MockERC20("aCOLL", "aCOLL", 18);
         vDebt = new H8MockERC20("vDEBT", "vDEBT", 18);
 
-        pool = new H8MockAavePool(address(collateral), address(debt), address(aToken), address(vDebt));
+        pool =
+            new H8MockAavePool(address(collateral), address(debt), address(aToken), address(vDebt));
         collateralOracle = new H8MockOracle(8, 1e8); // 1 USD per unit, 8 decimals
         debtOracle = new H8MockOracle(8, 1e8); // 1 USD per unit
         swapper = new H8MockSwapper(address(collateral), address(debt));

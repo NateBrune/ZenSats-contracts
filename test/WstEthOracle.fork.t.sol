@@ -60,7 +60,7 @@ contract WstEthOracleForkTest is Test {
             7600, // liquidationThresholdBps
             vaultAddr,
             0, // eMode: disabled
-            3600
+            90000 // 25h — WstEthOracle's stETH/ETH leg has a 24h heartbeat
         );
     }
 
@@ -86,11 +86,14 @@ contract WstEthOracleForkTest is Test {
         assertEq(roundDataAnswer, latestAns, "latestAnswer != latestRoundData answer");
     }
 
-    /// @notice Oracle updatedAt now tracks ETH/USD feed, not min of both feeds
-    function test_updatedAtTracksEthUsdFeed() public view {
+    /// @notice Oracle updatedAt reports the OLDEST (min) of the two component feeds, so consumers
+    ///         see the true age of the composite. stETH/ETH (24h heartbeat) is normally the older.
+    function test_updatedAtIsMinOfBothFeeds() public view {
         (,,, uint256 oracleUpdatedAt,) = oracle.latestRoundData();
+        (,,, uint256 stEthEthUpdatedAt,) = IChainlinkOracle(STETH_ETH_ORACLE).latestRoundData();
         (,,, uint256 ethUsdUpdatedAt,) = IChainlinkOracle(ETH_USD_ORACLE).latestRoundData();
-        assertEq(oracleUpdatedAt, ethUsdUpdatedAt, "updatedAt should equal ETH/USD updatedAt");
+        uint256 expected = stEthEthUpdatedAt < ethUsdUpdatedAt ? stEthEthUpdatedAt : ethUsdUpdatedAt;
+        assertEq(oracleUpdatedAt, expected, "updatedAt should be min of both feeds");
     }
 
     /// @notice Oracle roundId/answeredInRound track ETH/USD feed
@@ -137,10 +140,10 @@ contract WstEthOracleForkTest is Test {
         }
     }
 
-    /// @notice After 2 hours, the collateral oracle (ETH/USD component) should be stale
+    /// @notice Warping past the ETH/USD component's 2h internal window makes WstEthOracle revert
     function test_checkOracleFreshness_after2h_reverts() public {
-        vm.warp(block.timestamp + 2 hours);
-        vm.expectRevert(); // StaleOracle from ETH/USD being >1h old
+        vm.warp(block.timestamp + 2 hours + 10 minutes);
+        vm.expectRevert(); // WstEthOracle reverts internally: ETH/USD component > 2h old
         loanManager.checkOracleFreshness();
     }
 
@@ -177,9 +180,12 @@ contract WstEthOracleForkTest is Test {
         (, int256 price,, uint256 compositeUpdatedAt,) = oracle.latestRoundData();
         assertGt(price, 0, "Should return valid price");
 
-        // updatedAt should be from ETH/USD, not the stale stETH/ETH
-        (,,, uint256 ethUsdUpdatedAt,) = IChainlinkOracle(ETH_USD_ORACLE).latestRoundData();
-        assertEq(compositeUpdatedAt, ethUsdUpdatedAt, "updatedAt should be ETH/USD, not stETH/ETH");
+        // updatedAt is the OLDER (min) of the two feeds — here the 20h-old stETH/ETH timestamp.
+        assertEq(
+            compositeUpdatedAt,
+            block.timestamp - 72000,
+            "updatedAt should be the older stETH/ETH timestamp"
+        );
     }
 
     // ============ Price sanity ============

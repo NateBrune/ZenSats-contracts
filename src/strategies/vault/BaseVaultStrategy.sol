@@ -60,7 +60,12 @@ abstract contract BaseVaultStrategy is BaseYieldStrategy {
     // ============ Core Flow ============
 
     /// @dev 1) Optionally swap debt → vault asset. 2) Deposit into the vault.
-    function _deposit(uint256 debtAmount) internal virtual override returns (uint256 underlyingDeposited) {
+    function _deposit(uint256 debtAmount)
+        internal
+        virtual
+        override
+        returns (uint256 underlyingDeposited)
+    {
         uint256 vaultAssetAmount = _swapDebtToYieldAsset(debtAmount, slippageTolerance);
         if (vaultAssetAmount == 0) return 0;
         underlyingDeposited = _depositToVault(vaultAssetAmount);
@@ -107,7 +112,10 @@ abstract contract BaseVaultStrategy is BaseYieldStrategy {
 
     /// @notice Deposit `vaultAssetAmount` into the external vault.
     /// @return vaultAssetDeposited Vault-asset value of the shares minted (for event metadata).
-    function _depositToVault(uint256 vaultAssetAmount) internal returns (uint256 vaultAssetDeposited) {
+    function _depositToVault(uint256 vaultAssetAmount)
+        internal
+        returns (uint256 vaultAssetDeposited)
+    {
         _ensureApprove(yieldVault.asset(), address(yieldVault), vaultAssetAmount);
         uint256 sharesMinted = yieldVault.deposit(vaultAssetAmount, address(this));
         vaultAssetDeposited = yieldVault.convertToAssets(sharesMinted);
@@ -147,7 +155,10 @@ abstract contract BaseVaultStrategy is BaseYieldStrategy {
 
     /// @notice Actual debt → vault-asset swap before depositing into the vault.
     /// @dev Default: 1:1 pass-through (no swap needed when debt asset == vault asset).
-    function _swapDebtToYieldAsset(uint256 debtAmount, uint256 /*slippage*/)
+    function _swapDebtToYieldAsset(
+        uint256 debtAmount,
+        uint256 /*slippage*/
+    )
         internal
         virtual
         returns (uint256)
@@ -157,7 +168,10 @@ abstract contract BaseVaultStrategy is BaseYieldStrategy {
 
     /// @notice Actual vault-asset → debt swap after redeeming from the vault.
     /// @dev Default: 1:1 pass-through.
-    function _swapYieldAssetToDebt(uint256 vaultAssetAmount, uint256 /*slippage*/)
+    function _swapYieldAssetToDebt(
+        uint256 vaultAssetAmount,
+        uint256 /*slippage*/
+    )
         internal
         virtual
         returns (uint256)

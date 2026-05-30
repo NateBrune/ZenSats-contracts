@@ -140,13 +140,12 @@ contract CH3MockAavePool is IAavePool {
         uint16
     ) external {
         CH3MockERC20(asset).mint(receiverAddress, amount);
-        IFlashLoanSimpleReceiver(receiverAddress).executeOperation(
-            asset, amount, 0, receiverAddress, params
-        );
+        IFlashLoanSimpleReceiver(receiverAddress)
+            .executeOperation(asset, amount, 0, receiverAddress, params);
         IERC20(asset).transferFrom(receiverAddress, address(this), amount);
     }
 
-    function setUserEMode(uint8) external {}
+    function setUserEMode(uint8) external { }
 
     function getUserEMode(address) external pure returns (uint256) {
         return 0;
@@ -276,7 +275,11 @@ contract VerifyCH3_SilentLiquidation is Test {
 
         // === VERIFY: Zenji's getHealth() is UNCHANGED (uses immutable threshold) ===
         int256 zenjiHealthAfter = manager.getHealth();
-        assertEq(zenjiHealthAfter, zenjiHealthBefore, "Zenji health should NOT change - uses immutable threshold");
+        assertEq(
+            zenjiHealthAfter,
+            zenjiHealthBefore,
+            "Zenji health should NOT change - uses immutable threshold"
+        );
         assertGt(zenjiHealthAfter, 1e18, "Zenji STILL reports healthy");
 
         emit log_named_int("Zenji health AFTER threshold change (unchanged)", zenjiHealthAfter);
@@ -289,7 +292,8 @@ contract VerifyCH3_SilentLiquidation is Test {
         //
         // Since getHealth() returned zenjiHealthBefore using 8000 threshold,
         // the real Aave HF with 6500 threshold = zenjiHealthBefore * 6500 / 8000
-        int256 aaveRealHealth = (zenjiHealthBefore * int256(NEW_AAVE_THRESHOLD)) / int256(DEPLOY_THRESHOLD);
+        int256 aaveRealHealth =
+            (zenjiHealthBefore * int256(NEW_AAVE_THRESHOLD)) / int256(DEPLOY_THRESHOLD);
 
         emit log_named_int("Aave REAL health (with new threshold)", aaveRealHealth);
 
@@ -346,7 +350,11 @@ contract VerifyCH3_SilentLiquidation is Test {
     /// there is NO function to update it after deployment.
     function test_CH3_noUpdateMechanism() public view {
         // The liquidationThresholdBps is immutable - verify it matches deployment value
-        assertEq(manager.liquidationThresholdBps(), DEPLOY_THRESHOLD, "Threshold is immutable at deploy value");
+        assertEq(
+            manager.liquidationThresholdBps(),
+            DEPLOY_THRESHOLD,
+            "Threshold is immutable at deploy value"
+        );
 
         // There is no setLiquidationThreshold(), no updateRiskParams(), no sync function.
         // The only way to update would be to deploy a new AaveLoanManager

@@ -99,7 +99,8 @@ contract DeployWbtcLlamaStakeDao is Script {
             BTC_USD_ORACLE,
             CRVUSD_USD_ORACLE,
             address(swapper),
-            address(0)
+            address(0),
+            3600
         );
 
         ZenjiWbtcLlamaStakeDao vault = new ZenjiWbtcLlamaStakeDao(

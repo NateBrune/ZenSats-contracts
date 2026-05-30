@@ -160,6 +160,7 @@ contract EmDoSMockAavePool is IAavePool {
     }
 
     function setUserEMode(uint8) external { }
+
     function getUserEMode(address) external pure returns (uint256) {
         return 0;
     }
@@ -264,375 +265,377 @@ contract EmDoSMockStrategy is IYieldStrategy {
     function updateCachedVirtualPrice() external { }
 }
 
-/// @notice Mock swapper
-contract EmDoSMockSwapper is ISwapper {
-    EmDoSMockERC20 public immutable collateralToken;
-    EmDoSMockERC20 public immutable debtToken;
+    /// @notice Mock swapper
+    contract EmDoSMockSwapper is ISwapper {
+        EmDoSMockERC20 public immutable collateralToken;
+        EmDoSMockERC20 public immutable debtToken;
 
-    constructor(address _collateral, address _debt) {
-        collateralToken = EmDoSMockERC20(_collateral);
-        debtToken = EmDoSMockERC20(_debt);
+        constructor(address _collateral, address _debt) {
+            collateralToken = EmDoSMockERC20(_collateral);
+            debtToken = EmDoSMockERC20(_debt);
+        }
+
+        function quoteCollateralForDebt(uint256 debtAmount) external pure returns (uint256) {
+            return debtAmount;
+        }
+
+        function swapCollateralForDebt(uint256 collateralAmount) external returns (uint256) {
+            debtToken.mint(msg.sender, collateralAmount);
+            return collateralAmount;
+        }
+
+        function swapDebtForCollateral(uint256 debtAmount) external returns (uint256) {
+            collateralToken.mint(msg.sender, debtAmount);
+            return debtAmount;
+        }
+
+        function slippage() external pure returns (uint256) {
+            return 1e16;
+        }
     }
 
-    function quoteCollateralForDebt(uint256 debtAmount) external pure returns (uint256) {
-        return debtAmount;
-    }
+    // ============ Minimal Zenji stub with full AaveLoanManager ============
 
-    function swapCollateralForDebt(uint256 collateralAmount) external returns (uint256) {
-        debtToken.mint(msg.sender, collateralAmount);
-        return collateralAmount;
-    }
+    /// @notice Minimal Zenji-compatible vault for emergency testing.
+    /// Uses real AaveLoanManager so oracle freshness checks are real.
+    contract EmDoSMinimalVault {
+        address public guardian;
+        AaveLoanManager public loanManager;
+        EmDoSMockStrategy public strategy;
+        EmDoSMockERC20 public collateral;
+        EmDoSMockERC20 public debtAsset;
+        EmDoSMockSwapper public swapper;
 
-    function swapDebtForCollateral(uint256 debtAmount) external returns (uint256) {
-        collateralToken.mint(msg.sender, debtAmount);
-        return debtAmount;
-    }
+        bool public emergencyMode;
 
-    function slippage() external pure returns (uint256) {
-        return 1e16;
-    }
-}
+        constructor(
+            address _guardian,
+            address _loanManager,
+            address _strategy,
+            address _collateral,
+            address _debtAsset,
+            address _swapper
+        ) {
+            guardian = _guardian;
+            loanManager = AaveLoanManager(_loanManager);
+            strategy = EmDoSMockStrategy(_strategy);
+            collateral = EmDoSMockERC20(_collateral);
+            debtAsset = EmDoSMockERC20(_debtAsset);
+            swapper = EmDoSMockSwapper(_swapper);
+        }
 
-// ============ Minimal Zenji stub with full AaveLoanManager ============
+        modifier onlyGuardian() {
+            require(msg.sender == guardian, "not guardian");
+            _;
+        }
 
-/// @notice Minimal Zenji-compatible vault for emergency testing.
-/// Uses real AaveLoanManager so oracle freshness checks are real.
-contract EmDoSMinimalVault {
-    address public guardian;
-    AaveLoanManager public loanManager;
-    EmDoSMockStrategy public strategy;
-    EmDoSMockERC20 public collateral;
-    EmDoSMockERC20 public debtAsset;
-    EmDoSMockSwapper public swapper;
+        function enterEmergencyMode() external onlyGuardian {
+            require(!emergencyMode, "already in emergency");
+            emergencyMode = true;
+        }
 
-    bool public emergencyMode;
-
-    constructor(
-        address _guardian,
-        address _loanManager,
-        address _strategy,
-        address _collateral,
-        address _debtAsset,
-        address _swapper
-    ) {
-        guardian = _guardian;
-        loanManager = AaveLoanManager(_loanManager);
-        strategy = EmDoSMockStrategy(_strategy);
-        collateral = EmDoSMockERC20(_collateral);
-        debtAsset = EmDoSMockERC20(_debtAsset);
-        swapper = EmDoSMockSwapper(_swapper);
-    }
-
-    modifier onlyGuardian() {
-        require(msg.sender == guardian, "not guardian");
-        _;
-    }
-
-    function enterEmergencyMode() external onlyGuardian {
-        require(!emergencyMode, "already in emergency");
-        emergencyMode = true;
-    }
-
-    /// @notice Simulates emergencyStep(0): withdrawYield with try/catch
-    /// Returns true on success, reverts if the strategy itself reverts outside try/catch scope
-    function emergencyStep0_withdrawYield() external onlyGuardian returns (bool success) {
-        require(emergencyMode, "not in emergency");
-        // Exact replica of ZenjiCoreLib.executeEmergencyStep step==0:
-        // try/catch wraps both calls — any revert is swallowed
-        try strategy.withdrawAll() returns (uint256) {
-            success = true;
-        } catch {
-            try strategy.emergencyWithdraw() returns (uint256) {
+        /// @notice Simulates emergencyStep(0): withdrawYield with try/catch
+        /// Returns true on success, reverts if the strategy itself reverts outside try/catch scope
+        function emergencyStep0_withdrawYield() external onlyGuardian returns (bool success) {
+            require(emergencyMode, "not in emergency");
+            // Exact replica of ZenjiCoreLib.executeEmergencyStep step==0:
+            // try/catch wraps both calls — any revert is swallowed
+            try strategy.withdrawAll() returns (uint256) {
                 success = true;
             } catch {
-                success = false; // both failed, but NO revert propagated
+                try strategy.emergencyWithdraw() returns (uint256) {
+                    success = true;
+                } catch {
+                    success = false; // both failed, but NO revert propagated
+                }
             }
+            // success=false is still a valid return (not a revert)
         }
-        // success=false is still a valid return (not a revert)
+
+        /// @notice Simulates emergencyStep(1): unwindLoan — calls loanManager.unwindPosition
+        /// This calls AaveLoanManager._checkOracleFreshness() which is real code
+        function emergencyStep1_unwindLoan() external onlyGuardian {
+            require(emergencyMode, "not in emergency");
+            // Exact call path: ZenjiCoreLib step==1 => loanManager.unwindPosition(type(uint256).max)
+            loanManager.unwindPosition(type(uint256).max);
+        }
     }
 
-    /// @notice Simulates emergencyStep(1): unwindLoan — calls loanManager.unwindPosition
-    /// This calls AaveLoanManager._checkOracleFreshness() which is real code
-    function emergencyStep1_unwindLoan() external onlyGuardian {
-        require(emergencyMode, "not in emergency");
-        // Exact call path: ZenjiCoreLib step==1 => loanManager.unwindPosition(type(uint256).max)
-        loanManager.unwindPosition(type(uint256).max);
+    // ============ Test Contract ============
+
+    contract VerifyH1_EmergencyDoSTest is Test {
+        // Real AaveLoanManager components
+        EmDoSMockERC20 collateral; // WBTC: 8 decimals
+        EmDoSMockERC20 debt; // USDT: 6 decimals
+        EmDoSMockERC20 aToken;
+        EmDoSMockERC20 vDebt;
+        EmDoSMockAavePool pool;
+        EmDoSMockOracle btcOracle; // BTC/USD, 8 decimals, 1h heartbeat
+        EmDoSMockOracle usdtOracle; // USDT/USD, 8 decimals, 25h heartbeat
+        EmDoSMockSwapper swapper;
+        AaveLoanManager aaveManager;
+        EmDoSMockStrategy strategy;
+        EmDoSMinimalVault vault;
+
+        address guardian = makeAddr("guardian");
+
+        // BTC/USD oracle: 1h staleness window (maxCollateralOracleStaleness = 3600)
+        uint256 constant BTC_STALENESS = 3600; // 1 hour
+        // USDT/USD oracle: 25h staleness window (MAX_DEBT_ORACLE_STALENESS = 90000)
+        uint256 constant USDT_STALENESS = 90_000; // 25 hours
+
+        // Loan parameters
+        uint256 constant COLLATERAL = 100e8; // 100 WBTC
+        uint256 constant DEBT = 65_000e6; // 65,000 USDT (~65% LTV at $100k/BTC)
+
+        function setUp() public {
+            // Deploy tokens
+            collateral = new EmDoSMockERC20("WBTC", "WBTC", 8);
+            debt = new EmDoSMockERC20("USDT", "USDT", 6);
+            aToken = new EmDoSMockERC20("aWBTC", "aWBTC", 8);
+            vDebt = new EmDoSMockERC20("vUSDT", "vUSDT", 6);
+
+            // Deploy pool
+            pool = new EmDoSMockAavePool(
+                address(collateral), address(debt), address(aToken), address(vDebt)
+            );
+
+            // Deploy oracles with fresh prices
+            btcOracle = new EmDoSMockOracle(8, 100_000e8); // $100,000/BTC
+            usdtOracle = new EmDoSMockOracle(8, 1e8); // $1.00/USDT
+
+            // Deploy swapper
+            swapper = new EmDoSMockSwapper(address(collateral), address(debt));
+
+            // Deploy real AaveLoanManager (vault = address(this) initially, will be vault contract)
+            aaveManager = new AaveLoanManager(
+                address(collateral),
+                address(debt),
+                address(aToken),
+                address(vDebt),
+                address(pool),
+                address(btcOracle),
+                address(usdtOracle),
+                address(swapper),
+                7500, // maxLtvBps: 75%
+                8000, // liquidationThresholdBps: 80%
+                address(0), // vault = deferred
+                0, // eMode disabled
+                BTC_STALENESS // 1 hour staleness for BTC/USD
+            );
+
+            // Deploy strategy
+            strategy = new EmDoSMockStrategy(address(debt));
+
+            // Deploy vault stub
+            vault = new EmDoSMinimalVault(
+                guardian,
+                address(aaveManager),
+                address(strategy),
+                address(collateral),
+                address(debt),
+                address(swapper)
+            );
+
+            // Initialize loan manager with vault
+            aaveManager.initializeVault(address(vault));
+            strategy.initializeVault(address(vault));
+
+            // Create initial loan: 100 WBTC collateral, 65k USDT debt
+            // Mint collateral to vault (which sends to loan manager)
+            collateral.mint(address(vault), COLLATERAL);
+
+            // vault needs to send collateral to loan manager for createLoan
+            // Since our minimal vault doesn't have createLoan, we simulate by minting directly
+            // to the AaveLoanManager and calling createLoan from vault address
+            collateral.mint(address(aaveManager), COLLATERAL);
+            vm.prank(address(vault));
+            aaveManager.createLoan(COLLATERAL, DEBT);
+
+            // Seed strategy with some USDT (simulating deployed debt)
+            debt.mint(address(strategy), 65_000e6);
+            strategy.setBalance(65_000e6);
+
+            // Enter emergency mode
+            vm.prank(guardian);
+            vault.enterEmergencyMode();
+
+            // Verify initial state: loan exists
+            assertTrue(aaveManager.loanExists(), "loan should exist");
+            assertEq(aToken.balanceOf(address(aaveManager)), COLLATERAL, "aToken balance");
+            assertEq(vDebt.balanceOf(address(aaveManager)), DEBT, "vDebt balance");
+        }
+
+        // ============ PHASE 1: ATTACKER perspective ============
+
+        /// @notice Test emergencyStep(0) behavior when ONLY crvUSD oracle is stale
+        /// Expectation: step 0 SUCCEEDS (try/catch swallows strategy revert)
+        function testH1_Step0_CrvUsdOracleStale_Succeeds() public {
+            // Make crvUSD oracle stale in the strategy
+            strategy.setCrvUsdOracleStale(true);
+
+            // emergencyStep(0) calls withdrawAll/emergencyWithdraw in try/catch
+            // Even if strategy.balanceOf() would revert, withdrawAll() itself does NOT call balanceOf
+            // The actual NgCrvUsdLpStakeDaoStrategy._emergencyWithdraw() doesn't call balanceOf either
+            // So step 0 SUCCEEDS
+            vm.prank(guardian);
+            bool success = vault.emergencyStep0_withdrawYield();
+
+            // The step completes — either withdrawAll succeeded or the catch caught it
+            // Either way, no revert propagates to the caller
+            console.log("Step 0 completed, success flag:", success);
+            console.log("CONFIRMED: Step 0 is NOT blocked by stale crvUSD oracle (try/catch)");
+        }
+
+        /// @notice Test emergencyStep(1) behavior when BTC/USD oracle is stale
+        /// Expectation: step 1 REVERTS with StaleOracle
+        function testH1_Step1_BtcOracleStale_Reverts() public {
+            // Advance time past BTC/USD staleness window (3600s = 1 hour)
+            vm.warp(block.timestamp + BTC_STALENESS + 1);
+
+            // emergencyStep(1) => loanManager.unwindPosition(type(uint256).max)
+            //   => AaveLoanManager._checkOracleFreshness() at L221
+            //   => OracleLib.checkOracleFreshness(btcOracle, 3600, usdtOracle, 90000)
+            //   => _validatedPrice(btcOracle, 3600): block.timestamp - updatedAt = 3601 > 3600 => StaleOracle
+            vm.prank(guardian);
+            vm.expectRevert(OracleLib.StaleOracle.selector);
+            vault.emergencyStep1_unwindLoan();
+
+            console.log("CONFIRMED: Step 1 reverts with StaleOracle when BTC/USD oracle is stale");
+            console.log("Time warped:", BTC_STALENESS + 1, "seconds past BTC staleness window");
+        }
+
+        /// @notice Dual oracle stale: both BTC/USD (stale) and crvUSD (stale)
+        /// Step 1 still reverts (BTC oracle check fires first in unwindPosition)
+        function testH1_DualOracleStale_Step1_Reverts() public {
+            // Make both oracles stale
+            strategy.setCrvUsdOracleStale(true);
+            vm.warp(block.timestamp + BTC_STALENESS + 1);
+
+            // Step 0: succeeds (try/catch protects it)
+            vm.prank(guardian);
+            bool step0Success = vault.emergencyStep0_withdrawYield();
+            console.log("Step 0 result (dual stale):", step0Success, "(no revert)");
+
+            // Step 1: reverts on BTC oracle (the CRITICAL blocker)
+            vm.prank(guardian);
+            vm.expectRevert(OracleLib.StaleOracle.selector);
+            vault.emergencyStep1_unwindLoan();
+
+            console.log("CONFIRMED: Step 1 REVERTS even with dual-oracle staleness");
+            console.log("BTC/USD staleness alone is sufficient to block emergencyStep(1)");
+        }
+
+        // ============ PHASE 2: DEFENDER perspective ============
+
+        /// @notice Does emergencySkipStep require oracle freshness? NO.
+        /// emergencySkipStep() in Zenji.sol only checks emergencyMode and liquidationComplete
+        /// No oracle call in that function.
+        function testH1_SkipStepRequiresNoOracle() public {
+            // In the real Zenji contract this is a no-op bitmask operation:
+            //   emergencyStepsCompleted |= (step == 0 ? 0x1 : 0x2)
+            // We verify by checking Zenji.sol code path — no oracle call exists in emergencySkipStep
+
+            // Warp past staleness
+            vm.warp(block.timestamp + BTC_STALENESS + 1);
+
+            // emergencyStep(1) would revert:
+            vm.prank(guardian);
+            vm.expectRevert(OracleLib.StaleOracle.selector);
+            vault.emergencyStep1_unwindLoan();
+
+            // But in real Zenji, guardian could call emergencySkipStep(1) here
+            // That function: emergencyStepsCompleted |= 0x2; emit EmergencyStepSkipped(1)
+            // No oracle check. HOWEVER: this strands the WBTC in Aave.
+            console.log("CONFIRMED: emergencySkipStep() bypasses oracle check but strands WBTC");
+        }
+
+        /// @notice Impact quantification: what happens to WBTC if step 1 is skipped?
+        /// At $10M TVL, 65% LTV: $10M WBTC in Aave, $6.5M USDT debt
+        function testH1_ImpactQuantification() public {
+            // Initial state
+            uint256 lockedCollateral = aToken.balanceOf(address(aaveManager));
+            uint256 lockedDebt = vDebt.balanceOf(address(aaveManager));
+
+            // BTC price: $100k, so 100 WBTC = $10M
+            uint256 btcPriceUsd = 100_000;
+            uint256 lockedCollateralUsd = (lockedCollateral * btcPriceUsd) / 1e8;
+
+            console.log("--- Impact at 100 WBTC ($10M TVL) ---");
+            console.log("WBTC locked in Aave (sats):", lockedCollateral);
+            console.log("WBTC locked in Aave (USD):", lockedCollateralUsd);
+            console.log("USDT debt outstanding:", lockedDebt);
+            console.log("USDT debt (USD):", lockedDebt / 1e6);
+            console.log("LTV:", (lockedDebt * 100) / (lockedCollateralUsd * 1e6), "%");
+
+            // If BTC oracle is stale > 1 hour and guardian calls emergencySkipStep(1):
+            // - All $10M WBTC remains locked in Aave with no recovery path via normal emergency steps
+            // - Users in emergency mode cannot redeem (emergencyMode blocks normal redeem)
+            // - Only path: emergencyRescue(0) which calls loanManager.transferCollateral
+            //   which calls aavePool.withdraw() — but Aave's own circuit breakers may also block this
+
+            assertEq(lockedCollateralUsd, 10_000_000, "10M USD locked in Aave");
+
+            console.log("HARM: $10M WBTC stranded if guardian forced to skip step 1");
+            console.log(
+                "Guardian alternative: wait for oracle refresh (Chainlink updates within 3600s)"
+            );
+            console.log(
+                "BUT: oracle staleness scenario implies Chainlink is down - may not refresh soon"
+            );
+        }
+
+        // ============ PHASE 3: Verdict ============
+
+        /// @notice Full scenario: BTC oracle goes stale; step 1 is completely blocked
+        /// Proves the assertion chain with concrete state transitions
+        function testH1_FullScenario_Step1BlockedByBtcOracle() public {
+            uint256 initialCollateral = aToken.balanceOf(address(aaveManager));
+            uint256 initialDebt = vDebt.balanceOf(address(aaveManager));
+
+            console.log("--- Before oracle staleness ---");
+            console.log("aToken (WBTC in Aave):", initialCollateral);
+            console.log("vDebt (USDT owed):", initialDebt);
+
+            // Oracle freshness check passes normally
+            aaveManager.checkOracleFreshness(); // should not revert
+
+            // Warp past BTC staleness window
+            uint256 staleTime = BTC_STALENESS + 1;
+            vm.warp(block.timestamp + staleTime);
+
+            console.log("--- After warping", staleTime, "seconds ---");
+            console.log(
+                "BTC/USD oracle is now stale (updatedAt was", block.timestamp - staleTime, ")"
+            );
+            console.log("BTC staleness limit:", BTC_STALENESS, "seconds");
+
+            // Confirm oracle is now stale
+            vm.expectRevert(OracleLib.StaleOracle.selector);
+            aaveManager.checkOracleFreshness();
+            console.log("Oracle freshness check: REVERTS with StaleOracle");
+
+            // Step 1 cannot execute
+            vm.prank(guardian);
+            vm.expectRevert(OracleLib.StaleOracle.selector);
+            vault.emergencyStep1_unwindLoan();
+            console.log("emergencyStep(1): REVERTS with StaleOracle");
+
+            // State unchanged — WBTC still locked in Aave
+            assertEq(
+                aToken.balanceOf(address(aaveManager)),
+                initialCollateral,
+                "WBTC still locked: unwindPosition never executed"
+            );
+            assertEq(
+                vDebt.balanceOf(address(aaveManager)),
+                initialDebt,
+                "debt still outstanding: loan not unwound"
+            );
+
+            console.log("--- After failed emergencyStep(1) ---");
+            console.log("WBTC still in Aave:", aToken.balanceOf(address(aaveManager)));
+            console.log("USDT debt still outstanding:", vDebt.balanceOf(address(aaveManager)));
+            console.log("HARM PROVEN: $10M WBTC cannot be recovered via emergencyStep(1)");
+        }
     }
-}
-
-// ============ Test Contract ============
-
-contract VerifyH1_EmergencyDoSTest is Test {
-    // Real AaveLoanManager components
-    EmDoSMockERC20 collateral; // WBTC: 8 decimals
-    EmDoSMockERC20 debt; // USDT: 6 decimals
-    EmDoSMockERC20 aToken;
-    EmDoSMockERC20 vDebt;
-    EmDoSMockAavePool pool;
-    EmDoSMockOracle btcOracle; // BTC/USD, 8 decimals, 1h heartbeat
-    EmDoSMockOracle usdtOracle; // USDT/USD, 8 decimals, 25h heartbeat
-    EmDoSMockSwapper swapper;
-    AaveLoanManager aaveManager;
-    EmDoSMockStrategy strategy;
-    EmDoSMinimalVault vault;
-
-    address guardian = makeAddr("guardian");
-
-    // BTC/USD oracle: 1h staleness window (maxCollateralOracleStaleness = 3600)
-    uint256 constant BTC_STALENESS = 3600; // 1 hour
-    // USDT/USD oracle: 25h staleness window (MAX_DEBT_ORACLE_STALENESS = 90000)
-    uint256 constant USDT_STALENESS = 90_000; // 25 hours
-
-    // Loan parameters
-    uint256 constant COLLATERAL = 100e8; // 100 WBTC
-    uint256 constant DEBT = 65_000e6; // 65,000 USDT (~65% LTV at $100k/BTC)
-
-    function setUp() public {
-        // Deploy tokens
-        collateral = new EmDoSMockERC20("WBTC", "WBTC", 8);
-        debt = new EmDoSMockERC20("USDT", "USDT", 6);
-        aToken = new EmDoSMockERC20("aWBTC", "aWBTC", 8);
-        vDebt = new EmDoSMockERC20("vUSDT", "vUSDT", 6);
-
-        // Deploy pool
-        pool = new EmDoSMockAavePool(
-            address(collateral), address(debt), address(aToken), address(vDebt)
-        );
-
-        // Deploy oracles with fresh prices
-        btcOracle = new EmDoSMockOracle(8, 100_000e8); // $100,000/BTC
-        usdtOracle = new EmDoSMockOracle(8, 1e8); // $1.00/USDT
-
-        // Deploy swapper
-        swapper = new EmDoSMockSwapper(address(collateral), address(debt));
-
-        // Deploy real AaveLoanManager (vault = address(this) initially, will be vault contract)
-        aaveManager = new AaveLoanManager(
-            address(collateral),
-            address(debt),
-            address(aToken),
-            address(vDebt),
-            address(pool),
-            address(btcOracle),
-            address(usdtOracle),
-            address(swapper),
-            7500, // maxLtvBps: 75%
-            8000, // liquidationThresholdBps: 80%
-            address(0), // vault = deferred
-            0, // eMode disabled
-            BTC_STALENESS // 1 hour staleness for BTC/USD
-        );
-
-        // Deploy strategy
-        strategy = new EmDoSMockStrategy(address(debt));
-
-        // Deploy vault stub
-        vault = new EmDoSMinimalVault(
-            guardian,
-            address(aaveManager),
-            address(strategy),
-            address(collateral),
-            address(debt),
-            address(swapper)
-        );
-
-        // Initialize loan manager with vault
-        aaveManager.initializeVault(address(vault));
-        strategy.initializeVault(address(vault));
-
-        // Create initial loan: 100 WBTC collateral, 65k USDT debt
-        // Mint collateral to vault (which sends to loan manager)
-        collateral.mint(address(vault), COLLATERAL);
-
-        // vault needs to send collateral to loan manager for createLoan
-        // Since our minimal vault doesn't have createLoan, we simulate by minting directly
-        // to the AaveLoanManager and calling createLoan from vault address
-        collateral.mint(address(aaveManager), COLLATERAL);
-        vm.prank(address(vault));
-        aaveManager.createLoan(COLLATERAL, DEBT);
-
-        // Seed strategy with some USDT (simulating deployed debt)
-        debt.mint(address(strategy), 65_000e6);
-        strategy.setBalance(65_000e6);
-
-        // Enter emergency mode
-        vm.prank(guardian);
-        vault.enterEmergencyMode();
-
-        // Verify initial state: loan exists
-        assertTrue(aaveManager.loanExists(), "loan should exist");
-        assertEq(aToken.balanceOf(address(aaveManager)), COLLATERAL, "aToken balance");
-        assertEq(vDebt.balanceOf(address(aaveManager)), DEBT, "vDebt balance");
-    }
-
-    // ============ PHASE 1: ATTACKER perspective ============
-
-    /// @notice Test emergencyStep(0) behavior when ONLY crvUSD oracle is stale
-    /// Expectation: step 0 SUCCEEDS (try/catch swallows strategy revert)
-    function testH1_Step0_CrvUsdOracleStale_Succeeds() public {
-        // Make crvUSD oracle stale in the strategy
-        strategy.setCrvUsdOracleStale(true);
-
-        // emergencyStep(0) calls withdrawAll/emergencyWithdraw in try/catch
-        // Even if strategy.balanceOf() would revert, withdrawAll() itself does NOT call balanceOf
-        // The actual NgCrvUsdLpStakeDaoStrategy._emergencyWithdraw() doesn't call balanceOf either
-        // So step 0 SUCCEEDS
-        vm.prank(guardian);
-        bool success = vault.emergencyStep0_withdrawYield();
-
-        // The step completes — either withdrawAll succeeded or the catch caught it
-        // Either way, no revert propagates to the caller
-        console.log("Step 0 completed, success flag:", success);
-        console.log("CONFIRMED: Step 0 is NOT blocked by stale crvUSD oracle (try/catch)");
-    }
-
-    /// @notice Test emergencyStep(1) behavior when BTC/USD oracle is stale
-    /// Expectation: step 1 REVERTS with StaleOracle
-    function testH1_Step1_BtcOracleStale_Reverts() public {
-        // Advance time past BTC/USD staleness window (3600s = 1 hour)
-        vm.warp(block.timestamp + BTC_STALENESS + 1);
-
-        // emergencyStep(1) => loanManager.unwindPosition(type(uint256).max)
-        //   => AaveLoanManager._checkOracleFreshness() at L221
-        //   => OracleLib.checkOracleFreshness(btcOracle, 3600, usdtOracle, 90000)
-        //   => _validatedPrice(btcOracle, 3600): block.timestamp - updatedAt = 3601 > 3600 => StaleOracle
-        vm.prank(guardian);
-        vm.expectRevert(OracleLib.StaleOracle.selector);
-        vault.emergencyStep1_unwindLoan();
-
-        console.log("CONFIRMED: Step 1 reverts with StaleOracle when BTC/USD oracle is stale");
-        console.log("Time warped:", BTC_STALENESS + 1, "seconds past BTC staleness window");
-    }
-
-    /// @notice Dual oracle stale: both BTC/USD (stale) and crvUSD (stale)
-    /// Step 1 still reverts (BTC oracle check fires first in unwindPosition)
-    function testH1_DualOracleStale_Step1_Reverts() public {
-        // Make both oracles stale
-        strategy.setCrvUsdOracleStale(true);
-        vm.warp(block.timestamp + BTC_STALENESS + 1);
-
-        // Step 0: succeeds (try/catch protects it)
-        vm.prank(guardian);
-        bool step0Success = vault.emergencyStep0_withdrawYield();
-        console.log("Step 0 result (dual stale):", step0Success, "(no revert)");
-
-        // Step 1: reverts on BTC oracle (the CRITICAL blocker)
-        vm.prank(guardian);
-        vm.expectRevert(OracleLib.StaleOracle.selector);
-        vault.emergencyStep1_unwindLoan();
-
-        console.log("CONFIRMED: Step 1 REVERTS even with dual-oracle staleness");
-        console.log("BTC/USD staleness alone is sufficient to block emergencyStep(1)");
-    }
-
-    // ============ PHASE 2: DEFENDER perspective ============
-
-    /// @notice Does emergencySkipStep require oracle freshness? NO.
-    /// emergencySkipStep() in Zenji.sol only checks emergencyMode and liquidationComplete
-    /// No oracle call in that function.
-    function testH1_SkipStepRequiresNoOracle() public {
-        // In the real Zenji contract this is a no-op bitmask operation:
-        //   emergencyStepsCompleted |= (step == 0 ? 0x1 : 0x2)
-        // We verify by checking Zenji.sol code path — no oracle call exists in emergencySkipStep
-
-        // Warp past staleness
-        vm.warp(block.timestamp + BTC_STALENESS + 1);
-
-        // emergencyStep(1) would revert:
-        vm.prank(guardian);
-        vm.expectRevert(OracleLib.StaleOracle.selector);
-        vault.emergencyStep1_unwindLoan();
-
-        // But in real Zenji, guardian could call emergencySkipStep(1) here
-        // That function: emergencyStepsCompleted |= 0x2; emit EmergencyStepSkipped(1)
-        // No oracle check. HOWEVER: this strands the WBTC in Aave.
-        console.log("CONFIRMED: emergencySkipStep() bypasses oracle check but strands WBTC");
-    }
-
-    /// @notice Impact quantification: what happens to WBTC if step 1 is skipped?
-    /// At $10M TVL, 65% LTV: $10M WBTC in Aave, $6.5M USDT debt
-    function testH1_ImpactQuantification() public {
-        // Initial state
-        uint256 lockedCollateral = aToken.balanceOf(address(aaveManager));
-        uint256 lockedDebt = vDebt.balanceOf(address(aaveManager));
-
-        // BTC price: $100k, so 100 WBTC = $10M
-        uint256 btcPriceUsd = 100_000;
-        uint256 lockedCollateralUsd = (lockedCollateral * btcPriceUsd) / 1e8;
-
-        console.log("--- Impact at 100 WBTC ($10M TVL) ---");
-        console.log("WBTC locked in Aave (sats):", lockedCollateral);
-        console.log("WBTC locked in Aave (USD):", lockedCollateralUsd);
-        console.log("USDT debt outstanding:", lockedDebt);
-        console.log(
-            "USDT debt (USD):", lockedDebt / 1e6
-        );
-        console.log("LTV:", (lockedDebt * 100) / (lockedCollateralUsd * 1e6), "%");
-
-        // If BTC oracle is stale > 1 hour and guardian calls emergencySkipStep(1):
-        // - All $10M WBTC remains locked in Aave with no recovery path via normal emergency steps
-        // - Users in emergency mode cannot redeem (emergencyMode blocks normal redeem)
-        // - Only path: emergencyRescue(0) which calls loanManager.transferCollateral
-        //   which calls aavePool.withdraw() — but Aave's own circuit breakers may also block this
-
-        assertEq(lockedCollateralUsd, 10_000_000, "10M USD locked in Aave");
-
-        console.log("HARM: $10M WBTC stranded if guardian forced to skip step 1");
-        console.log("Guardian alternative: wait for oracle refresh (Chainlink updates within 3600s)");
-        console.log(
-            "BUT: oracle staleness scenario implies Chainlink is down - may not refresh soon"
-        );
-    }
-
-    // ============ PHASE 3: Verdict ============
-
-    /// @notice Full scenario: BTC oracle goes stale; step 1 is completely blocked
-    /// Proves the assertion chain with concrete state transitions
-    function testH1_FullScenario_Step1BlockedByBtcOracle() public {
-        uint256 initialCollateral = aToken.balanceOf(address(aaveManager));
-        uint256 initialDebt = vDebt.balanceOf(address(aaveManager));
-
-        console.log("--- Before oracle staleness ---");
-        console.log("aToken (WBTC in Aave):", initialCollateral);
-        console.log("vDebt (USDT owed):", initialDebt);
-
-        // Oracle freshness check passes normally
-        aaveManager.checkOracleFreshness(); // should not revert
-
-        // Warp past BTC staleness window
-        uint256 staleTime = BTC_STALENESS + 1;
-        vm.warp(block.timestamp + staleTime);
-
-        console.log("--- After warping", staleTime, "seconds ---");
-        console.log("BTC/USD oracle is now stale (updatedAt was", block.timestamp - staleTime, ")");
-        console.log("BTC staleness limit:", BTC_STALENESS, "seconds");
-
-        // Confirm oracle is now stale
-        vm.expectRevert(OracleLib.StaleOracle.selector);
-        aaveManager.checkOracleFreshness();
-        console.log("Oracle freshness check: REVERTS with StaleOracle");
-
-        // Step 1 cannot execute
-        vm.prank(guardian);
-        vm.expectRevert(OracleLib.StaleOracle.selector);
-        vault.emergencyStep1_unwindLoan();
-        console.log("emergencyStep(1): REVERTS with StaleOracle");
-
-        // State unchanged — WBTC still locked in Aave
-        assertEq(
-            aToken.balanceOf(address(aaveManager)),
-            initialCollateral,
-            "WBTC still locked: unwindPosition never executed"
-        );
-        assertEq(
-            vDebt.balanceOf(address(aaveManager)),
-            initialDebt,
-            "debt still outstanding: loan not unwound"
-        );
-
-        console.log("--- After failed emergencyStep(1) ---");
-        console.log("WBTC still in Aave:", aToken.balanceOf(address(aaveManager)));
-        console.log("USDT debt still outstanding:", vDebt.balanceOf(address(aaveManager)));
-        console.log("HARM PROVEN: $10M WBTC cannot be recovered via emergencyStep(1)");
-    }
-}

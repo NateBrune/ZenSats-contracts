@@ -282,7 +282,9 @@ contract FzYieldStrategy is IYieldStrategy {
             return positionCollateral > debtInCol ? positionCollateral - debtInCol : 0;
         }
 
-        function maxLtvBps() external pure returns (uint256) { return type(uint256).max; }
+        function maxLtvBps() external pure returns (uint256) {
+            return type(uint256).max;
+        }
         function checkOracleFreshness() external pure { }
 
         function transferCollateral(address to, uint256 amount) external onlyVault {
@@ -353,7 +355,9 @@ contract FzYieldStrategy is IYieldStrategy {
             return payout;
         }
 
-        function slippage() external pure returns (uint256) { return 1e16; }
+        function slippage() external pure returns (uint256) {
+            return 1e16;
+        }
     }
 
     // ============ Fuzz Test Contract ============

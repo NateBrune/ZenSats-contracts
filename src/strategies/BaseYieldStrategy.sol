@@ -179,6 +179,10 @@ abstract contract BaseYieldStrategy is IYieldStrategy, ReentrancyGuard {
     {
         if (amount == 0) revert ZeroAmount();
 
+        // Advance any cached unit value FIRST so basisReduction below and the share math inside
+        // _withdraw() read one consistent snapshot (otherwise they can diverge by up to the VP
+        // clamp, skewing cost-basis decay). No-op for cacheless strategies (e.g. IPOR).
+        _syncValueCache();
         uint256 currentValue = balanceOf();
         if (currentValue == 0) return 0;
         if (amount > currentValue) amount = currentValue;
@@ -208,13 +212,7 @@ abstract contract BaseYieldStrategy is IYieldStrategy, ReentrancyGuard {
     }
 
     /// @inheritdoc IYieldStrategy
-    function harvest()
-        external
-        override
-        onlyVault
-        nonReentrant
-        returns (uint256 rewardsValue)
-    {
+    function harvest() external override onlyVault nonReentrant returns (uint256 rewardsValue) {
         rewardsValue = _harvest();
         emit Harvested(rewardsValue);
     }
@@ -252,6 +250,11 @@ abstract contract BaseYieldStrategy is IYieldStrategy, ReentrancyGuard {
 
     /// @inheritdoc IYieldStrategy
     function balanceOf() public view virtual override returns (uint256);
+
+    /// @dev Refresh any cached unit value before it is read for cost-basis accounting.
+    ///      No-op by default (cacheless strategies); LP strategies override to ratchet their
+    ///      virtual-price cache so withdraw's basisReduction and share math agree.
+    function _syncValueCache() internal virtual { }
 
     /// @inheritdoc IYieldStrategy
     function unrealizedProfit() external view override returns (uint256) {
