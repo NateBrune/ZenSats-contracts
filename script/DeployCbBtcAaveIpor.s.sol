@@ -5,7 +5,7 @@ import "forge-std/Script.sol";
 import "forge-std/console2.sol";
 
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
-import { CbBtcWbtcUsdtSwapper } from "../src/swappers/base/CbBtcWbtcUsdtSwapper.sol";
+import { CbBtcUniswapV3TwoHopSwapper } from "../src/swappers/base/CbBtcUniswapV3TwoHopSwapper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UsdtIporStrategy } from "../src/strategies/vault/UsdtIporStrategy.sol";
 import { ZenjiCbBtcAaveIpor } from "../src/implementations/ipor/ZenjiCbBtcAaveIpor.sol";
@@ -19,6 +19,7 @@ contract DeployCbBtcAaveIpor is Script {
 
     // Chainlink oracles
     address constant BTC_USD_ORACLE = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
+    address constant CBBTC_USD_ORACLE = 0x2665701293fCbEB223D11A08D826563EDcCE423A;
     address constant USDT_USD_ORACLE = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
     address constant CRVUSD_USD_ORACLE = 0xEEf0C605546958c1f899b6fB336C20671f9cD49F;
 
@@ -27,13 +28,10 @@ contract DeployCbBtcAaveIpor is Script {
     address constant AAVE_A_CBBTC = 0x5c647cE0Ae10658ec44FA4E11A51c96e94efd1Dd;
     address constant AAVE_VAR_DEBT_USDT = 0x6df1C1E379bC5a00a7b4C6e67A203333772f45A8;
 
-    // Curve pools for swapper
-    address constant CBBTC_WBTC_POOL = 0x839d6bDeDFF886404A6d7a788ef241e4e28F4802;
-    uint256 constant CBBTC_INDEX = 0;
-    uint256 constant WBTC_INDEX = 1;
-    address constant TRICRYPTO_POOL = 0xf5f5B97624542D72A9E06f04804Bf81baA15e2B4;
-    uint256 constant TRICRYPTO_WBTC_INDEX = 1;
-    uint256 constant TRICRYPTO_USDT_INDEX = 0;
+    // Uniswap V3 swapper route: cbBTC -> WBTC (0.01%) -> USDT (0.3%)
+    address constant UNISWAP_ROUTER = 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45;
+    uint24 constant CBBTC_WBTC_FEE = 100; // 0.01%
+    uint24 constant WBTC_USDT_FEE = 3000; // 0.3%
 
     // IPOR / Curve
     address constant IPOR_PLASMA_VAULT = 0xbfA9d6EC0E04B6691fCAE5F8b48838C3918eC117;
@@ -50,20 +48,16 @@ contract DeployCbBtcAaveIpor is Script {
 
         ZenjiViewHelper viewHelper = new ZenjiViewHelper();
 
-        CbBtcWbtcUsdtSwapper swapper = new CbBtcWbtcUsdtSwapper(
+        CbBtcUniswapV3TwoHopSwapper swapper = new CbBtcUniswapV3TwoHopSwapper(
             gov,
             CBBTC,
             USDT,
-            WBTC,
-            CBBTC_WBTC_POOL,
-            CBBTC_INDEX,
-            WBTC_INDEX,
-            TRICRYPTO_POOL,
-            TRICRYPTO_WBTC_INDEX,
-            TRICRYPTO_USDT_INDEX,
-            BTC_USD_ORACLE, // cbBTC tracks BTC
-            USDT_USD_ORACLE,
-            3_600
+            WBTC, // intermediate hop token
+            UNISWAP_ROUTER,
+            CBBTC_WBTC_FEE,
+            WBTC_USDT_FEE,
+            CBBTC_USD_ORACLE,
+            USDT_USD_ORACLE
         );
 
         AaveLoanManager loanManager = new AaveLoanManager(

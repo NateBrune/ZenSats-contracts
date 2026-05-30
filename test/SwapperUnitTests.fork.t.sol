@@ -5,7 +5,6 @@ import { SwapperTestBase } from "./base/SwapperTestBase.sol";
 import { BaseSwapper } from "../src/swappers/base/BaseSwapper.sol";
 import { CurveTwoCryptoSwapper } from "../src/swappers/base/CurveTwoCryptoSwapper.sol";
 import { CurveThreeCryptoSwapper } from "../src/swappers/base/CurveThreeCryptoSwapper.sol";
-import { CbBtcWbtcUsdtSwapper } from "../src/swappers/base/CbBtcWbtcUsdtSwapper.sol";
 import { UniswapV3TwoHopSwapper } from "../src/swappers/base/UniswapV3TwoHopSwapper.sol";
 import { UniswapMixedTwoHopSwapper } from "../src/swappers/base/UniswapMixedTwoHopSwapper.sol";
 import { CbBtcUniswapV3TwoHopSwapper } from "../src/swappers/base/CbBtcUniswapV3TwoHopSwapper.sol";
@@ -53,41 +52,6 @@ contract CurveThreeCryptoSwapperTest is SwapperTestBase {
     function _deploySwapper() internal override {
         swapper = new CurveThreeCryptoSwapper(
             owner, WBTC, USDT, TRICRYPTO_POOL, 1, 0, BTC_USD_ORACLE, USDT_USD_ORACLE, 3_600
-        );
-    }
-
-    function _swapper() internal view override returns (BaseSwapper) {
-        return swapper;
-    }
-}
-
-// ============ CbBtcWbtcUsdtSwapper Tests ============
-
-contract CbBtcWbtcUsdtSwapperTest is SwapperTestBase {
-    address constant CBBTC = 0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf;
-    address constant CBBTC_WBTC_POOL = 0x839d6bDeDFF886404A6d7a788ef241e4e28F4802;
-    uint256 constant CBBTC_INDEX = 0;
-    uint256 constant WBTC_INDEX_CB = 1;
-    uint256 constant TRICRYPTO_WBTC_INDEX = 1;
-    uint256 constant TRICRYPTO_USDT_INDEX = 0;
-
-    CbBtcWbtcUsdtSwapper public swapper;
-
-    function _deploySwapper() internal override {
-        swapper = new CbBtcWbtcUsdtSwapper(
-            owner,
-            CBBTC,
-            USDT,
-            WBTC,
-            CBBTC_WBTC_POOL,
-            CBBTC_INDEX,
-            WBTC_INDEX_CB,
-            TRICRYPTO_POOL,
-            TRICRYPTO_WBTC_INDEX,
-            TRICRYPTO_USDT_INDEX,
-            CBBTC_USD_ORACLE,
-            USDT_USD_ORACLE,
-            3_600
         );
     }
 

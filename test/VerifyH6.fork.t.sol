@@ -6,7 +6,7 @@ import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UsdtIporStrategy } from "../src/strategies/vault/UsdtIporStrategy.sol";
-import { CbBtcWbtcUsdtSwapper } from "../src/swappers/base/CbBtcWbtcUsdtSwapper.sol";
+import { CbBtcUniswapV3TwoHopSwapper } from "../src/swappers/base/CbBtcUniswapV3TwoHopSwapper.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { IYieldVault } from "../src/interfaces/IYieldVault.sol";
 
@@ -53,13 +53,10 @@ contract VerifyH6ForkTest is Test {
     int128 constant USDT_INDEX = 0;
     int128 constant CRVUSD_INDEX = 1;
 
-    address constant CBBTC_WBTC_POOL = 0x839d6bDeDFF886404A6d7a788ef241e4e28F4802;
-    uint256 constant CBBTC_INDEX = 0;
-    uint256 constant WBTC_INDEX = 1;
-
-    address constant TRICRYPTO_POOL = 0xf5f5B97624542D72A9E06f04804Bf81baA15e2B4;
-    uint256 constant TRICRYPTO_USDT_INDEX = 0;
-    uint256 constant TRICRYPTO_WBTC_INDEX = 1;
+    // Uniswap V3 swapper route: cbBTC -> WBTC (0.01%) -> USDT (0.3%)
+    address constant UNISWAP_ROUTER = 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45;
+    uint24 constant CBBTC_WBTC_FEE = 100; // 0.01%
+    uint24 constant WBTC_USDT_FEE = 3000; // 0.3%
 
     address constant CBBTC_WHALE = 0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb;
 
@@ -67,7 +64,7 @@ contract VerifyH6ForkTest is Test {
     ZenjiViewHelper viewHelper;
     AaveLoanManager loanManager;
     UsdtIporStrategy strategy;
-    CbBtcWbtcUsdtSwapper swapper;
+    CbBtcUniswapV3TwoHopSwapper swapper;
 
     IERC20 cbbtc;
     IYieldVault iporVault;
@@ -94,11 +91,9 @@ contract VerifyH6ForkTest is Test {
         iporVault = IYieldVault(IPOR_PLASMA_VAULT);
 
         viewHelper = new ZenjiViewHelper();
-        swapper = new CbBtcWbtcUsdtSwapper(
-            owner, CBBTC, USDT, WBTC,
-            CBBTC_WBTC_POOL, CBBTC_INDEX, WBTC_INDEX,
-            TRICRYPTO_POOL, TRICRYPTO_WBTC_INDEX, TRICRYPTO_USDT_INDEX,
-            CBBTC_USD_ORACLE, USDT_USD_ORACLE, 3_600
+        swapper = new CbBtcUniswapV3TwoHopSwapper(
+            owner, CBBTC, USDT, WBTC, UNISWAP_ROUTER,
+            CBBTC_WBTC_FEE, WBTC_USDT_FEE, CBBTC_USD_ORACLE, USDT_USD_ORACLE
         );
         loanManager = new AaveLoanManager(
             CBBTC, USDT, AAVE_A_CBBTC, AAVE_VAR_DEBT_USDT, AAVE_POOL,
