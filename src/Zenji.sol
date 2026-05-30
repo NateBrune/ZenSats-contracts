@@ -11,6 +11,7 @@ import { ISwapper } from "./interfaces/ISwapper.sol";
 import { TimelockLib } from "./libraries/TimelockLib.sol";
 import { SafeTransferLib } from "./libraries/SafeTransferLib.sol";
 import { ZenjiCoreLib } from "./libraries/ZenjiCoreLib.sol";
+import { ZenjiGovLib } from "./libraries/ZenjiGovLib.sol";
 import { ZenjiViewHelper } from "./ZenjiViewHelper.sol";
 
 /// @dev Minimal interface for propagating slippage to swappers (avoids adding setSlippage to ISwapper).
@@ -1077,145 +1078,67 @@ contract Zenji is ERC20, IERC4626 {
     ///      and require executeParamChange after PARAM_TIMELOCK_DELAY. User-favorable
     ///      changes (decreases) take effect immediately.
     function setParam(uint8 p, uint256 v) external onlyGov {
-        if (p == 0) {
-            if (v > MAX_FEE_RATE) revert InvalidFeeRate();
-            if (v > feeRate) {
-                // Adverse: increasing fees → timelock
-                _feeRateTimelock.propose(v, PARAM_TIMELOCK_DELAY);
-                emit FeeRateChangeProposed(feeRate, v, block.timestamp + PARAM_TIMELOCK_DELAY);
-            } else {
-                // User-favorable: decreasing or keeping fees → immediate
-                emit ParamUpdated(p, feeRate, v);
-                feeRate = v;
-            }
-        } else if (p == 1) {
-            if (v < MIN_TARGET_LTV || v > MAX_TARGET_LTV()) {
-                revert InvalidTargetLtv();
-            }
-            // Cross-check against the loan manager's Aave maxLtvBps cap.
-            // LlamaLend returns type(uint256).max — no cap. Aave returns the actual BPS ceiling.
-            uint256 lmMaxBps = loanManager.maxLtvBps();
-            if (lmMaxBps != type(uint256).max && v > lmMaxBps * 1e14) {
-                revert InvalidTargetLtv();
-            }
-            if (v > targetLtv) {
-                // Adverse: increasing leverage → timelock
-                _targetLtvTimelock.propose(v, PARAM_TIMELOCK_DELAY);
-                emit TargetLtvChangeProposed(targetLtv, v, block.timestamp + PARAM_TIMELOCK_DELAY);
-            } else {
-                // User-favorable: decreasing leverage → immediate
-                emit ParamUpdated(p, targetLtv, v);
-                targetLtv = v;
-            }
-        } else if (p == 2) {
-            // depositCap: raising the cap is user-favourable (more room); lowering it is
-            // adverse to depositors who counted on the headroom and is the same surface
-            // that depositsPaused targets. Timelock the decrease, keep increase instant.
-            if (v < depositCap) {
-                _depositCapTimelock.propose(v, PARAM_TIMELOCK_DELAY);
-                emit DepositCapChangeProposed(depositCap, v, block.timestamp + PARAM_TIMELOCK_DELAY);
-            } else {
-                emit ParamUpdated(p, depositCap, v);
-                depositCap = v;
-            }
-        } else if (p == 3) {
-            if (v > MAX_REBALANCE_BOUNTY) revert InvalidBountyRate();
-            if (v > rebalanceBountyRate) {
-                // Adverse: raising the bounty siphons more from rebalance — timelock.
-                _bountyRateTimelock.propose(v, PARAM_TIMELOCK_DELAY);
-                emit BountyRateChangeProposed(
-                    rebalanceBountyRate, v, block.timestamp + PARAM_TIMELOCK_DELAY
-                );
-            } else {
-                emit ParamUpdated(p, rebalanceBountyRate, v);
-                rebalanceBountyRate = v;
-            }
-        } else if (p == 4) {
-            if (v == 0 || v > MAX_VAULT_SLIPPAGE) revert InvalidSlippage();
-            if (v > maxSlippage) {
-                // Adverse: raising slippage exposes the next withdraw to more loss.
-                _maxSlippageTimelock.propose(v, PARAM_TIMELOCK_DELAY);
-                emit MaxSlippageChangeProposed(
-                    maxSlippage, v, block.timestamp + PARAM_TIMELOCK_DELAY
-                );
-            } else {
-                emit ParamUpdated(p, maxSlippage, v);
-                maxSlippage = v;
-                yieldStrategy.setSlippage(v);
-                if (address(swapper) != address(0)) {
-                    ISwapperSlippageConfig(address(swapper)).setSlippage(v);
-                }
-            }
-        } else {
-            revert InvalidParam();
-        }
+        ZenjiGovLib.ParamState memory st =
+            ZenjiGovLib.ParamState(feeRate, targetLtv, depositCap, rebalanceBountyRate, maxSlippage);
+        st = ZenjiGovLib.setParam(
+            _feeRateTimelock,
+            _targetLtvTimelock,
+            _depositCapTimelock,
+            _bountyRateTimelock,
+            _maxSlippageTimelock,
+            st,
+            p,
+            v,
+            MAX_TARGET_LTV(),
+            loanManager.maxLtvBps(),
+            address(yieldStrategy),
+            address(swapper)
+        );
+        feeRate = st.feeRate;
+        targetLtv = st.targetLtv;
+        depositCap = st.depositCap;
+        rebalanceBountyRate = st.rebalanceBountyRate;
+        maxSlippage = st.maxSlippage;
     }
 
     /// @notice Execute a pending param change after PARAM_TIMELOCK_DELAY.
     /// @param p 0=feeRate, 1=targetLtv, 2=depositCap, 3=bountyRate, 4=maxSlippage
     function executeParamChange(uint8 p) external onlyGov {
-        if (p == 0) {
-            uint256 newFee = _feeRateTimelock.execute();
-            // Re-validate at execution time in case MAX_FEE_RATE semantics change.
-            if (newFee > MAX_FEE_RATE) revert InvalidFeeRate();
-            // Accrue any outstanding fees at the OLD rate before applying the new rate,
-            // so the increase doesn't retroactively tax the un-checkpointed delta.
-            _accrueYieldFees();
-            emit ParamUpdated(p, feeRate, newFee);
-            feeRate = newFee;
-        } else if (p == 1) {
-            uint256 newLtv = _targetLtvTimelock.execute();
-            // Re-validate against current loan manager cap (could have moved during the delay).
-            if (newLtv < MIN_TARGET_LTV || newLtv > MAX_TARGET_LTV()) revert InvalidTargetLtv();
-            uint256 lmMaxBps = loanManager.maxLtvBps();
-            if (lmMaxBps != type(uint256).max && newLtv > lmMaxBps * 1e14) {
-                revert InvalidTargetLtv();
-            }
-            emit ParamUpdated(p, targetLtv, newLtv);
-            targetLtv = newLtv;
-        } else if (p == 2) {
-            uint256 newCap = _depositCapTimelock.execute();
-            emit ParamUpdated(p, depositCap, newCap);
-            depositCap = newCap;
-        } else if (p == 3) {
-            uint256 newBounty = _bountyRateTimelock.execute();
-            if (newBounty > MAX_REBALANCE_BOUNTY) revert InvalidBountyRate();
-            emit ParamUpdated(p, rebalanceBountyRate, newBounty);
-            rebalanceBountyRate = newBounty;
-        } else if (p == 4) {
-            uint256 newSlip = _maxSlippageTimelock.execute();
-            if (newSlip == 0 || newSlip > MAX_VAULT_SLIPPAGE) revert InvalidSlippage();
-            emit ParamUpdated(p, maxSlippage, newSlip);
-            maxSlippage = newSlip;
-            yieldStrategy.setSlippage(newSlip);
-            if (address(swapper) != address(0)) {
-                ISwapperSlippageConfig(address(swapper)).setSlippage(newSlip);
-            }
-        } else {
-            revert InvalidParam();
-        }
+        // p==0 accrues outstanding fees at the OLD rate before the new rate is applied; this must
+        // happen in the vault (the library cannot call the internal _accrueYieldFees).
+        if (p == 0) _accrueYieldFees();
+        ZenjiGovLib.ParamState memory st =
+            ZenjiGovLib.ParamState(feeRate, targetLtv, depositCap, rebalanceBountyRate, maxSlippage);
+        st = ZenjiGovLib.executeParamChange(
+            _feeRateTimelock,
+            _targetLtvTimelock,
+            _depositCapTimelock,
+            _bountyRateTimelock,
+            _maxSlippageTimelock,
+            st,
+            p,
+            MAX_TARGET_LTV(),
+            loanManager.maxLtvBps(),
+            address(yieldStrategy),
+            address(swapper)
+        );
+        feeRate = st.feeRate;
+        targetLtv = st.targetLtv;
+        depositCap = st.depositCap;
+        rebalanceBountyRate = st.rebalanceBountyRate;
+        maxSlippage = st.maxSlippage;
     }
 
     /// @notice Cancel a pending param proposal.
     function cancelParamChange(uint8 p) external onlyGov {
-        if (p == 0) {
-            uint256 cancelled = _feeRateTimelock.cancel();
-            emit FeeRateChangeCancelled(cancelled);
-        } else if (p == 1) {
-            uint256 cancelled = _targetLtvTimelock.cancel();
-            emit TargetLtvChangeCancelled(cancelled);
-        } else if (p == 2) {
-            uint256 cancelled = _depositCapTimelock.cancel();
-            emit DepositCapChangeCancelled(cancelled);
-        } else if (p == 3) {
-            uint256 cancelled = _bountyRateTimelock.cancel();
-            emit BountyRateChangeCancelled(cancelled);
-        } else if (p == 4) {
-            uint256 cancelled = _maxSlippageTimelock.cancel();
-            emit MaxSlippageChangeCancelled(cancelled);
-        } else {
-            revert InvalidParam();
-        }
+        ZenjiGovLib.cancelParamChange(
+            _feeRateTimelock,
+            _targetLtvTimelock,
+            _depositCapTimelock,
+            _bountyRateTimelock,
+            _maxSlippageTimelock,
+            p
+        );
     }
 
     /// @notice View pending param proposal state.
