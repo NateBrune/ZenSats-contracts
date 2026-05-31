@@ -29,7 +29,7 @@ The findings are a cluster of **Low-severity hardening items** — chiefly an or
 | High | 0 |
 | Medium | 0 |
 | Low | 6 |
-| Informational | 5 |
+| Informational | 6 |
 
 ### Components Audited
 
@@ -187,6 +187,18 @@ After `lastVpUpdate > MAX_VP_STALENESS` (1 day), the first `updateCachedVirtualP
 
 ### [I-05] `_removeLiquidity` applies only a spot floor, asymmetric with `_addLiquidity`'s oracle floor (intentional)
 `_addLiquidity` enforces both a spot (`calc_token_amount`) and an oracle (`_getSafeUnitValue`) minimum-LP floor; `_removeLiquidity` enforces only the spot `calc_withdraw_one_coin` floor. The asymmetry is deliberate — always allow exits, even during a depeg — and is the correct design for a user-withdrawal path, but is noted for completeness. (`src/strategies/lp/BaseCurveStakeDaoStrategy.sol`)
+
+### [I-06] Vault implementations exceed the EIP-170 24,576-byte contract size limit — DEPLOY BLOCKER
+
+**Severity**: Informational (deployment/ops — not an on-chain vulnerability)
+**Location**: every `Zenji*` implementation (e.g. `ZenjiWbtcLlamaStakeDao`, `ZenjiWstEthLlamaStakeDao`), base `src/Zenji.sol`
+
+**Description**:
+Every concrete vault implementation compiles to ~31.9 KB of runtime bytecode (e.g. `ZenjiWbtcLlamaStakeDao` 31,860 B, `ZenjiWstEthLlamaStakeDao` 31,959 B) — about **7.3 KB over the 24,576-byte EIP-170 limit**, even with the project's size-tuned profile (`via_ir`, `optimizer_runs = 1`). The non-vault contracts are all within limit (strategy `NgCrvUsdLpStakeDaoStrategy` 12.2 KB, `LlamaLoanManager` 15.1 KB, swappers 4–6 KB). Foundry does not enforce EIP-170 in tests, so the full suite passes despite this; any **fresh mainnet deployment of these implementations will revert** ("max code size exceeded"). Previously deployed vaults were a smaller earlier build.
+
+**Partial mitigation applied**: the gov parameter admin (`setParam`/`executeParamChange`/`cancelParamChange`) was extracted into a delegatecalled library (`ZenjiGovLib`), reducing each vault by ~1,430 B (to ~30,430 B). This is committed and fully tested, but does not by itself bring the vault under the limit.
+
+**Recommendation**: Reaching 24,576 B needs an architectural change, not incremental function extraction (which hits diminishing returns: extracting state-heavy functions by value-passing costs nearly as much ABI encode/decode bytecode as it saves). Effective options: (1) group vault state into storage structs and pass them to logic libraries by **storage pointer** (no encode/decode overhead — the technique that made the `ZenjiGovLib` param extraction efficient); (2) split the vault into a thin delegatecall router + logic facets sharing storage layout; or (3) drop deploy-time-optional features. Track as a pre-deploy blocker.
 
 ---
 
