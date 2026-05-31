@@ -14,6 +14,7 @@ import { ZenjiCoreLib } from "./libraries/ZenjiCoreLib.sol";
 import { ZenjiGovLib } from "./libraries/ZenjiGovLib.sol";
 import { ZenjiViewHelper } from "./ZenjiViewHelper.sol";
 import { ZenjiStorage } from "./ZenjiStorage.sol";
+import { ZenjiAdmin } from "./ZenjiAdmin.sol";
 
 /// @dev Minimal interface for propagating slippage to swappers (avoids adding setSlippage to ISwapper).
 interface ISwapperSlippageConfig {
@@ -49,6 +50,9 @@ contract Zenji is ZenjiStorage, IERC4626 {
     using TimelockLib for TimelockLib.AddressTimelockData;
     using TimelockLib for TimelockLib.TimelockData;
     using SafeTransferLib for IERC20;
+
+    /// @notice Cold-path admin facet (self-deployed); cold selectors delegate to it.
+    address public immutable adminFacet;
 
     // ============ Constants ============
 
@@ -273,9 +277,46 @@ contract Zenji is ZenjiStorage, IERC4626 {
         feeRate = 0; // Default fee rate disabled
         maxSlippage = 1e16; // 1% default vault slippage
         _status = _NOT_ENTERED;
+        adminFacet = address(new ZenjiAdmin());
 
         // Loan manager is provided externally and immutable for this vault
     }
+
+    /// @notice Cold-path admin selectors stay in the ABI as thin stubs that delegatecall
+    ///         the ZenjiAdmin facet (shared storage). Keeps typed callers working while the
+    ///         logic lives in the facet to save vault bytecode.
+    function _adminDelegate() private {
+        address facet = adminFacet;
+        assembly {
+            calldatacopy(0, 0, calldatasize())
+            let ok := delegatecall(gas(), facet, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            switch ok
+            case 0 { revert(0, returndatasize()) }
+            default { return(0, returndatasize()) }
+        }
+    }
+
+    function proposeSwapper(address) external { _adminDelegate(); }
+    function executeSwapper() external { _adminDelegate(); }
+    function cancelSwapper() external { _adminDelegate(); }
+    function transferRole(uint8, address) external { _adminDelegate(); }
+    function acceptRole(uint8) external { _adminDelegate(); }
+    function cancelRole(uint8) external { _adminDelegate(); }
+    function guardianCancelRole(uint8) external { _adminDelegate(); }
+    function guardianCancelSwapper() external { _adminDelegate(); }
+    function enterEmergencyMode() external { _adminDelegate(); }
+    function emergencyStep(uint8) external { _adminDelegate(); }
+    function emergencySkipStep(uint8) external { _adminDelegate(); }
+    function cancelEmergencySkip(uint8) external { _adminDelegate(); }
+    function cancelEmergencyMode() external { _adminDelegate(); }
+    function pauseDeposits() external { _adminDelegate(); }
+    function resumeDeposits() external { _adminDelegate(); }
+    function proposeRescueRecipient(address) external { _adminDelegate(); }
+    function executeRescueRecipient() external { _adminDelegate(); }
+    function cancelRescueRecipient() external { _adminDelegate(); }
+    function rescueAssets(address, address) external { _adminDelegate(); }
+    function emergencyRescue(uint8) external { _adminDelegate(); }
 
     /// @notice Returns true iff `yieldStrategy.owner() == gov`. Off-chain monitoring should
     ///         call this post-deploy and on any role transfer; a `false` result means the
@@ -660,157 +701,16 @@ contract Zenji is ZenjiStorage, IERC4626 {
 
     // ============ Gov Functions ============
 
-    /// @notice Propose a new swapper contract (requires timelock).
-    /// @dev Gov-only. 1-week timelock for critical infrastructure changes. The proposal
-    ///      is mirrored on the loan manager so that the loan-manager-side swapper
-    ///      (used by the Aave flash-unwind path) stays in lockstep with the vault.
-    function proposeSwapper(address newSwapper) external onlyGov {
-        if (newSwapper == address(0)) revert InvalidAddress();
-        if (newSwapper == address(swapper)) revert InvalidAddress();
-        _swapperTimelock.proposeAddress(newSwapper, TIMELOCK_DELAY);
-        ILoanManagerSwapperRotation(address(loanManager)).proposeSwapper(newSwapper);
-        emit SwapperChangeProposed(address(swapper), newSwapper, _swapperTimelock.timestamp);
-    }
 
-    /// @notice Execute pending swapper change after timelock. Updates both the vault's
-    ///         own swapper reference and the loan manager's reference atomically.
-    function executeSwapper() external onlyGov {
-        address oldSwapper = address(swapper);
-        swapper = ISwapper(_swapperTimelock.executeAddress());
-        ILoanManagerSwapperRotation(address(loanManager)).executeSwapper();
-        emit SwapperUpdated(oldSwapper, address(swapper));
-    }
 
-    /// @notice Cancel pending swapper change (cancels both vault and loan manager).
-    function cancelSwapper() external onlyGov {
-        address cancelled = _swapperTimelock.cancelAddress();
-        ILoanManagerSwapperRotation(address(loanManager)).cancelSwapper();
-        emit SwapperChangeCancelled(cancelled);
-    }
 
     // ============ Role Management (Gov-only) ============
 
-    /// @notice Transfer role: 0=strategist, 1=gov, 2=guardian (only gov can initiate all transfers)
-    /// @dev Starts a timelock; new address must call acceptRole after the delay.
-    ///      Strategist uses ROLE_TRANSFER_DELAY (1 week). Gov and guardian use the
-    ///      extended GOV_GUARDIAN_TRANSFER_DELAY (4 weeks) — these roles are powerful
-    ///      enough that a compromised gov should not be able to short-circuit the
-    ///      veto window with a quick handover.
-    function transferRole(uint8 role, address to) external onlyGov {
-        if (to == address(0)) revert InvalidAddress();
-        // Gov and guardian transfers must be sequential — concurrent queuing would let a
-        // compromised gov force guardian to cancel two transfers simultaneously, shrinking
-        // the effective veto window. Each transfer must complete or be cancelled first.
-        if (role == 1 && pendingGuardianTimestamp != 0) revert ActionDelayActive();
-        if (role == 2 && pendingGovTimestamp != 0) revert ActionDelayActive();
-        if (role == 0) {
-            pendingStrategist = to;
-            pendingStrategistTimestamp = block.timestamp + ROLE_TRANSFER_DELAY;
-            emit StrategistTransferStarted(strategist, to);
-        } else if (role == 1) {
-            pendingGov = to;
-            pendingGovTimestamp = block.timestamp + GOV_GUARDIAN_TRANSFER_DELAY;
-            emit GovernanceTransferStarted(gov, to);
-        } else {
-            pendingGuardian = to;
-            pendingGuardianTimestamp = block.timestamp + GOV_GUARDIAN_TRANSFER_DELAY;
-            emit GuardianTransferStarted(guardian, to);
-        }
-    }
 
-    /// @notice Accept role: 0=strategist, 1=gov, 2=guardian
-    /// @dev Caller must be the pending address and 2-day timelock must have passed.
-    function acceptRole(uint8 role) external {
-        if (role == 0) {
-            if (msg.sender != pendingStrategist) revert Unauthorized();
-            if (block.timestamp < pendingStrategistTimestamp) {
-                revert TimelockLib.TimelockNotReady();
-            }
-            strategist = msg.sender;
-            pendingStrategist = address(0);
-            pendingStrategistTimestamp = 0;
-            emit StrategistUpdated(msg.sender);
-        } else if (role == 1) {
-            if (msg.sender != pendingGov) revert Unauthorized();
-            if (block.timestamp < pendingGovTimestamp) revert TimelockLib.TimelockNotReady();
-            gov = msg.sender;
-            pendingGov = address(0);
-            pendingGovTimestamp = 0;
-            emit GovernanceUpdated(msg.sender);
-            // Propagate to strategy if it supports vault-initiated ownership transfer.
-            // Wrapped in try/catch so a bricked or paused strategy can't block gov rotation.
-            // Operators can re-sync ownership later via the strategy's own admin path.
-            try yieldStrategy.transferOwnerFromVault(msg.sender) {
-            // success — strategy owner is now the new gov
-            }
-            catch {
-                emit StrategyOwnerPropagationFailed(msg.sender);
-            }
-            // Propagate gov to the registered swapper too (mirrors the strategy owner handoff),
-            // so a rotated-away key cannot keep widening the swap floor via setSlippage.
-            // try/catch so a swapper that doesn't recognise this vault can't block gov rotation.
-            try ISwapperGovRotation(address(swapper)).transferGovFromVault(msg.sender) {
-            // success — swapper gov is now the new gov
-            }
-            catch {
-                emit SwapperGovPropagationFailed(msg.sender);
-            }
-        } else {
-            if (msg.sender != pendingGuardian) revert Unauthorized();
-            if (block.timestamp < pendingGuardianTimestamp) revert TimelockLib.TimelockNotReady();
-            guardian = msg.sender;
-            pendingGuardian = address(0);
-            pendingGuardianTimestamp = 0;
-            emit GuardianUpdated(msg.sender);
-        }
-    }
 
-    /// @notice Cancel a pending role transfer (Gov-only)
-    function cancelRole(uint8 role) external onlyGov {
-        _cancelRole(role);
-    }
 
-    /// @notice Guardian veto on a pending role transfer.
-    /// @dev Allows guardian to block a malicious role transfer scheduled by a
-    ///      compromised gov. Without this, a compromised gov could schedule a
-    ///      guardian/strategist replacement and only gov could cancel it —
-    ///      meaning the legitimate guardian had no on-chain recourse.
-    function guardianCancelRole(uint8 role) external onlyGuardian {
-        _cancelRole(role);
-    }
 
-    function _cancelRole(uint8 role) internal {
-        address cancelled;
-        if (role == 0) {
-            cancelled = pendingStrategist;
-            if (cancelled == address(0)) revert TimelockLib.NoTimelockPending();
-            pendingStrategist = address(0);
-            pendingStrategistTimestamp = 0;
-        } else if (role == 1) {
-            cancelled = pendingGov;
-            if (cancelled == address(0)) revert TimelockLib.NoTimelockPending();
-            pendingGov = address(0);
-            pendingGovTimestamp = 0;
-        } else if (role == 2) {
-            cancelled = pendingGuardian;
-            if (cancelled == address(0)) revert TimelockLib.NoTimelockPending();
-            pendingGuardian = address(0);
-            pendingGuardianTimestamp = 0;
-        } else {
-            revert InvalidParam();
-        }
-        emit RoleTransferCancelled(role, cancelled);
-    }
 
-    /// @notice Guardian veto on a pending swapper change.
-    /// @dev If gov is compromised, gov could propose a malicious swapper. Without
-    ///      this veto only gov could cancel it. Guardian can now block the change
-    ///      during the 1-week timelock window.
-    function guardianCancelSwapper() external onlyGuardian {
-        address cancelled = _swapperTimelock.cancelAddress();
-        ILoanManagerSwapperRotation(address(loanManager)).cancelSwapper();
-        emit SwapperChangeCancelled(cancelled);
-    }
 
     /// @notice Withdraw accumulated strategy fees
     /// @dev Strategist-only. Accrues pending fees before withdrawal.
@@ -828,180 +728,21 @@ contract Zenji is ZenjiStorage, IERC4626 {
 
     // ============ Guardian Functions ============
 
-    /// @notice Enter emergency mode - one-way latch, no exit
-    /// @dev Guardian-only. Blocks deposits permanently. Withdrawals resume after liquidation completes.
-    function enterEmergencyMode() external onlyGuardian {
-        if (emergencyMode) revert EmergencyModeActive();
-        emergencyMode = true;
-        emit EmergencyModeEntered();
-    }
 
-    /// @notice Emergency step: 0=withdrawYield, 1=unwindLoan, 2=completeLiquidation
-    function emergencyStep(uint8 step) external nonReentrant onlyGuardian {
-        if (step > 2) revert InvalidEmergencyStep();
-        if (!emergencyMode) revert EmergencyModeNotActive();
-        if (liquidationComplete) revert LiquidationAlreadyComplete();
-        // Step 2: requires both prior steps to be resolved (run or explicitly skipped)
-        if (step == 2 && emergencyStepsCompleted & 0x3 != 0x3) revert EmergencyStepsIncomplete();
 
-        (uint256 newLSB, uint256 newFees, bool setLiq) = ZenjiCoreLib.executeEmergencyStep(
-            step,
-            yieldStrategy,
-            loanManager,
-            collateralAsset,
-            debtAsset,
-            swapper,
-            lastStrategyBalance,
-            accumulatedFees
-        );
 
-        lastStrategyBalance = newLSB;
-        accumulatedFees = newFees;
-        if (setLiq) liquidationComplete = true;
 
-        if (step == 0) {
-            feesAtLastRebalance = 0;
-            emergencyStepsCompleted |= 0x1;
-        } else if (step == 1) {
-            emergencyStepsCompleted |= 0x2;
-        }
-    }
-
-    /// @notice Explicitly mark an emergency step as resolved without executing it.
-    /// Use when a component (yield strategy or loan manager) is bricked and cannot be unwound.
-    /// Guardian accepts that funds in the bricked component may be unrecoverable.
-    /// After skipping step 1 (loan unwind), users can only redeem collateral already in the vault.
-    /// @dev Two-call pattern: the first call proposes the skip with a 3-day delay; the
-    ///      second call (after the delay) executes it. Gov can call cancelEmergencySkip
-    ///      during the window to veto a malicious skip. The 3-day window is acceptable
-    ///      because funds in a bricked component are inaccessible regardless of timing.
-    /// @param step 0 (skip yield withdraw) or 1 (skip loan unwind)
-    function emergencySkipStep(uint8 step) external nonReentrant onlyGuardian {
-        if (!emergencyMode) revert EmergencyModeNotActive();
-        if (liquidationComplete) revert LiquidationAlreadyComplete();
-        if (step > 1) revert InvalidEmergencyStep();
-        // No-op if the step is already resolved (executed or previously skipped)
-        uint8 mask = step == 0 ? uint8(0x1) : uint8(0x2);
-        if (emergencyStepsCompleted & mask != 0) revert InvalidEmergencyStep();
-
-        uint256 pending = pendingSkipTimestamp[step];
-        if (pending == 0) {
-            // First call: propose with delay
-            pendingSkipTimestamp[step] = block.timestamp + EMERGENCY_SKIP_DELAY;
-            emit EmergencySkipStepProposed(step, pendingSkipTimestamp[step]);
-        } else {
-            // Second call: execute if delay has passed
-            if (block.timestamp < pending) revert TimelockLib.TimelockNotReady();
-            pendingSkipTimestamp[step] = 0;
-            emergencyStepsCompleted |= mask;
-            emit EmergencyStepSkipped(step);
-        }
-    }
-
-    /// @notice Gov veto on a pending emergencySkipStep proposal.
-    /// @dev Allows gov (multisig) to block a malicious or premature skip during the
-    ///      EMERGENCY_SKIP_DELAY window. After the skip is executed (bitmask set),
-    ///      this is a no-op for that step.
-    /// @param step 0 or 1
-    function cancelEmergencySkip(uint8 step) external onlyGov {
-        if (step > 1) revert InvalidEmergencyStep();
-        if (pendingSkipTimestamp[step] == 0) revert TimelockLib.NoTimelockPending();
-        pendingSkipTimestamp[step] = 0;
-        emit EmergencySkipCancelled(step);
-    }
-
-    /// @notice Cancel emergency mode entirely.
-    /// @dev Gov-only. Only valid before any emergency step has executed (or been skipped).
-    ///      Once steps begin (assets withdrawn from strategy/loan), the state is too
-    ///      dirty to safely return to normal operation. This is the gov veto for a
-    ///      malicious or premature `enterEmergencyMode()` call by a compromised guardian.
-    function cancelEmergencyMode() external onlyGov {
-        if (!emergencyMode) revert EmergencyModeNotActive();
-        if (emergencyStepsCompleted != 0) revert EmergencyStepInProgress();
-        if (liquidationComplete) revert LiquidationAlreadyComplete();
-        emergencyMode = false;
-        // Clear any pending skip proposals — they are meaningless outside emergency mode
-        pendingSkipTimestamp[0] = 0;
-        pendingSkipTimestamp[1] = 0;
-        emit EmergencyModeCancelled();
-    }
 
     // ============ Deposit pause (guardian fast, gov slow) ============
 
-    /// @notice Guardian-set flag that blocks new deposits without entering emergency mode.
-    ///         Withdrawals continue normally. Provides a non-permanent "pause" lever for
-    ///         security incidents that do not require full liquidation.
-    function pauseDeposits() external onlyGuardian {
-        if (depositsPaused) return;
-        depositsPaused = true;
-        emit DepositsPaused();
-    }
 
-    /// @notice Gov clears the pause. Asymmetric authority by design — fast set, slow clear
-    ///         means a compromised guardian can grief deposits but cannot drain anything,
-    ///         and gov retains the final say on resumption.
-    function resumeDeposits() external onlyGov {
-        if (!depositsPaused) return;
-        depositsPaused = false;
-        emit DepositsResumed();
-    }
 
     // ============ Rescue recipient (gov, timelocked) ============
 
-    /// @notice Propose a new pre-set recipient for guardian-triggered `rescueAssets`.
-    ///         Timelocked (TIMELOCK_DELAY = 1 week) so a compromised gov cannot redirect
-    ///         rescued funds without observability. Setting to a fresh address is required
-    ///         before `rescueAssets` becomes usable.
-    function proposeRescueRecipient(address newRecipient) external onlyGov {
-        if (newRecipient == address(0)) revert InvalidAddress();
-        _rescueRecipientTimelock.proposeAddress(newRecipient, TIMELOCK_DELAY);
-        emit RescueRecipientChangeProposed(
-            rescueRecipient, newRecipient, _rescueRecipientTimelock.timestamp
-        );
-    }
 
-    function executeRescueRecipient() external onlyGov {
-        address oldRecipient = rescueRecipient;
-        rescueRecipient = _rescueRecipientTimelock.executeAddress();
-        emit RescueRecipientUpdated(oldRecipient, rescueRecipient);
-    }
 
-    function cancelRescueRecipient() external onlyGov {
-        address cancelled = _rescueRecipientTimelock.cancelAddress();
-        emit RescueRecipientChangeCancelled(cancelled);
-    }
 
-    /// @notice Rescue stuck tokens from the vault (emergency mode only).
-    /// @dev Cannot rescue collateral or debt assets — those belong to shareholders.
-    ///      The `recipient` argument must equal the pre-set, gov-timelocked
-    ///      `rescueRecipient`. This removes the "guardian picks the destination"
-    ///      attack surface while keeping the function signature backwards-compatible.
-    ///      Gov must call propose/executeRescueRecipient before this is usable.
-    function rescueAssets(address token, address recipient) external onlyGuardian {
-        if (!emergencyMode) revert EmergencyModeNotActive();
-        if (rescueRecipient == address(0)) revert RescueRecipientNotSet();
-        if (recipient != rescueRecipient) revert InvalidAddress();
-        ZenjiCoreLib.executeRescueAssets(token, recipient, collateralAsset, debtAsset);
-    }
 
-    /// @notice Emergency rescue: 0=transferCollateral, 1=transferDebt, 2=redeemYield
-    /// @dev Guardian-only fallback when standard emergency steps fail.
-    function emergencyRescue(uint8 action) external nonReentrant onlyGuardian {
-        if (!emergencyMode) revert EmergencyModeNotActive();
-        // Action 2 (force-redeem yield strategy) requires step 0 to be resolved first,
-        // ensuring gov had the EMERGENCY_SKIP_DELAY window to veto the emergency.
-        if (action == 2 && (emergencyStepsCompleted & 0x1) == 0) revert EmergencyStepsIncomplete();
-        (accumulatedFees, lastStrategyBalance) = ZenjiCoreLib.executeEmergencyRescue(
-            action,
-            collateralAsset,
-            debtAsset,
-            loanManager,
-            yieldStrategy,
-            swapper,
-            accumulatedFees,
-            lastStrategyBalance
-        );
-    }
 
     /// @notice Set vault parameter:
     /// 0=feeRate, 1=targetLtv, 2=depositCap, 3=bountyRate, 4=maxSlippage (propagates to strategy and swapper)
