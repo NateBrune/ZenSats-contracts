@@ -188,9 +188,10 @@ After `lastVpUpdate > MAX_VP_STALENESS` (1 day), the first `updateCachedVirtualP
 ### [I-05] `_removeLiquidity` applies only a spot floor, asymmetric with `_addLiquidity`'s oracle floor (intentional)
 `_addLiquidity` enforces both a spot (`calc_token_amount`) and an oracle (`_getSafeUnitValue`) minimum-LP floor; `_removeLiquidity` enforces only the spot `calc_withdraw_one_coin` floor. The asymmetry is deliberate — always allow exits, even during a depeg — and is the correct design for a user-withdrawal path, but is noted for completeness. (`src/strategies/lp/BaseCurveStakeDaoStrategy.sol`)
 
-### [I-06] Vault implementations exceed the EIP-170 24,576-byte contract size limit — DEPLOY BLOCKER
+### [I-06] Vault implementations exceeded the EIP-170 24,576-byte contract size limit — RESOLVED
 
 **Severity**: Informational (deployment/ops — not an on-chain vulnerability)
+**Status**: ✅ **RESOLVED** — every vault is now ~21,900 B (~+2,650 B under the limit). See *Resolution* below.
 **Location**: every `Zenji*` implementation (e.g. `ZenjiWbtcLlamaStakeDao`, `ZenjiWstEthLlamaStakeDao`), base `src/Zenji.sol`
 
 **Description**:
@@ -198,7 +199,12 @@ Every concrete vault implementation compiles to ~31.9 KB of runtime bytecode (e.
 
 **Partial mitigation applied**: the gov parameter admin (`setParam`/`executeParamChange`/`cancelParamChange`) was extracted into a delegatecalled library (`ZenjiGovLib`), reducing each vault by ~1,430 B (to ~30,430 B). This is committed and fully tested, but does not by itself bring the vault under the limit.
 
-**Recommendation**: Reaching 24,576 B needs an architectural change, not incremental function extraction (which hits diminishing returns: extracting state-heavy functions by value-passing costs nearly as much ABI encode/decode bytecode as it saves). Effective options: (1) group vault state into storage structs and pass them to logic libraries by **storage pointer** (no encode/decode overhead — the technique that made the `ZenjiGovLib` param extraction efficient); (2) split the vault into a thin delegatecall router + logic facets sharing storage layout; or (3) drop deploy-time-optional features. Track as a pre-deploy blocker.
+**Resolution** (committed): brought every vault from ~31.9 KB to **~21.9 KB** (~+2,650 B margin) via three steps, all fully tested (698 unit + 996/997 fork; the 1 is a pre-existing block-flaky pool-capacity assertion):
+1. **`ZenjiGovLib`** — gov parameter admin (`setParam`/`executeParamChange`/`cancelParamChange`) extracted into a delegatecalled library passing timelock structs by storage pointer (−1.4 KB).
+2. **Immutables → storage** — `collateralAsset`/`debtAsset`/`loanManager`/`yieldStrategy`/`viewHelper` changed from immutable (inlined `PUSH32` at every read site) to storage (`SLOAD`), shrinking the vault ~1.8 KB and making the config readable by the facet.
+3. **`ZenjiAdmin` facet** — the cold-path admin (role transfers, swapper/rescue timelocks, emergency suite, deposit pause; 21 functions) moved into a facet that shares the vault's storage via a common `ZenjiStorage` base. The vault self-deploys the facet in its constructor and reaches it through thin **forwarding stubs** (each cold selector stays in the ABI but delegatecalls the facet). This keeps all typed callers/tests working with zero churn while removing ~6.7 KB of logic from the vault.
+
+Final sizes: every `Zenji*` impl ~21,900 B runtime (≈ +2,600–2,700 B under 24,576), facet `ZenjiAdmin` 8,976 B, vault initcode ~33,671 B (under the EIP-3860 49,152 B limit). `forge inspect` confirms the vault and facet share a byte-identical storage layout.
 
 ---
 
