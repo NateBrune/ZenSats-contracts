@@ -93,15 +93,21 @@ contract SlippageSocialization is Test {
         vm.stopPrank();
     }
 
-    /// @notice Deploy a fresh ZenjiWbtcAaveStakeDao with local (modified) code
-    ///         and etch its runtime bytecode onto the deployed vault address.
-    ///         Storage slots are preserved so existing strategy/LM state works.
+    /// @notice Deploy a fresh ZenjiWbtcAaveStakeDao with local (modified) code and etch its
+    ///         runtime bytecode onto the deployed vault address.
+    /// @dev The local code moved 5 config fields (collateral/debt/viewHelper/loanManager/yieldStrategy)
+    ///      from immutables into storage, which shifts every vault slot from `swapper` (old slot 5)
+    ///      onward by +4. The live vault's storage is in the OLD layout, so after etch we remap it
+    ///      into the NEW layout: copy old slots 5.. to new slots 9.. (+4) and set the 4 new config
+    ///      slots (5-8) from the live getters. ERC20 slots 0-4 (shares/allowances) are unchanged.
     function _patchVaultCode() internal {
         address _lm = address(vault.loanManager());
         address _strat = address(vault.yieldStrategy());
         address _swapper = address(vault.swapper());
         address _owner = vault.gov();
         address _viewHelper = address(vault.viewHelper());
+        address _collateral = address(vault.collateralAsset());
+        address _debt = address(vault.debtAsset());
 
         // Mock strategy.vault() to return address(0) so the constructor
         // passes the "vault is bindable" check (stratVault == address(0)).
@@ -116,8 +122,24 @@ contract SlippageSocialization is Test {
         // Restore oracle mocks that clearMockedCalls removed
         _refreshOracles();
 
-        // Etch only the runtime code; storage (shares, state) is preserved
+        // Snapshot the live vault's storage from the old swapper slot (5) onward.
+        bytes32[46] memory oldSlots;
+        for (uint256 i = 5; i <= 50; i++) {
+            oldSlots[i - 5] = vm.load(VAULT, bytes32(i));
+        }
+
+        // Etch only the runtime code (preserves ERC20 slots 0-4: shares/allowances/supply/name/symbol)
         vm.etch(VAULT, address(patched).code);
+
+        // Remap old slots 5.. into the new layout (shifted +4 by the new config storage fields).
+        for (uint256 i = 5; i <= 50; i++) {
+            vm.store(VAULT, bytes32(i + 4), oldSlots[i - 5]);
+        }
+        // Initialise the 4 new config storage slots (former immutables) from the live getters.
+        vm.store(VAULT, bytes32(uint256(5)), bytes32(uint256(uint160(_collateral))));
+        vm.store(VAULT, bytes32(uint256(6)), bytes32(uint256(uint160(_debt))));
+        vm.store(VAULT, bytes32(uint256(7)), bytes32(uint256(uint160(_viewHelper))));
+        vm.store(VAULT, bytes32(uint256(8)), bytes32(uint256(uint160(_lm))));
     }
 
     function setUp() public {
