@@ -79,10 +79,10 @@ contract Zenji is ERC20, IERC4626 {
 
     // ============ Immutables ============
 
-    IERC20 public immutable collateralAsset;
-    IERC20 public immutable debtAsset;
-    ZenjiViewHelper public immutable viewHelper;
-    ILoanManager public immutable loanManager;
+    IERC20 public collateralAsset;
+    IERC20 public debtAsset;
+    ZenjiViewHelper public viewHelper;
+    ILoanManager public loanManager;
     ISwapper public swapper;
 
     // ============ State ============
@@ -119,7 +119,7 @@ contract Zenji is ERC20, IERC4626 {
     mapping(address => uint256) public lastInBlock;
 
     // Yield strategy
-    IYieldStrategy public immutable yieldStrategy;
+    IYieldStrategy public yieldStrategy;
 
     // Timelock state (using TimelockLib)
     TimelockLib.AddressTimelockData internal _swapperTimelock;
