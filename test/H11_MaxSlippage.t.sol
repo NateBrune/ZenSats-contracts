@@ -198,7 +198,9 @@ contract MockYieldStrategyH11 is IYieldStrategy {
                 rpcUrl = vm.envOr("ETH_RPC_URL", string(""));
             }
             if (bytes(rpcUrl).length > 0) {
-                vm.createSelectFork(rpcUrl);
+                uint256 __forkBlock = vm.envOr("FORK_BLOCK", uint256(0));
+                if (__forkBlock == 0) vm.createSelectFork(rpcUrl);
+                else vm.createSelectFork(rpcUrl, __forkBlock);
             }
 
             (,, uint256 btcUpdate,,) = IChainlinkOracleH11(BTC_USD_ORACLE).latestRoundData();

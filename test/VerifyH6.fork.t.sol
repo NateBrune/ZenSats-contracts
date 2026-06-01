@@ -79,7 +79,9 @@ contract VerifyH6ForkTest is Test {
             rpcUrl = vm.envOr("ETH_RPC_URL", string(""));
         }
         require(bytes(rpcUrl).length > 0, "RPC URL required");
-        vm.createSelectFork(rpcUrl);
+        uint256 __forkBlock = vm.envOr("FORK_BLOCK", uint256(0));
+        if (__forkBlock == 0) vm.createSelectFork(rpcUrl);
+        else vm.createSelectFork(rpcUrl, __forkBlock);
 
         (,, uint256 cbBtcUpdate,,) = IChainlinkOracle(CBBTC_USD_ORACLE).latestRoundData();
         if (cbBtcUpdate + 1 > block.timestamp) {

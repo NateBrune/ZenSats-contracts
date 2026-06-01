@@ -72,7 +72,9 @@ contract LargeLiquidityStressTest is Test {
             vm.skip(true);
             return;
         }
-        vm.createSelectFork(rpcUrl);
+        uint256 __forkBlock = vm.envOr("FORK_BLOCK", uint256(0));
+        if (__forkBlock == 0) vm.createSelectFork(rpcUrl);
+        else vm.createSelectFork(rpcUrl, __forkBlock);
 
         vault = Zenji(DEPLOYED_VAULT);
         strategy = vault.yieldStrategy();

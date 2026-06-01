@@ -125,7 +125,9 @@ abstract contract ZenjiForkTestBase is Test {
         string memory rpcUrl = vm.envOr("MAINNET_RPC_URL", string(""));
         if (bytes(rpcUrl).length == 0) rpcUrl = vm.envOr("ETH_RPC_URL", string(""));
         if (bytes(rpcUrl).length > 0) {
-            vm.createSelectFork(rpcUrl);
+            uint256 __forkBlock = vm.envOr("FORK_BLOCK", uint256(0));
+            if (__forkBlock == 0) vm.createSelectFork(rpcUrl);
+            else vm.createSelectFork(rpcUrl, __forkBlock);
         } else {
             vm.skip(true);
             return;

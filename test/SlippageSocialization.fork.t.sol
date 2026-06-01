@@ -66,7 +66,9 @@ contract SlippageSocialization is Test {
             vm.skip(true);
             return;
         }
-        vm.createSelectFork(rpcUrl);
+        uint256 __forkBlock = vm.envOr("FORK_BLOCK", uint256(0));
+        if (__forkBlock == 0) vm.createSelectFork(rpcUrl);
+        else vm.createSelectFork(rpcUrl, __forkBlock);
 
         vault = Zenji(VAULT);
         strategy = vault.yieldStrategy();
@@ -333,7 +335,9 @@ contract SlippageSocialization is Test {
             // Create a fresh fork for each test to reset state
             string memory rpcUrl = vm.envOr("MAINNET_RPC_URL", string(""));
             if (bytes(rpcUrl).length == 0) rpcUrl = vm.envOr("ETH_RPC_URL", string(""));
-            vm.createSelectFork(rpcUrl);
+            uint256 __forkBlock = vm.envOr("FORK_BLOCK", uint256(0));
+            if (__forkBlock == 0) vm.createSelectFork(rpcUrl);
+            else vm.createSelectFork(rpcUrl, __forkBlock);
 
             vault = Zenji(VAULT);
             strategy = vault.yieldStrategy();

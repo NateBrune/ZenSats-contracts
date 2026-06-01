@@ -101,7 +101,9 @@ contract VaultInvariants is Test {
             vm.skip(true);
             return;
         }
-        vm.createSelectFork(rpcUrl);
+        uint256 __forkBlock = vm.envOr("FORK_BLOCK", uint256(0));
+        if (__forkBlock == 0) vm.createSelectFork(rpcUrl);
+        else vm.createSelectFork(rpcUrl, __forkBlock);
 
         wbtc = IERC20(WBTC);
         owner = makeAddr("owner");
