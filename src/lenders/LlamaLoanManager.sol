@@ -45,8 +45,14 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     ///      leg has a long heartbeat (e.g. WstEthOracle's stETH/ETH leg — 24h Chainlink heartbeat).
     uint256 public immutable maxOracleStaleness;
 
-    /// @notice Maximum acceptable debt/USD oracle staleness (7 hours — heartbeat is 6 hours)
-    uint256 public constant MAX_DEBT_ORACLE_STALENESS = 25200;
+    /// @notice Maximum acceptable debt/USD oracle staleness (25 hours).
+    /// @dev The crvUSD/USD Chainlink feed has a 24h heartbeat (updates are deviation-triggered
+    ///      in between), so the window MUST exceed 24h or valid-but-quiet prices get rejected.
+    ///      A previous 7h value caused a predictable periodic DoS: during any quiet >7h gap,
+    ///      _checkOracleFreshness reverted and blocked BOTH normal withdrawals AND the emergency
+    ///      unwind step, while the strategy/swapper (25h window) still accepted the same price.
+    ///      Now aligned to the 90000s window used by the strategy and swapper for this feed.
+    uint256 public constant MAX_DEBT_ORACLE_STALENESS = 90000;
 
     /// @notice Dust threshold in debt asset (1 USD) - below this we leave position with safe collateral
     uint256 public constant DUST_THRESHOLD = 1e18;
@@ -86,6 +92,10 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     address public constant DEBT_FLASH_LENDER = 0x26dE7861e213A5351F6ED767d00e0839930e9eE1;
     bytes32 private constant FLASH_LOAN_CALLBACK = keccak256("ERC3156FlashBorrower.onFlashLoan");
 
+    /// @notice keccak of LlamaLend's band-redistribution dust revert reason ("Amount too low").
+    /// @dev The ONLY partial-repay revert that may be escalated to a destructive full close.
+    bytes32 private constant _DUST_REVERT_HASH = keccak256(bytes("Amount too low"));
+
     /// @notice Temporary state for flashloan callback
     struct UnwindContext {
         uint256 collateralNeeded;
@@ -95,6 +105,8 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     error InsufficientFlashloanRepayment();
     error HealthTooLow();
     error SwapperUnderperformed(uint256 expected, uint256 received);
+    /// @notice A partial repay reverted for a reason other than LlamaLend's dust assertion.
+    error PartialRepayFailed();
 
     event PositionUnwound(
         uint256 collateralRequested, uint256 debtRepaid, uint256 collateralRemoved
@@ -299,11 +311,21 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
                 try llamaLend.repay(repayNow) {
                 // partial repay succeeded
                 }
-                catch {
-                    // Partial repay tripped LlamaLend's dust assertion. Escalate to
-                    // full close. If we hold enough debt token, repay all now;
-                    // otherwise leave repayNow=0 and let the flashloan path cover
-                    // the whole debt below.
+                catch Error(string memory reason) {
+                    // ONLY LlamaLend's band-redistribution dust assertion ("Amount too
+                    // low") may be escalated to a destructive, flash-loan-dependent full
+                    // close. Any other revert (controller pause, transient fault, oracle
+                    // issue inside the controller) must surface — silently escalating it
+                    // would socialize exit costs across all remaining depositors and force
+                    // the flash lender unnecessarily. Escalation fails safe: an unmatched
+                    // reason reverts here, leaving the position intact and recoverable via
+                    // the vault's emergency flow rather than auto-closing.
+                    if (keccak256(bytes(reason)) != _DUST_REVERT_HASH) {
+                        revert PartialRepayFailed();
+                    }
+                    // Dust residual confirmed → escalate to full close. If we hold enough
+                    // debt token, repay all now; otherwise leave repayNow=0 and let the
+                    // flashloan path cover the whole debt below.
                     fullyClose = true;
                     debtToRepay = currentDebt;
                     if (debtBalance >= currentDebt) {
@@ -313,6 +335,11 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
                     } else {
                         repayNow = 0;
                     }
+                }
+                catch {
+                    // Non-string revert (Vyper Panic / empty returndata) — not the dust
+                    // assertion. Fail safe rather than escalate to a full close.
+                    revert PartialRepayFailed();
                 }
             }
         }

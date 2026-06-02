@@ -491,7 +491,10 @@ contract LlamaLoanManagerTest is LoanManagerTestBase {
     // ============ crvUSD Oracle Staleness ============
 
     function test_crvUsdOracle_stale_reverts() public {
-        crvUsdOracle.setUpdatedAt(block.timestamp - 25201);
+        // Debt-oracle window is 90000s (25h) to clear the crvUSD/USD 24h heartbeat (H-01 fix).
+        vm.warp(block.timestamp + 90001); // advance so the debt oracle can age past 25h
+        oracle.setUpdatedAt(block.timestamp); // keep collateral oracle fresh
+        crvUsdOracle.setUpdatedAt(block.timestamp - 90001); // debt oracle stale (> 25h)
         vm.expectRevert(ILoanManager.StaleOracle.selector);
         manager.checkOracleFreshness();
     }
