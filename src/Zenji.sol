@@ -723,7 +723,11 @@ contract Zenji is ZenjiStorage, IERC4626 {
 
         (accumulatedFees, lastStrategyBalance) =
             ZenjiCoreLib.processWithdrawFees(recipient, yieldStrategy, debtAsset, accumulatedFees);
-        feesAtLastRebalance = accumulatedFees;
+        // M-05: do NOT reset feesAtLastRebalance here. It is a *rebalance* checkpoint; zeroing it
+        // on a fee withdrawal lets a strategist reset the keeper-bounty baseline and inflate the
+        // bounty paid on the next rebalance. Only rebalance() advances this checkpoint. The
+        // _accrueYieldFees clamp keeps it <= accumulatedFees after genuine losses, and
+        // processRebalanceBounty guards the subtraction, so leaving it unchanged is underflow-safe.
     }
 
     // ============ Guardian Functions ============

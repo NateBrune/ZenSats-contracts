@@ -263,18 +263,16 @@ contract ZenjiAdmin is ZenjiStorage {
             pendingGov = address(0);
             pendingGovTimestamp = 0;
             emit GovernanceUpdated(msg.sender);
-            // Propagate to strategy if it supports vault-initiated ownership transfer.
-            // Wrapped in try/catch so a bricked or paused strategy can't block gov rotation.
-            // Operators can re-sync ownership later via the strategy's own admin path.
-            try yieldStrategy.transferOwnerFromVault(msg.sender) {
-            // success — strategy owner is now the new gov
-            }
-            catch {
-                emit StrategyOwnerPropagationFailed(msg.sender);
-            }
-            // Propagate gov to the registered swapper too (mirrors the strategy owner handoff),
-            // so a rotated-away key cannot keep widening the swap floor via setSlippage.
-            // try/catch so a swapper that doesn't recognise this vault can't block gov rotation.
+            // M-02: propagate ownership to the strategy ATOMICALLY — no try/catch. If the
+            // strategy can't accept the new owner, the entire rotation reverts so vault.gov
+            // can never diverge from strategy.owner. The previous try/catch swallowed the
+            // failure, leaving a rotated-away key with rescueERC20 / setSlippage authority and
+            // no on-chain re-sync path. A paused/bricked strategy must be made transferable
+            // before gov can rotate — preferred over a silent, permanent split.
+            yieldStrategy.transferOwnerFromVault(msg.sender);
+            // Swapper gov handoff stays best-effort: the swapper is mutable via its own 1-week
+            // timelock (a stale swapper can simply be rotated out), and not every registered
+            // swapper implements vault-initiated gov rotation, so it must not block the handoff.
             try ISwapperGovRotation(address(swapper)).transferGovFromVault(msg.sender) {
             // success — swapper gov is now the new gov
             }

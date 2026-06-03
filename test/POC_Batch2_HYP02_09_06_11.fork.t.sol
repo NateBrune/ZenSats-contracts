@@ -322,41 +322,25 @@ contract POC_Batch2_HYP02_09_06_11 is ZenjiForkTestBase {
             "ORACLE_STALE_OR_SLIPPAGE"
         );
 
-        // ── STEP 3: Trigger harvest (which calls _claimAndSwapRewards internally) ──
-        // harvestYield() → _harvestStrategy() → strategy.harvest() → _claimAndSwapRewards()
-        // _claimAndSwapRewards() TRANSFERS CRV to swapper BEFORE the try block
+        // ── STEP 3: Trigger harvest. FIXED (M-06): _claimAndSwapRewards now does the transfer +
+        // swap atomically via an external self-call, so a swap revert rolls back the CRV transfer.
         vm.prank(address(llamaVault));
         strategy.harvest();
 
         // ── RECORD AFTER ─────────────────────────────────────────────────────
         uint256 crvAtSwapperAfter = IERC20(CRV).balanceOf(address(crvSwapper));
         uint256 crvAtStrategyAfter = IERC20(CRV).balanceOf(address(strategy));
-        console.log("=== HYP-09 AFTER FAILED HARVEST ===");
+        console.log("=== HYP-09 AFTER FAILED HARVEST (M-06 fixed) ===");
         console.log("CRV at swapper after:", crvAtSwapperAfter);
         console.log("CRV at strategy after:", crvAtStrategyAfter);
 
-        // ── ASSERTION 1: CRV moved from strategy to swapper (transfer happened before try block) ──
-        assertEq(crvAtStrategyAfter, 0, "CRV should have left strategy (transferred before try)");
-        assertGe(
-            crvAtSwapperAfter,
-            crvAtSwapperBefore + simulatedCrvReward,
-            "CRV should be stranded at swapper"
-        );
-        console.log("CONFIRMED: CRV stranded at swapper:", crvAtSwapperAfter);
-
-        // ── STEP 4: Recovery requires gov.rescueToken — no auto-recovery path ──
-        // A subsequent harvest reads only the strategy's own crv.balanceOf, never the
-        // swapper's, so stranded CRV is never swept automatically.
-        vm.clearMockedCalls();
-        uint256 govOriginalBalance = IERC20(CRV).balanceOf(owner);
-        vm.prank(owner);
-        crvSwapper.rescueToken(CRV, owner, crvAtSwapperAfter);
-        assertEq(
-            IERC20(CRV).balanceOf(owner),
-            govOriginalBalance + crvAtSwapperAfter,
-            "Gov can rescue stranded CRV via rescueToken"
-        );
-        console.log("CONFIRMED: stranded CRV only recoverable via gov.rescueToken:", crvAtSwapperAfter);
+        // ── ASSERTION (M-06): the failed swap rolled back the transfer — CRV is NOT stranded at
+        // the swapper; it stays at the strategy to be retried on the next harvest. No manual rescue.
+        assertEq(crvAtSwapperAfter, crvAtSwapperBefore, "M-06: no CRV stranded at swapper");
+        // >= because the real accountant claim may add a little freshly-earned CRV on top of the
+        // dealt amount; the point is the dealt CRV is retained (not stranded), never less.
+        assertGe(crvAtStrategyAfter, simulatedCrvReward, "M-06: CRV retained at strategy for retry");
+        console.log("M-06 FIXED: failed swap leaves CRV at the strategy (no stranding)");
     }
 
     // =========================================================================
@@ -427,22 +411,13 @@ contract POC_Batch2_HYP02_09_06_11 is ZenjiForkTestBase {
         // Verify amountOutMin=0 is present by checking what happens on a minimal swap:
         // The code encodes uint256(0) as amountOutMin for the V3 hop.
         // We can confirm this by reading the swapper's swap logic structure.
-        console.log("=== HYP-06 CODE TRACE ===");
-        console.log("UniswapMixedCurveSwapper.swapCollateralForDebt() V3 hop:");
-        console.log("  amountOutMin = uint256(0)  [LINE 129 -- confirmed]");
-        console.log("  Comment: 'Curve step enforces floor'");
-        console.log("");
-        console.log("Grief DoS mechanism:");
-        console.log("  1. Attacker pre-manipulates wstETH/WETH V3 pool before withdrawal");
-        console.log("  2. V3 hop executes with amountOutMin=0 ??? accepts manipulated (low) WETH output");
-        console.log("  3. Curve hop with less WETH ??? less crvUSD output");
-        console.log("  4. crvUSD < 95% oracle floor ??? SwapperUnderperformed revert");
-        console.log("  5. Withdrawal transaction reverts ??? DoS");
-        console.log("  6. Attacker profit: 0 (95% floor prevents MEV extraction)");
-        console.log("");
-        console.log("VERDICT: Grief DoS confirmed [CODE-TRACE]");
-        console.log("ATTACKER GAIN: Zero (floor blocks extraction)");
-        console.log("USER IMPACT: Withdrawal temporarily blocked during manipulation");
+        console.log("=== HYP-06 (M-07 FIXED) ===");
+        console.log("UniswapMixedCurveSwapper.swapCollateralForDebt() V3 hop now sets amountOutMin");
+        console.log("from the exact wstETH->stETH rate (stEthPerToken) * (1 - slippage), so the");
+        console.log("wstETH->WETH hop can no longer be sandwiched beyond `slippage`. The grief-DoS");
+        console.log("window (manipulate V3 -> low WETH -> sub-95%-floor crvUSD -> revert) is closed;");
+        console.log("dust swaps below DUST_SWAP_THRESHOLD keep minOut=0 to avoid over-constraint.");
+        console.log("The end-to-end 95% LoanManager floor remains as the backstop.");
 
         // Confirm the 95% floor constant in LlamaLoanManager
         assertEq(llamaManager.MIN_SWAP_OUT_BPS(), 9500, "95% oracle floor in LoanManager");
@@ -503,40 +478,32 @@ contract POC_Batch2_HYP02_09_06_11 is ZenjiForkTestBase {
             vm.prank(address(llamaVault));
             strategy.harvest();
 
-            uint256 crvAtSwapper = IERC20(CRV).balanceOf(address(crvSwapper));
-            console.log("After harvest", i + 1, "- CRV at swapper:", crvAtSwapper);
+            // FIXED (M-06): each failed swap rolls back its transfer, so nothing accumulates
+            // at the swapper across repeated stale-window harvests.
+            assertEq(
+                IERC20(CRV).balanceOf(address(crvSwapper)),
+                crvAtSwapperBeforeAll,
+                "M-06: no CRV accumulates at swapper on failed harvest"
+            );
         }
 
-        // ── RECORD TOTAL ACCUMULATION ─────────────────────────────────────────
+        // ── RESULT ────────────────────────────────────────────────────────────
         uint256 crvAtSwapperAfterAll = IERC20(CRV).balanceOf(address(crvSwapper));
-        uint256 totalStranded = crvAtSwapperAfterAll - crvAtSwapperBeforeAll;
-
-        console.log("=== HYP-11 ACCUMULATION RESULT ===");
-        console.log("CRV stranded total after 3 failed harvests:", totalStranded);
-        console.log("Expected (3 * 5 CRV):", 3 * crvPerHarvest);
-
-        // ── ASSERTION: accumulation compounds across the 3 failed harvests ──
-        assertGe(
-            totalStranded,
-            3 * crvPerHarvest,
-            "CRV accumulates at swapper across multiple oracle-stale harvests"
-        );
-
-        // ── STEP 3: Recovery requires gov rescue — accumulated CRV is not auto-recovered ──
-        vm.clearMockedCalls();
-        uint256 govBefore = IERC20(CRV).balanceOf(owner);
-        vm.prank(owner);
-        crvSwapper.rescueToken(CRV, owner, totalStranded);
         assertEq(
-            IERC20(CRV).balanceOf(owner),
-            govBefore + totalStranded,
-            "Gov rescues the full accumulated stranded CRV"
+            crvAtSwapperAfterAll,
+            crvAtSwapperBeforeAll,
+            "M-06: zero accumulation at swapper across 3 oracle-stale harvests"
+        );
+        // CRV remains at the strategy (the most recent claim), retryable once the oracle recovers.
+        assertEq(
+            IERC20(CRV).balanceOf(address(strategy)),
+            crvPerHarvest,
+            "M-06: CRV retained at strategy for the next harvest to retry"
         );
 
-        // ── Chain severity — oracle stale multiplies CRV stranding ──
-        console.log("=== HYP-11 CHAIN ANALYSIS ===");
-        console.log("Each harvest attempt during a stale window strands", crvPerHarvest / 1e18, "CRV");
-        console.log("Recovery path: gov.crvSwapper.rescueToken(); H-01 oracle fix shrinks the window");
+        console.log("=== HYP-11 (M-06 fixed) ===");
+        console.log("No CRV stranded across repeated stale-window harvests; retained at strategy");
+        console.log("H-01 oracle fix additionally shrinks the stale window that triggers this");
     }
 
     /// @notice POC HYP-11 companion: Code-trace to confirm the chain mechanism

@@ -69,7 +69,9 @@ contract CrvToCrvUsdSwapper is BaseSwapper {
         if (msg.sender != gov && msg.sender != vault && msg.sender != authorizedCaller) {
             revert Unauthorized();
         }
-        if (newSlippage == 0 || newSlippage >= PRECISION) revert InvalidSlippage();
+        // Enforce the same 5% MAX_SLIPPAGE cap as BaseSwapper — without it, gov/strategy
+        // could set near-100% slippage and MEV-drain the entire CRV harvest.
+        if (newSlippage == 0 || newSlippage > MAX_SLIPPAGE) revert InvalidSlippage();
         slippage = newSlippage;
         emit SlippageUpdated(newSlippage);
     }

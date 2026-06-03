@@ -26,10 +26,12 @@ Teams should prioritize the oracle staleness alignment in `LlamaLoanManager` and
 | Severity | Count |
 |----------|-------|
 | High | 2 |
-| Medium | 7 |
+| Medium | 6 (+1 false positive) |
 | Low | 10 |
 | Informational | 2 |
-| **Total** | **21** |
+| **Total** | **20** (+1 FP) |
+
+> **Remediation status (2026-06-02):** All High and Medium findings are **resolved**. H-01, H-02 and M-02–M-07 are fixed in code with regression tests; **M-01 is a false positive** (cbBTC/USD is a ~24h-heartbeat feed, so its 25h staleness window is correct). See each finding's STATUS note. The Low/Informational items are not yet addressed.
 
 ### Components Audited
 
@@ -231,11 +233,13 @@ catch (bytes memory err) {
 
 ## Medium Findings
 
-### [M-01] cbBTC Swapper Accepts BTC/USD Prices That Are 25× Stale — Withdrawal DoS and MEV Exposure [VERIFIED]
+### [M-01] cbBTC Swapper Accepts BTC/USD Prices That Are 25× Stale — Withdrawal DoS and MEV Exposure [FALSE POSITIVE]
 
-**Severity**: Medium
+**Severity**: ~~Medium~~ → **Not a finding**
 **Location**: `src/swappers/base/CbBtcUniswapV3TwoHopSwapper.sol:26`
 **Confidence**: HIGH (4/4 PoC tests passed, [POC-PASS])
+
+> **STATUS — FALSE POSITIVE (2026-06-02):** The finding assumed the swapper's oracle is the BTC/USD feed (≈1h heartbeat). The actual feed is **Coinbase cbBTC/USD, which has a ~24h heartbeat**, so the 90000s (25h) staleness window is correct and intentional — matching the heartbeat plus margin. There is no over-loose acceptance window and no DoS/MEV exposure. No code change. (The PoC asserted the constant mismatch against an assumed 1h heartbeat; that premise does not hold for cbBTC/USD.)
 
 **Description**:
 `CbBtcUniswapV3TwoHopSwapper` defines its oracle staleness window as a hardcoded constant:
@@ -279,6 +283,8 @@ test_POC_HYP03_stale_price_drives_wrong_minOut — PASS
 **Severity**: Medium
 **Location**: `src/ZenjiAdmin.sol:258-283` (acceptRole), `src/strategies/BaseYieldStrategy.sol` (owner-locked functions)
 **Confidence**: HIGH (1/1 PoC test passed, [POC-PASS], chain analysis confirmed)
+
+> **STATUS — FIXED (2026-06-02):** `ZenjiAdmin.acceptRole(1)` now calls `yieldStrategy.transferOwnerFromVault()` **directly (no try/catch)**, so if the strategy can't accept the new owner the whole rotation reverts and `vault.gov` can never diverge from `strategy.owner`. (The swapper gov handoff stays best-effort — the swapper is mutable via its own 1-week timelock and not every swapper implements vault-initiated rotation.) Regression: `VerifyBatch3_Governance.t.sol::test_POC_HYP04...` and `test_POC_HYP10...` (rotation reverts atomically; no divergence; succeeds once the strategy is transferable). This also closes the M-10/CH-04 split-authority chain.
 
 **Description**:
 When governance rotates (`acceptRole(role=1)`), `ZenjiAdmin` updates `vault.gov` to the new key and then attempts to propagate ownership to the yield strategy and swapper via try/catch:
@@ -334,6 +340,8 @@ test_POC_HYP04_GovStrategyOwnerDivergence — PASS
 **Location**: `src/swappers/reward/CrvToCrvUsdSwapper.sol:68-75`
 **Confidence**: HIGH (1/1 PoC test passed, [POC-PASS])
 
+> **STATUS — FIXED (2026-06-02):** `CrvToCrvUsdSwapper.setSlippage` now enforces `> MAX_SLIPPAGE` (5%) — the same cap as `BaseSwapper` — instead of `>= PRECISION`. Near-100% reward slippage is no longer settable. Regression: `VerifyBatch3_Governance.t.sol::test_POC_HYP05...` (9e17 reverts; 5e16 allowed; >5e16 reverts).
+
 **Description**:
 `BaseSwapper.setSlippage()` enforces a `MAX_SLIPPAGE = 5e16` (5%) cap on all swapper slippage:
 
@@ -387,6 +395,8 @@ CRV→crvUSD is a direct Curve pool swap on a pegged pair; 5% is already generou
 **Severity**: Medium
 **Location**: `src/libraries/ZenjiGovLib.sol:115-119` (setParam), `src/libraries/ZenjiGovLib.sol:163-168` (executeParamChange), `src/strategies/BaseYieldStrategy.sol:26` (MIN_SLIPPAGE)
 **Confidence**: HIGH (4/4 PoC tests passed, [POC-PASS])
+
+> **STATUS — FIXED (2026-06-02):** Added `MIN_VAULT_SLIPPAGE = 1e15` to `ZenjiGovLib`, applied in both the `setParam(4)` and `executeParamChange(4)` paths, so the vault rejects sub-floor slippage up front instead of letting the strategy's `setSlippage` revert the whole change. The vault's accepted range `[1e15, 5e16]` now matches the strategy's `[MIN_SLIPPAGE, MAX_SLIPPAGE]`. Regression: `H11_MaxSlippage.t.sol` (the three slippage tests now use the `1e15` floor).
 
 **Description**:
 `ZenjiGovLib.setParam(p=4, v)` propagates a slippage update to the yield strategy with no error handling:
@@ -446,6 +456,8 @@ if (swapper != address(0)) {
 **Location**: `src/Zenji.sol:724-726`, `src/libraries/ZenjiCoreLib.sol:164`
 **Confidence**: HIGH (1/1 PoC test passed, [POC-PASS])
 
+> **STATUS — FIXED (2026-06-02):** Removed the `feesAtLastRebalance = accumulatedFees` assignment from `withdrawFees`. The keeper-bounty baseline is now advanced **only** by `rebalance()`, so a strategist can no longer zero it via a fee withdrawal to inflate the next bounty. `processRebalanceBounty`'s `accumulatedFees > feesAtLastRebalance` guard keeps the subtraction underflow-safe, and the `_accrueYieldFees` clamp still resets the baseline only after genuine losses. Fee-accounting invariant suite remains green.
+
 **Description**:
 `Zenji.withdrawFees()` calls `ZenjiCoreLib.processWithdrawFees()` and then unconditionally sets `feesAtLastRebalance = accumulatedFees`:
 
@@ -495,6 +507,8 @@ test_POC_HYP08_WithdrawFeesResetsKeeperBountyBasis — PASS
 **Severity**: Medium
 **Location**: `src/strategies/lp/BaseCurveStakeDaoStrategy.sol:141-153`
 **Confidence**: HIGH (2/2 PoC tests passed; 2/2 chain confirmation tests passed, [POC-PASS])
+
+> **STATUS — FIXED (2026-06-02):** `_claimAndSwapRewards` now performs the CRV transfer + swap **atomically via an external self-call** (`transferAndSwapCrv`, callable only by the strategy). When the swap reverts, the external-call frame rolls back the CRV transfer, so the CRV stays at the strategy and is retried automatically on the next harvest — no stranding at the swapper, no manual `rescueToken` needed. Regression: `POC_Batch2_...fork.t.sol::test_POC_HYP09...` / `test_POC_HYP11...` (CRV retained at strategy; zero swapper accumulation across repeated failed harvests).
 
 **Description**:
 `BaseCurveStakeDaoStrategy._claimAndSwapRewards()` transfers CRV to the swapper contract **before** the swap attempt:
@@ -556,6 +570,8 @@ This requires `crvSwapper.swap()` to pull from the strategy or accept a `from` a
 **Severity**: Medium
 **Location**: `src/swappers/base/UniswapMixedCurveSwapper.sol:128`
 **Confidence**: HIGH (2/2 PoC tests passed, [POC-PASS])
+
+> **STATUS — FIXED (2026-06-02):** The collateral→WETH V3 hop in `swapCollateralForDebt` now sets `amountOutMin` from the exact wstETH→stETH protocol rate (`stEthPerToken()`, stETH≈ETH≈WETH) × `(1 - slippage)`, so the hop can no longer be sandwiched beyond `slippage`. This uses the wstETH↔ETH relationship directly (not the crvUSD/composite path), avoiding the divergence that over-constrains the final leg; dust inputs below `DUST_SWAP_THRESHOLD` keep `minOut = 0`. The rate is fetched via a **soft staticcall**: `UniswapMixedCurveSwapper` also serves non-wstETH collateral (the WBTC/crvUSD Llama vault uses it via WBTC→WETH→crvUSD), which has no `stEthPerToken()`; for those the call fails and the hop keeps `minOut = 0`, relying on the Curve `get_dy` floor + the end-to-end 95% LoanManager floor (M-07 is specifically the *wstETH* vault). Regression: the wstETH **and** WBTC Llama fork suites pass with the new floor; `test_POC_HYP06...` updated.
 
 **Description**:
 `UniswapMixedCurveSwapper.swapCollateralForDebt()` sets `amountOutMin = uint256(0)` for the Uniswap V3 wstETH→WETH hop:

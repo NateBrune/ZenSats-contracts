@@ -23,6 +23,9 @@ library ZenjiGovLib {
     uint256 internal constant MIN_TARGET_LTV = 15e16; // 15%
     uint256 internal constant MAX_REBALANCE_BOUNTY = 5e17; // 50%
     uint256 internal constant MAX_VAULT_SLIPPAGE = 5e16; // 5%
+    /// @dev Must match BaseYieldStrategy.MIN_SLIPPAGE — the vault rejects sub-floor values
+    ///      up front rather than letting the strategy's setSlippage revert the whole param change.
+    uint256 internal constant MIN_VAULT_SLIPPAGE = 1e15; // 0.1%
     uint256 internal constant PARAM_TIMELOCK_DELAY = 1 weeks;
 
     /// @notice Snapshot of the five gov-settable scalar params, threaded in and back out.
@@ -107,7 +110,7 @@ library ZenjiGovLib {
                 s.rebalanceBountyRate = v;
             }
         } else if (p == 4) {
-            if (v == 0 || v > MAX_VAULT_SLIPPAGE) revert InvalidSlippage();
+            if (v < MIN_VAULT_SLIPPAGE || v > MAX_VAULT_SLIPPAGE) revert InvalidSlippage();
             if (v > s.maxSlippage) {
                 slipT.propose(v, PARAM_TIMELOCK_DELAY);
                 emit MaxSlippageChangeProposed(s.maxSlippage, v, block.timestamp + PARAM_TIMELOCK_DELAY);
@@ -160,7 +163,7 @@ library ZenjiGovLib {
             s.rebalanceBountyRate = newBounty;
         } else if (p == 4) {
             uint256 newSlip = slipT.execute();
-            if (newSlip == 0 || newSlip > MAX_VAULT_SLIPPAGE) revert InvalidSlippage();
+            if (newSlip < MIN_VAULT_SLIPPAGE || newSlip > MAX_VAULT_SLIPPAGE) revert InvalidSlippage();
             emit ParamUpdated(p, s.maxSlippage, newSlip);
             s.maxSlippage = newSlip;
             IYieldStrategy(yieldStrategy).setSlippage(newSlip);

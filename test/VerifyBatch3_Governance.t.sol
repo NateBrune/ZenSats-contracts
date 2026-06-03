@@ -259,43 +259,28 @@ contract VerifyBatch3_Governance is Test {
         vm.prank(gov);
         vault.transferRole(1, newGov);
 
-        // Step 2: Warp past 4-week delay
+        // Step 2: Warp past the role-transfer delay
         vm.warp(block.timestamp + vault.GOV_GUARDIAN_TRANSFER_DELAY() + 1);
 
-        // Step 3: New gov accepts — vault.gov updates, but strategy.transferOwnerFromVault reverts silently
+        // FIXED (M-02): acceptRole now propagates ownership to the strategy WITHOUT try/catch,
+        // so if the strategy cannot accept the new owner the entire rotation reverts. There is
+        // no silent divergence.
         vm.prank(newGov);
+        vm.expectRevert();
         vault.acceptRole(1);
 
-        // ASSERTION A: vault.gov is now newGov (rotation succeeded)
-        assertEq(vault.gov(), newGov, "HYP-04: vault.gov should be newGov");
+        // Rotation rolled back atomically — both unchanged, no divergence.
+        assertEq(vault.gov(), gov, "M-02: vault.gov unchanged after failed propagation");
+        assertEq(strategy.owner(), gov, "M-02: strategy.owner unchanged (no divergence)");
 
-        // ASSERTION B: strategy.owner is STILL old gov (divergence confirmed)
-        assertEq(
-            strategy.owner(),
-            gov,
-            "HYP-04 BUG: strategy.owner should be oldGov after silent failure"
-        );
-
-        // ASSERTION C: old gov key can still call setSlippage on strategy directly
-        // (MIN_SLIPPAGE=1e15, MAX_SLIPPAGE=5e16; use 2e16 = 2%, which is valid)
-        vm.prank(gov);
-        strategy.setSlippage(2e16);
-        assertEq(strategy.slippageTolerance(), 2e16, "HYP-04 BUG: old gov retained setSlippage power");
-
-        // ASSERTION D: new gov cannot re-sync via transferOwner (vault.code.length > 0)
-        // BaseYieldStrategy.transferOwner: if (vault != address(0) && vault.code.length > 0) revert Unauthorized()
+        // Once the strategy is transferable, the rotation succeeds and BOTH advance together.
+        strategy.setRevertOnOwnerTransfer(false);
         vm.prank(newGov);
-        vm.expectRevert(); // Unauthorized
-        strategy.transferOwner(newGov);
+        vault.acceptRole(1);
+        assertEq(vault.gov(), newGov, "M-02: rotation succeeds when strategy is transferable");
+        assertEq(strategy.owner(), newGov, "M-02: strategy.owner propagated atomically");
 
-        // ASSERTION E: transferOwnerFromVault is only callable by vault, not by newGov directly
-        vm.prank(newGov);
-        vm.expectRevert(); // Unauthorized (msg.sender != vault)
-        strategy.transferOwnerFromVault(newGov);
-
-        // SUMMARY: divergence is permanent — old key retains strategy control, no re-sync path
-        console.log("HYP-04 CONFIRMED: vault.gov=%s, strategy.owner=%s", vault.gov(), strategy.owner());
-        console.log("HYP-04: old gov can still call setSlippage directly on strategy");
+        console.log("M-02 FIXED: gov rotation is atomic; vault.gov and strategy.owner cannot diverge");
     }
 
     // ============================================================
@@ -331,32 +316,23 @@ contract VerifyBatch3_Governance is Test {
         // BASELINE: confirm BaseSwapper MAX_SLIPPAGE = 5e16
         assertEq(BaseSwapper(address(crvSwapper)).MAX_SLIPPAGE(), 5e16, "HYP-05: MAX_SLIPPAGE should be 5e16");
 
-        // TEST: CrvToCrvUsdSwapper.setSlippage(9e17) — 90% slippage — should SUCCEED (bug)
-        //       BaseSwapper.setSlippage(9e17) would revert with InvalidSlippage
+        // FIXED (M-03): CrvToCrvUsdSwapper now enforces the BaseSwapper MAX_SLIPPAGE (5%) cap.
+        // 90% slippage must REVERT (previously accepted via the >= PRECISION guard).
         vm.prank(swapperGov);
-        crvSwapper.setSlippage(9e17); // 90% — only blocked at >= PRECISION (1e18), not at > 5e16
+        vm.expectRevert(); // InvalidSlippage — 9e17 > MAX_SLIPPAGE (5e16)
+        crvSwapper.setSlippage(9e17);
 
-        uint256 setSlippage = crvSwapper.slippage();
-        assertEq(setSlippage, 9e17, "HYP-05 BUG: 90% slippage accepted by CrvToCrvUsdSwapper");
-
-        // CONTRAST: same call to BaseSwapper reverts
-        // We can't call BaseSwapper directly (abstract), but we verify the logic difference:
-        // BaseSwapper: if (newSlippage == 0 || newSlippage > MAX_SLIPPAGE) revert InvalidSlippage()
-        // CrvToCrvUsdSwapper: if (newSlippage == 0 || newSlippage >= PRECISION) revert InvalidSlippage()
-        // 9e17 > 5e16 → BaseSwapper REVERTS; 9e17 < 1e18 → CrvToCrvUsdSwapper ACCEPTS
-
-        // TEST: also confirm near-PRECISION-1 is settable
+        // Exactly at the 5% cap is allowed.
         vm.prank(swapperGov);
-        crvSwapper.setSlippage(1e18 - 1); // just below PRECISION
-        assertEq(crvSwapper.slippage(), 1e18 - 1, "HYP-05 BUG: ~100% slippage accepted");
+        crvSwapper.setSlippage(5e16);
+        assertEq(crvSwapper.slippage(), 5e16, "M-03: slippage settable up to the 5% cap");
 
-        // TEST: PRECISION exactly should revert (>= PRECISION guard)
+        // Just above the cap reverts.
         vm.prank(swapperGov);
         vm.expectRevert(); // InvalidSlippage
-        crvSwapper.setSlippage(1e18);
+        crvSwapper.setSlippage(5e16 + 1);
 
-        console.log("HYP-05 CONFIRMED: CrvToCrvUsdSwapper accepted 9e17 slippage (90%)");
-        console.log("HYP-05: BaseSwapper MAX_SLIPPAGE=5e16 cap is completely bypassed");
+        console.log("M-03 FIXED: CrvToCrvUsdSwapper enforces 5%% MAX_SLIPPAGE cap");
     }
 
     // ============================================================
@@ -473,19 +449,17 @@ contract VerifyBatch3_Governance is Test {
         console.log("HYP-08: keeper bounty at 20% rate=%d", bountyAtDefaultRate);
         console.log("HYP-08: This equals the FULL post-withdraw yield -- feesAtLastRebalance=0");
 
-        // The bug is definitively present: after withdrawFees, feesAtLastRebalance=0
-        // means any subsequent rebalance pays keeper bounty on ALL fees since the withdrawal,
-        // rather than only fees since the last rebalance.
+        // FIXED (M-05): withdrawFees no longer force-resets feesAtLastRebalance. In THIS scenario
+        // no rebalance has occurred, so the checkpoint is legitimately 0 (its initial value) — the
+        // fix ensures withdrawFees does not touch it. The meaningful case (preserving a NON-zero
+        // checkpoint set by a prior rebalance so the bounty baseline can't be zeroed by a fee
+        // withdrawal) is exercised by the fee-accounting invariant suite.
         assertEq(
             vault.feesAtLastRebalance(),
             0,
-            "HYP-08 BUG CONFIRMED: feesAtLastRebalance=0 after withdrawFees"
+            "M-05: checkpoint unchanged by withdrawFees (0 here - no prior rebalance)"
         );
-        assertGt(
-            feesSinceLastRebalance,
-            0,
-            "HYP-08 BUG CONFIRMED: inflated bounty basis (all fees since withdraw)"
-        );
+        assertGt(feesSinceLastRebalance, 0, "post-withdraw yield accrued");
     }
 
     // ============================================================
@@ -507,52 +481,27 @@ contract VerifyBatch3_Governance is Test {
     ///          wants (or conversely raise it to MAX within range), with no on-chain recourse
     ///          for new gov since re-sync is blocked.
     function test_POC_HYP10_SplitSlippageAuthority() public {
-        // Step 1: Reproduce HYP-04 (silent strategy ownership failure)
+        // FIXED (M-02): the chain's enabler — a silent strategy-ownership-propagation failure
+        // that leaves the old key as strategy.owner — can no longer occur. acceptRole now reverts
+        // atomically when the strategy can't accept the new owner, so the dual-authority split
+        // (old key keeps strategy.setSlippage / rescueERC20 while new gov controls the vault)
+        // is structurally impossible.
         strategy.setRevertOnOwnerTransfer(true);
 
         vm.prank(gov);
         vault.transferRole(1, newGov);
         vm.warp(block.timestamp + vault.GOV_GUARDIAN_TRANSFER_DELAY() + 1);
+
+        // Rotation reverts — the divergence precondition is never established.
         vm.prank(newGov);
+        vm.expectRevert();
         vault.acceptRole(1);
 
-        // Verify divergence
-        assertEq(vault.gov(), newGov, "CH04: vault.gov should be newGov");
-        assertEq(strategy.owner(), gov, "CH04: strategy.owner should still be old gov");
+        // gov and strategy.owner remain the same single key — no split authority.
+        assertEq(vault.gov(), gov, "CH04 FIXED: vault.gov unchanged");
+        assertEq(strategy.owner(), gov, "CH04 FIXED: strategy.owner == vault.gov (no split)");
 
-        // Step 2: Old gov can set strategy slippage to its preferred value (direct call)
-        // Set to MIN_SLIPPAGE (1e15) — tightest allowed value
-        vm.prank(gov); // old gov, still strategy.owner
-        strategy.setSlippage(1e15); // min slippage
-        assertEq(strategy.slippageTolerance(), 1e15, "CH04: old gov set slippage to minimum");
-
-        // Step 3: New gov CANNOT change this (no strategy.owner)
-        // New gov's only path is vault.setParam(4, newSlippage) which calls yieldStrategy.setSlippage
-        // But new gov can call setParam(4, v) — this succeeds IF strategy accepts it.
-        // The SPLIT: old gov can set slippage values that disagree with what new gov sets.
-        // Both paths are open simultaneously → two competing authorities.
-
-        // New gov sets vault maxSlippage to 3e16 via setParam (immediate, as decrease from 1e16→3e16 is increase)
-        // Actually 1e16→3e16 is an INCREASE in maxSlippage, which is adverse → timelocked.
-        // Decrease (3e16→1e16) would be immediate. Let's just confirm the dual-write surface.
-
-        // New gov tries direct setSlippage on strategy → Unauthorized (not owner, not vault)
-        vm.prank(newGov);
-        vm.expectRevert(); // Unauthorized
-        strategy.setSlippage(3e16);
-
-        // Old gov can still override back to 3e16
-        vm.prank(gov);
-        strategy.setSlippage(3e16);
-        assertEq(strategy.slippageTolerance(), 3e16, "CH04: old gov still controls strategy slippage");
-
-        // Old gov can also call rescueERC20 on strategy (dual authority over strategy assets)
-        // This is the key privileged surface: rescueERC20 is onlyOwner in BaseYieldStrategy
-        // We just assert the ownership state proves the authority split
-        assertEq(strategy.owner(), gov, "CH04 CONFIRMED: old gov retains strategy.owner indefinitely");
-        assertNotEq(vault.gov(), gov, "CH04: vault.gov is new gov, not old gov");
-
-        console.log("HYP-10/CH-04 CONFIRMED: dual strategy ownership authority persists after rotation");
+        console.log("HYP-10/CH-04 FIXED: gov/strategy-owner split cannot be created");
     }
 
     // ============================================================

@@ -132,24 +132,33 @@ abstract contract BaseCurveStakeDaoStrategy is BaseLPStrategy {
     }
 
     /// @notice Claim CRV via Stake DAO accountant and swap it to crvUSD via the CRV swapper.
-    /// @dev On swap failure the CRV remains at the swapper. It is NOT auto-retried — the next
-    ///      cycle only forwards newly-claimed CRV (swap() consumes the passed amount, not the
-    ///      swapper's full balance), so any leftover must be recovered via the swapper's rescue
-    ///      path. CrvSwapDeferred is emitted below for monitoring.
+    /// @dev M-06: the transfer + swap are done atomically via an external self-call. On swap
+    ///      failure (oracle floor / slippage) the CRV transfer rolls back with it, so the CRV
+    ///      stays at the strategy and is retried automatically on the next harvest — instead of
+    ///      being stranded at the swapper. CrvSwapDeferred is emitted for monitoring.
     function _claimAndSwapRewards() internal override returns (uint256 lpAssetReceived) {
         _accountantClaim();
         uint256 crvBalance = crv.balanceOf(address(this));
         if (crvBalance < MIN_HARVEST_THRESHOLD) return 0;
 
-        crv.safeTransfer(address(crvSwapper), crvBalance);
-        try crvSwapper.swap(crvBalance) returns (uint256 received) {
+        try this.transferAndSwapCrv(crvBalance) returns (uint256 received) {
             lpAssetReceived = received;
         } catch {
-            // Swap reverted (oracle floor / slippage). CRV stays at the swapper; recover via
-            // its rescue path. CrvSwapDeferred is emitted below.
+            // Swap reverted; the external-call frame rolled back the CRV transfer, so the CRV
+            // remains at the strategy for the next harvest to retry.
         }
         if (lpAssetReceived > 0) emit RewardsHarvested(crvBalance, lpAssetReceived);
         else emit CrvSwapDeferred(crvBalance);
+    }
+
+    /// @notice Atomically transfer CRV to the swapper and swap it to crvUSD.
+    /// @dev Only callable by this contract. Invoked as an external self-call from
+    ///      _claimAndSwapRewards so that a swap revert also rolls back the CRV transfer (M-06),
+    ///      keeping the CRV at the strategy for retry rather than stranding it at the swapper.
+    function transferAndSwapCrv(uint256 amount) external returns (uint256 received) {
+        if (msg.sender != address(this)) revert Unauthorized();
+        crv.safeTransfer(address(crvSwapper), amount);
+        received = crvSwapper.swap(amount);
     }
 
     function _accountantClaim() internal {

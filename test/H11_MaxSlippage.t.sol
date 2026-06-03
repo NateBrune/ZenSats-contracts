@@ -267,10 +267,10 @@ contract MockYieldStrategyH11 is IYieldStrategy {
             console.log("Initial maxSlippage:", initialSlippage);
 
             vm.prank(owner);
-            vault.setParam(4, 1);
+            vault.setParam(4, 1e15); // MIN_VAULT_SLIPPAGE (0.1%) — tightest allowed after M-04
 
             uint256 newSlippage = vault.maxSlippage();
-            assertEq(newSlippage, 1, "maxSlippage changed immediately (no timelock)");
+            assertEq(newSlippage, 1e15, "maxSlippage changed immediately (no timelock)");
             console.log("maxSlippage changed instantly from", initialSlippage, "to", newSlippage);
             console.log("CONFIRMED: setParam(4,v) for maxSlippage has no timelock protection");
         }
@@ -288,7 +288,7 @@ contract MockYieldStrategyH11 is IYieldStrategy {
             warpAndMock(block.timestamp + 2);
 
             vm.prank(owner);
-            vault.setParam(4, 1);
+            vault.setParam(4, 1e15); // MIN_VAULT_SLIPPAGE (0.1%) — tightest allowed after M-04
 
             uint256 halfShares = sharesBeforeAttempt / 2;
 
@@ -305,7 +305,7 @@ contract MockYieldStrategyH11 is IYieldStrategy {
             console.log("Shares before:", sharesBeforeAttempt);
             console.log("Shares after:", sharesAfter);
             console.log("Collateral out:", collateralOut);
-            console.log("With mock swapper: slippage checks pass despite maxSlippage=1 wei");
+            console.log("With mock swapper: slippage checks pass at maxSlippage=1e15 (0.1%, the floor)");
         }
 
         // ============================================================
@@ -320,7 +320,7 @@ contract MockYieldStrategyH11 is IYieldStrategy {
             warpAndMock(block.timestamp + 2);
 
             vm.prank(owner);
-            vault.setParam(4, 1);
+            vault.setParam(4, 1e15); // MIN_VAULT_SLIPPAGE (0.1%) — tightest allowed after M-04
 
             uint256 halfShares = sharesBefore / 2;
             vm.prank(user1);

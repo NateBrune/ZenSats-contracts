@@ -10,6 +10,11 @@ import { OracleLib } from "../../libraries/OracleLib.sol";
 import { SafeTransferLib } from "../../libraries/SafeTransferLib.sol";
 import { BaseSwapper } from "./BaseSwapper.sol";
 
+/// @dev Minimal wstETH interface for the V3-hop floor (stETH per wstETH, 1e18-scaled).
+interface IWstETH {
+    function stEthPerToken() external view returns (uint256);
+}
+
 /// @title UniswapMixedCurveSwapper
 /// @notice Two-hop swapper: collateral ↔ WETH via Uniswap V3, WETH ↔ crvUSD via Curve TriCrypto.
 /// @dev Designed for the LlamaLend wstETH/crvUSD vault.
@@ -117,6 +122,25 @@ contract UniswapMixedCurveSwapper is BaseSwapper, ISwapper {
         if (collateralAmount == 0) return 0;
 
         // Step 1: V3 — wstETH → WETH, output to this contract.
+        // M-07: bound this hop by the exact wstETH→stETH protocol rate (stETH ≈ ETH ≈ WETH), so a
+        // sandwich cannot drain more than `slippage` of WETH before the Curve leg. This uses the
+        // wstETH:ETH relationship directly — NOT the crvUSD/composite path — so it does not hit the
+        // peg/level divergence that over-constrains the final leg. Dust inputs keep minOut = 0.
+        // SOFT call: this swapper also serves non-wstETH collateral (e.g. WBTC) that has no
+        // stEthPerToken(). For wstETH it returns the exact wstETH→stETH rate and we bound the
+        // hop; for other collateral the call fails and we leave minOut = 0 (the Curve get_dy
+        // floor and the LoanManager end-to-end 95% floor still apply). M-07 targets the wstETH
+        // vault specifically.
+        uint256 v3MinOut;
+        if (collateralAmount >= DUST_SWAP_THRESHOLD) {
+            (bool ok, bytes memory data) =
+                address(collateralToken).staticcall(abi.encodeWithSelector(IWstETH.stEthPerToken.selector));
+            if (ok && data.length >= 32) {
+                uint256 ratio = abi.decode(data, (uint256)); // stETH per wstETH (1e18)
+                uint256 expectedWeth = (collateralAmount * ratio) / PRECISION; // stETH ≈ WETH (18 dec)
+                if (expectedWeth > 0) v3MinOut = (expectedWeth * (PRECISION - slippage)) / PRECISION;
+            }
+        }
         collateralToken.safeTransfer(address(universalRouter), collateralAmount);
         {
             bytes memory commands = abi.encodePacked(CMD_V3_SWAP_EXACT_IN);
@@ -125,7 +149,7 @@ contract UniswapMixedCurveSwapper is BaseSwapper, ISwapper {
             inputs[0] = abi.encode(
                 address(this), // recipient: WETH to this contract
                 collateralAmount,
-                uint256(0), // amountOutMin: 0 — Curve step enforces floor
+                v3MinOut, // amountOutMin: wstETH-rate floor (M-07); Curve step adds its own floor
                 v3Path,
                 false // payerIsUser: tokens were pre-transferred
             );
