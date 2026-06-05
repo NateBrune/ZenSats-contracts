@@ -3,6 +3,7 @@ pragma solidity ^0.8.33;
 
 import { TimelockLib } from "./TimelockLib.sol";
 import { IYieldStrategy } from "../interfaces/IYieldStrategy.sol";
+import { ZenjiConstants } from "./ZenjiConstants.sol";
 
 interface ISwapperSlippage {
     function setSlippage(uint256 newSlippage) external;
@@ -18,15 +19,15 @@ interface ISwapperSlippage {
 library ZenjiGovLib {
     using TimelockLib for TimelockLib.TimelockData;
 
-    // ---- bounds (mirror Zenji constants) ----
-    uint256 internal constant MAX_FEE_RATE = 2e17; // 20%
-    uint256 internal constant MIN_TARGET_LTV = 15e16; // 15%
-    uint256 internal constant MAX_REBALANCE_BOUNTY = 5e17; // 50%
-    uint256 internal constant MAX_VAULT_SLIPPAGE = 5e16; // 5%
+    // ---- bounds (I-01: single source = ZenjiConstants; aliased so the body reads unchanged) ----
+    uint256 internal constant MAX_FEE_RATE = ZenjiConstants.MAX_FEE_RATE;
+    uint256 internal constant MIN_TARGET_LTV = ZenjiConstants.MIN_TARGET_LTV;
+    uint256 internal constant MAX_REBALANCE_BOUNTY = ZenjiConstants.MAX_REBALANCE_BOUNTY;
+    uint256 internal constant MAX_VAULT_SLIPPAGE = ZenjiConstants.MAX_VAULT_SLIPPAGE;
     /// @dev Must match BaseYieldStrategy.MIN_SLIPPAGE — the vault rejects sub-floor values
     ///      up front rather than letting the strategy's setSlippage revert the whole param change.
-    uint256 internal constant MIN_VAULT_SLIPPAGE = 1e15; // 0.1%
-    uint256 internal constant PARAM_TIMELOCK_DELAY = 1 weeks;
+    uint256 internal constant MIN_VAULT_SLIPPAGE = ZenjiConstants.MIN_VAULT_SLIPPAGE;
+    uint256 internal constant PARAM_TIMELOCK_DELAY = ZenjiConstants.PARAM_TIMELOCK_DELAY;
 
     /// @notice Snapshot of the five gov-settable scalar params, threaded in and back out.
     struct ParamState {

@@ -55,32 +55,12 @@ contract Zenji is ZenjiStorage, IERC4626 {
     address public immutable adminFacet;
 
     // ============ Constants ============
-
-    uint256 public constant PRECISION = 1e18;
-    uint256 public constant DEADBAND_SPREAD = 3e16; // 3%
-    uint256 public constant MIN_TARGET_LTV = 15e16; // 15%
-    // MAX_TARGET_LTV is a virtual function — implementations override for per-vault ceilings
-    uint256 public constant MAX_FEE_RATE = 2e17; // 20%
-    // VIRTUAL_SHARE_OFFSET is now a virtual function — see bottom of contract
-    uint256 public constant COOLDOWN_BLOCKS = 1;
-    uint256 public constant MAX_REBALANCE_BOUNTY = 5e17; // 50% (lowered from 100% — bounds gov-compromise fee-drain risk)
-    uint256 public constant TIMELOCK_DELAY = 1 weeks;
-    uint256 public constant MAX_VAULT_SLIPPAGE = 5e16; // 5% cap
-    uint256 public constant ROLE_TRANSFER_DELAY = 1 weeks;
-    /// @notice Extended delay for gov and guardian transfers — these roles are the most powerful
-    /// and a compromised gov should not be able to short-circuit the guardian veto window.
-    uint256 public constant GOV_GUARDIAN_TRANSFER_DELAY = 4 weeks;
-    /// @notice Delay for adverse parameter changes (feeRate increases, targetLtv increases).
-    /// Decreases (user-favorable) remain immediate.
-    uint256 public constant PARAM_TIMELOCK_DELAY = 1 weeks;
-    /// @notice Delay for emergencySkipStep — gives gov a window to veto a malicious skip.
-    /// Funds in bricked components are still recoverable on the gov side during this window.
-    uint256 public constant EMERGENCY_SKIP_DELAY = 3 days;
-    /// @notice Hard ceiling on user-supplied withdraw slippage tolerance.
-    /// Even if a user passes a very low `minAssetsOut`, the protocol caps the
-    /// effective slippage applied to internal unwind steps at 20% to limit blast
-    /// radius from accidental zero/low minimums and to bound MEV-sandwich damage.
-    uint256 public constant MAX_USER_SLIPPAGE = 2e17; // 20%
+    // I-01: the shared governance constants (PRECISION, DEADBAND_SPREAD, MIN_TARGET_LTV,
+    // MAX_FEE_RATE, COOLDOWN_BLOCKS, MAX_REBALANCE_BOUNTY, TIMELOCK_DELAY, MAX_VAULT_SLIPPAGE,
+    // ROLE_TRANSFER_DELAY, GOV_GUARDIAN_TRANSFER_DELAY, PARAM_TIMELOCK_DELAY, EMERGENCY_SKIP_DELAY,
+    // MAX_USER_SLIPPAGE) are now declared once in ZenjiStorage (values from ZenjiConstants) and
+    // inherited here and by ZenjiAdmin — public getters and bare references resolve unchanged.
+    // MAX_TARGET_LTV and VIRTUAL_SHARE_OFFSET remain virtual functions (per-vault overrides).
 
     // ============ Events ============
 

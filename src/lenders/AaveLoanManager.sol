@@ -452,6 +452,9 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
                     : 0;
                 collateralToken.safeTransfer(address(swapper), toSwap);
                 swapper.swapCollateralForDebt(toSwap);
+                // I-02: intentional check-after-transfer slippage measurement; executeOperation is
+                // nonReentrant and the debt/collateral tokens have no transfer callbacks (benign).
+                // slither-disable-next-line reentrancy-benign,reentrancy-events
                 uint256 debtDelta = debtToken.balanceOf(address(this)) - debtBefore;
                 if (expectedDebt > 0 && debtDelta < expectedDebt) {
                     revert SwapperUnderperformed(expectedDebt, debtDelta);

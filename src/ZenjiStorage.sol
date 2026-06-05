@@ -8,13 +8,33 @@ import { ILoanManager } from "./interfaces/ILoanManager.sol";
 import { ISwapper } from "./interfaces/ISwapper.sol";
 import { TimelockLib } from "./libraries/TimelockLib.sol";
 import { ZenjiViewHelper } from "./ZenjiViewHelper.sol";
+import { ZenjiConstants } from "./libraries/ZenjiConstants.sol";
 
 /// @title ZenjiStorage
 /// @notice Canonical storage layout shared by the Zenji vault core and its admin facet.
 ///         Both inherit this (in the same position) so they agree on every storage slot.
-///         Holds ONLY state declarations — no constants/events/errors/modifiers/functions,
-///         which stay in Zenji so existing `Zenji.X` references keep resolving.
+///         Holds the shared STATE declarations plus the shared governance CONSTANTS, which both
+///         Zenji and ZenjiAdmin inherit (so `vault.X()` getters and bare `X` references resolve in
+///         both, with no duplication). Constants do not occupy storage, so the slot layout is
+///         unaffected. Events/errors/modifiers still live in Zenji/ZenjiAdmin (inherited
+///         errors/events are not reachable as `Zenji.X`).
 abstract contract ZenjiStorage is ERC20 {
+    // ============ Shared constants (I-01: single source = ZenjiConstants) ============
+
+    uint256 public constant PRECISION = ZenjiConstants.PRECISION;
+    uint256 public constant DEADBAND_SPREAD = ZenjiConstants.DEADBAND_SPREAD;
+    uint256 public constant MIN_TARGET_LTV = ZenjiConstants.MIN_TARGET_LTV;
+    uint256 public constant MAX_FEE_RATE = ZenjiConstants.MAX_FEE_RATE;
+    uint256 public constant COOLDOWN_BLOCKS = ZenjiConstants.COOLDOWN_BLOCKS;
+    uint256 public constant MAX_REBALANCE_BOUNTY = ZenjiConstants.MAX_REBALANCE_BOUNTY;
+    uint256 public constant TIMELOCK_DELAY = ZenjiConstants.TIMELOCK_DELAY;
+    uint256 public constant MAX_VAULT_SLIPPAGE = ZenjiConstants.MAX_VAULT_SLIPPAGE;
+    uint256 public constant ROLE_TRANSFER_DELAY = ZenjiConstants.ROLE_TRANSFER_DELAY;
+    uint256 public constant GOV_GUARDIAN_TRANSFER_DELAY = ZenjiConstants.GOV_GUARDIAN_TRANSFER_DELAY;
+    uint256 public constant PARAM_TIMELOCK_DELAY = ZenjiConstants.PARAM_TIMELOCK_DELAY;
+    uint256 public constant EMERGENCY_SKIP_DELAY = ZenjiConstants.EMERGENCY_SKIP_DELAY;
+    uint256 public constant MAX_USER_SLIPPAGE = ZenjiConstants.MAX_USER_SLIPPAGE;
+
     // ============ Immutables ============
 
     IERC20 public collateralAsset;

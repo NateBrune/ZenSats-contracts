@@ -768,12 +768,17 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     }
 
     /// @notice Swap collateral to debt
+    /// @dev I-02: the post-swap balanceOf read is an intentional check-AFTER-transfer slippage
+    ///      measurement, not a security-relevant read — it computes the actual received amount and
+    ///      reverts if below the oracle floor. The vault entry points are nonReentrant and crvUSD
+    ///      has no transfer callbacks, so the Slither reentrancy-balance flag is benign.
     function _swapCollateralForDebt(uint256 collateralAmount) internal returns (uint256) {
         if (address(swapper) == address(0)) revert InvalidAddress();
         uint256 debtBefore = debtToken.balanceOf(address(this));
         uint256 expectedDebt = (_getCollateralValue(collateralAmount) * MIN_SWAP_OUT_BPS) / 10000;
         collateralToken.safeTransfer(address(swapper), collateralAmount);
         swapper.swapCollateralForDebt(collateralAmount);
+        // slither-disable-next-line reentrancy-benign,reentrancy-events
         uint256 debtAfter = debtToken.balanceOf(address(this));
         uint256 debtDelta = debtAfter - debtBefore;
         if (debtDelta < expectedDebt) revert SwapperUnderperformed(expectedDebt, debtDelta);
@@ -782,12 +787,14 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     }
 
     /// @notice Swap debt to collateral
+    /// @dev I-02: intentional check-after-transfer slippage measurement (see _swapCollateralForDebt).
     function _swapDebtForCollateral(uint256 debtAmount) internal returns (uint256) {
         if (address(swapper) == address(0)) revert InvalidAddress();
         uint256 collateralBefore = collateralToken.balanceOf(address(this));
         uint256 expectedCollateral = (_getDebtValue(debtAmount) * MIN_SWAP_OUT_BPS) / 10000;
         debtToken.safeTransfer(address(swapper), debtAmount);
         swapper.swapDebtForCollateral(debtAmount);
+        // slither-disable-next-line reentrancy-benign,reentrancy-events
         uint256 collateralAfter = collateralToken.balanceOf(address(this));
         uint256 collateralDelta = collateralAfter - collateralBefore;
         if (collateralDelta < expectedCollateral) {

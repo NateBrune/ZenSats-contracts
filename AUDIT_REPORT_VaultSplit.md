@@ -31,7 +31,7 @@ Teams should prioritize the oracle staleness alignment in `LlamaLoanManager` and
 | Informational | 2 |
 | **Total** | **19** (+2 FP) |
 
-> **Remediation status (2026-06-03):** All High and Medium findings are **resolved** (H-01, H-02, M-02–M-07 fixed with regression tests; **M-01 false positive**). All Lows are now addressed: **L-01, L-04, L-05, L-06, L-07, L-08, L-09 fixed** in code; **L-02 and L-03 acknowledged as accepted/by-design** with documentation (no behavior change); **L-10 is a false positive** (measured — see its STATUS note). The 2 Informational items remain open.
+> **Remediation status (2026-06-03):** **Every finding is now addressed.** Highs (H-01, H-02) and Mediums (M-02–M-07) are fixed with regression tests; **M-01 false positive**. Lows: **L-01, L-04, L-05, L-06, L-07, L-08, L-09 fixed**; **L-02, L-03 acknowledged as accepted/by-design** (documented, no behavior change); **L-10 false positive** (measured). Informational: **I-01 fixed** (constants centralized in `ZenjiConstants`; storage layout verified still byte-identical) and **I-02 fixed** (Slither false positives documented + suppressed).
 
 ### Components Audited
 
@@ -780,11 +780,13 @@ At 95% pmUSD imbalance in the Curve pool, `calc_withdraw_one_coin` (single-sided
 
 ## Informational Findings
 
-### [I-01] Constants Duplicated Across Zenji, ZenjiAdmin, and ZenjiGovLib — Maintenance Divergence Risk [VERIFIED]
+### [I-01] Constants Duplicated Across Zenji, ZenjiAdmin, and ZenjiGovLib — Maintenance Divergence Risk [FIXED]
 
 **Severity**: Informational
 **Location**: `src/Zenji.sol:58-84`, `src/ZenjiAdmin.sol:36-60`, `src/libraries/ZenjiGovLib.sol:22-26`
 **Confidence**: HIGH ([CODE])
+
+> **STATUS — FIXED (2026-06-03):** Introduced `src/libraries/ZenjiConstants.sol` as the single source of truth for all shared governance constants. `ZenjiStorage` re-exports the public-ABI ones as `public constant X = ZenjiConstants.X` (inherited by both `Zenji` and `ZenjiAdmin`, so the `vault.X()` getters and bare references resolve unchanged); `ZenjiGovLib` aliases the six it uses to the same library. The values can no longer drift. Verified: storage layout `Zenji == ZenjiAdmin` remains **byte-identical (44 slots)** and all vault sizes are unchanged (~21.9 KB, under EIP-170).
 
 **Description**:
 Five governance constants are duplicated across three files (Zenji, ZenjiAdmin, ZenjiGovLib): `PARAM_TIMELOCK_DELAY`, `GOV_GUARDIAN_TRANSFER_DELAY`, `STRATEGIST_TRANSFER_DELAY`, `MAX_VAULT_SLIPPAGE`, and related values. The duplication is currently consistent. Because all three contracts interact via delegatecall, a partial update of these constants (e.g., updating only one file during a future modification) could introduce silent behavioral divergence — the duplicated constants would differ, potentially changing governance timing or validation bounds in one code path but not another.
@@ -793,11 +795,13 @@ Five governance constants are duplicated across three files (Zenji, ZenjiAdmin, 
 
 ---
 
-### [I-02] Slither Reentrancy-Balance Flags — Reviewed, Confirmed False Positives [VERIFIED]
+### [I-02] Slither Reentrancy-Balance Flags — Reviewed, Confirmed False Positives [FIXED]
 
 **Severity**: Informational
 **Location**: `src/lenders/LlamaLoanManager.sol:729-740`, `src/lenders/AaveLoanManager.sol:343-468`
 **Confidence**: HIGH (manual review + Slither cross-check)
+
+> **STATUS — FIXED (2026-06-03):** Added NatSpec at `_swapCollateralForDebt` / `_swapDebtForCollateral` (LlamaLoanManager) and at the swap site in `AaveLoanManager.executeOperation` documenting that the post-swap `balanceOf` read is an intentional check-after-transfer slippage measurement (reverts below the oracle floor), and that the entry points are `nonReentrant` with no-callback tokens. Added `// slither-disable-next-line reentrancy-benign,reentrancy-events` on each flagged read to suppress future noise.
 
 **Description**:
 Slither 0.11.5 flagged three `reentrancy-balance` locations in `LlamaLoanManager._swapCollateralForDebt`, `LlamaLoanManager._swapDebtForCollateral`, and `AaveLoanManager.executeOperation`. These are intentional check-after-transfer patterns: the code reads `balanceOf` after a swap to measure the actual amount received (slippage accounting), not as a security check. All entry points carrying the reentrancy-relevant paths are protected by `nonReentrant` guards, and crvUSD and USDT have no transfer callbacks that could enable reentrancy.
