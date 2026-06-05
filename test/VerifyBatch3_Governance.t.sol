@@ -521,15 +521,12 @@ contract VerifyBatch3_Governance is Test {
         vault.pauseDeposits();
         assertTrue(vault.depositsPaused(), "HYP-12: deposits now paused");
 
-        // ASSERTION A: maxDeposit still returns non-zero (EIP-4626 violation)
+        // ASSERTION A (FIXED L-01): maxDeposit now returns 0 while deposits are paused,
+        // consistent with deposit() reverting (EIP-4626 compliant).
         uint256 maxAfterPause = vault.maxDeposit(address(this));
-        assertGt(
-            maxAfterPause,
-            0,
-            "HYP-12 BUG: maxDeposit returns non-zero while deposits paused"
-        );
+        assertEq(maxAfterPause, 0, "L-01: maxDeposit returns 0 while deposits paused");
 
-        // ASSERTION B: deposit() reverts (confirms the inconsistency)
+        // ASSERTION B: deposit() still reverts — now consistent with maxDeposit == 0.
         address depositor = makeAddr("depositor2");
         collateral.mint(depositor, 1e8);
         vm.startPrank(depositor);
@@ -538,8 +535,7 @@ contract VerifyBatch3_Governance is Test {
         vault.deposit(1e8, depositor);
         vm.stopPrank();
 
-        console.log("HYP-12 CONFIRMED: maxDeposit=%d while depositsPaused=true", maxAfterPause);
-        console.log("HYP-12: deposit() reverts but maxDeposit() returns non-zero -- EIP-4626 violation");
+        console.log("L-01 FIXED: maxDeposit returns 0 while depositsPaused; consistent with deposit() revert");
     }
 
     // ============================================================

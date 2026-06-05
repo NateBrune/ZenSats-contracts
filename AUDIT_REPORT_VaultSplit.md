@@ -27,11 +27,11 @@ Teams should prioritize the oracle staleness alignment in `LlamaLoanManager` and
 |----------|-------|
 | High | 2 |
 | Medium | 6 (+1 false positive) |
-| Low | 10 |
+| Low | 9 (+1 false positive) |
 | Informational | 2 |
-| **Total** | **20** (+1 FP) |
+| **Total** | **19** (+2 FP) |
 
-> **Remediation status (2026-06-02):** All High and Medium findings are **resolved**. H-01, H-02 and M-02–M-07 are fixed in code with regression tests; **M-01 is a false positive** (cbBTC/USD is a ~24h-heartbeat feed, so its 25h staleness window is correct). See each finding's STATUS note. The Low/Informational items are not yet addressed.
+> **Remediation status (2026-06-03):** All High and Medium findings are **resolved** (H-01, H-02, M-02–M-07 fixed with regression tests; **M-01 false positive**). All Lows are now addressed: **L-01, L-04, L-05, L-06, L-07, L-08, L-09 fixed** in code; **L-02 and L-03 acknowledged as accepted/by-design** with documentation (no behavior change); **L-10 is a false positive** (measured — see its STATUS note). The 2 Informational items remain open.
 
 ### Components Audited
 
@@ -642,11 +642,13 @@ When `pauseDeposits()` is active, `deposit()` reverts with `DepositsArePaused`, 
 
 ---
 
-### [L-02] cancelEmergencyMode Leaves depositsPaused Set — Deposits Remain Blocked After Cancel [VERIFIED]
+### [L-02] cancelEmergencyMode Leaves depositsPaused Set — Deposits Remain Blocked After Cancel [ACKNOWLEDGED]
 
 **Severity**: Low
 **Location**: `src/ZenjiAdmin.sol:428-437`
 **Confidence**: HIGH ([POC-PASS])
+
+> **STATUS — ACKNOWLEDGED / BY DESIGN (2026-06-03):** `emergencyMode` and `depositsPaused` are intentionally independent controls — a guardian may pause deposits for reasons unrelated to an emergency, so cancelling emergency must not silently un-pause. Gov clears it explicitly via `resumeDeposits()`. The misleading-signal half is already resolved by L-01 (`maxDeposit()` returns 0 while paused, consistent with `deposit()` reverting). Documented in `cancelEmergencyMode`'s NatSpec; no behavior change.
 
 **Description**:
 `ZenjiAdmin.cancelEmergencyMode()` clears `emergencyMode` and `pendingSkipTimestamp` but does not clear `depositsPaused`. If guardian paused deposits before or during an emergency, and governance subsequently cancels emergency mode, deposits remain paused. Governance must additionally call `resumeDeposits()` — a non-obvious two-step pattern not evident from the `cancelEmergencyMode` interface. Combined with L-01, `maxDeposit()` returns non-zero while `deposit()` still reverts.
@@ -655,11 +657,13 @@ When `pauseDeposits()` is active, `deposit()` reverts with `DepositsArePaused`, 
 
 ---
 
-### [L-03] VP Cache Staleness Bypass After 1-Day Idle — Currently Mitigated by Pool Imbalance [VERIFIED]
+### [L-03] VP Cache Staleness Bypass After 1-Day Idle — Currently Mitigated by Pool Imbalance [ACKNOWLEDGED]
 
 **Severity**: Low
 **Location**: `src/strategies/lp/BaseLPStrategy.sol:137-148`
 **Confidence**: MEDIUM (mitigated by current pool state; theoretical at 95% pmUSD imbalance)
+
+> **STATUS — ACKNOWLEDGED / ACCEPTED RISK (2026-06-03):** The staleness bypass is a deliberate liveness choice and the residual risk is accepted: (1) the ±MAX_VP_DEVIATION clamp targets *same-tx* manipulation, but every state-changing withdraw calls `_syncValueCache()` first, so the funds-moving path re-anchors the clamp to a fresh value; (2) Curve `get_virtual_price()` is the invariant-per-share and cannot be profitably moved within one transaction (it only ratchets up from fees); and (3) the vault's sensitive paths are reentrancy-guarded, so an attacker cannot move the pool VP and the vault accounting atomically. The bypass only affects pure-view reads after a multi-day idle. Documented in `_getSafeUnitValue`'s NatSpec; no behavior change.
 
 **Description**:
 After `lastVpUpdate` age exceeds 1 day, `_getSafeUnitValue()` returns the raw current virtual price with no ±0.5% manipulation clamp. This bypass was intended for vaults idle for extended periods, but it removes the main protection against VP manipulation attacks. At the current 95% pmUSD pool imbalance, a VP attack is infeasible due to the high capital requirement. However, if the pool rebalances toward 50/50, the manipulation threshold decreases significantly and the bypass becomes exploitable.
@@ -746,11 +750,26 @@ When `totalCollateral = 0` but `totalSupply > 0`, `previewWithdraw(assets)` retu
 
 ---
 
-### [L-10] Pool Imbalance Generates Permanent strategyDebtRebalanceNeeded Signal [VERIFIED]
+### [L-10] Pool Imbalance Generates Permanent strategyDebtRebalanceNeeded Signal [FALSE POSITIVE]
 
-**Severity**: Low
+**Severity**: ~~Low~~ → **Not a finding**
 **Location**: `src/strategies/lp/BaseCurveStakeDaoStrategy.sol` (`balanceOf` / `strategyDebtRatio` computation)
 **Confidence**: HIGH ([CODE])
+
+> **STATUS — FALSE POSITIVE (2026-06-03):** The finding compared `exitBased` (single-sided crvUSD
+> exit) against the LP's **virtual-price value** and saw a 5–15% gap, concluding the rebalance
+> signal trips permanently. But the rebalance metric is `strategyToDebtRatio = balanceOf / debt`,
+> and `debt` ≈ the crvUSD that was **borrowed and deposited**, which ≈ `exitBased` — because a
+> single-sided crvUSD deposit into the imbalanced pool earns the *balancing bonus* that inflates
+> the VP value above the deposit. The deposit-bonus and withdraw-discount cancel (the round trip is
+> a Curve inverse), so `balanceOf / debt ≈ 1.0`, not ~0.1. Measured on the **live pmUSD/crvUSD pool**
+> (95.4% pmUSD / $224K crvUSD) via `test/PmUsdPoolProbe.t.sol`, `exitBased / deposit` is **0.999 at
+> every size from $1K to $1M** — none within range of the 3% deadband (`1.0 − DEADBAND_SPREAD =
+> 0.97`). The "permanent signal on every deposit" does not occur. The only way the ratio falls below
+> 0.97 is if the pool drifts *substantially* more imbalanced **after** deposit (crvUSD side depleted
+> toward ~99/1), at which point a rebalance signal is arguably correct. No code change; `balanceOf`'s
+> conservative `min(VP, exit)` is correct. (The `test_capacityReport` / `test_oneMillion` slippage
+> failures are a separate end-to-end collateral↔crvUSD swap-leg concern, not this signal.)
 
 **Description**:
 At 95% pmUSD imbalance in the Curve pool, `calc_withdraw_one_coin` (single-sided crvUSD exit) returns approximately 5–15% of the virtual-price-implied value. `balanceOf()` uses `min(VP-based value, single-sided exit value)`, so `strategyDebtRatio` is permanently far below the `1.0 − rebalanceThreshold` floor. Keepers receive unnecessary bounties for triggering rebalances that cannot meaningfully improve the ratio. This also amplifies M-05: if `withdrawFees` is called between rebalances during pool imbalance, the inflated bounty on the next rebalance is further exaggerated.

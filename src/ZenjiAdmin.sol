@@ -423,6 +423,12 @@ contract ZenjiAdmin is ZenjiStorage {
     ///      Once steps begin (assets withdrawn from strategy/loan), the state is too
     ///      dirty to safely return to normal operation. This is the gov veto for a
     ///      malicious or premature `enterEmergencyMode()` call by a compromised guardian.
+    /// @dev L-02 (by design): `emergencyMode` and `depositsPaused` are INDEPENDENT controls.
+    ///      `enterEmergencyMode` does not pause deposits, and cancelling emergency does not clear
+    ///      `depositsPaused` — a guardian may have paused deposits for a reason unrelated to the
+    ///      emergency, and gov should not silently undo that. If deposits were paused, gov must
+    ///      call `resumeDeposits()` separately. (`maxDeposit()` correctly returns 0 while paused,
+    ///      so the ERC4626 signal is consistent — see L-01.)
     function cancelEmergencyMode() external onlyGov {
         if (!emergencyMode) revert EmergencyModeNotActive();
         if (emergencyStepsCompleted != 0) revert EmergencyStepInProgress();

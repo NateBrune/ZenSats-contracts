@@ -356,7 +356,7 @@ contract Zenji is ZenjiStorage, IERC4626 {
 
     /// @notice Maximum deposit allowed for receiver
     function maxDeposit(address) external view override returns (uint256) {
-        if (emergencyMode) return 0;
+        if (emergencyMode || depositsPaused) return 0; // L-01: mirror _deposit's guards (ERC4626)
         if (depositCap == 0) return type(uint256).max;
         uint256 totalCollateral = getTotalCollateral();
         return totalCollateral >= depositCap ? 0 : depositCap - totalCollateral;
@@ -405,7 +405,11 @@ contract Zenji is ZenjiStorage, IERC4626 {
             return (assets * supply + availableCollateral - 1) / availableCollateral;
         }
         uint256 totalCollateral = getTotalCollateral();
-        if (totalCollateral < 1 || supply < 1) return assets;
+        if (supply < 1) return assets; // empty vault: first-depositor 1:1 preview is correct
+        // L-09: collateral fully gone but shares still exist — withdraw() cannot be priced 1:1
+        // (it would require ~assets * supply / VIRTUAL_SHARE_OFFSET shares). Signal an undefined
+        // state per ERC4626 guidance rather than returning a misleading 1:1 value.
+        if (totalCollateral < 1) return type(uint256).max;
         return (assets * (supply + VIRTUAL_SHARE_OFFSET()) + totalCollateral - 1)
             / (totalCollateral + VIRTUAL_SHARE_OFFSET());
     }

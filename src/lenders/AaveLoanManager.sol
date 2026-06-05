@@ -313,6 +313,17 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
             if (idleCollateral > 0) {
                 collateralToken.safeTransfer(vault, idleCollateral);
             }
+
+            // L-05: a partial flash unwind reduces both debt and collateral. The flash loan is
+            // fully repaid by now, so getHealth() reflects the final position — enforce the same
+            // MIN_HEALTH=1.1 floor as the direct removeCollateral path so the unwind can't leave
+            // the position in the [1.0, 1.1) danger zone (above Aave's liquidation threshold but
+            // below the protocol's safety buffer). Pro-rata partials preserve HF, so this rarely
+            // binds; it is a safety net against drift/rounding.
+            if (!fullyClose && variableDebtToken.balanceOf(address(this)) > 0) {
+                int256 healthAfter = this.getHealth();
+                if (healthAfter < MIN_HEALTH) revert HealthTooLow();
+            }
             return;
         }
 

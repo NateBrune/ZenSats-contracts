@@ -152,11 +152,25 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     /// @notice Timelock state for swapper changes
     TimelockLib.AddressTimelockData internal _swapperTimelock;
 
+    /// @notice Reentrancy guard state (L-04 — parity with AaveLoanManager, defense-in-depth).
+    uint256 private _status;
+    uint256 private constant _NOT_ENTERED = 1;
+    uint256 private constant _ENTERED = 2;
+
     // ============ Modifiers ============
 
     modifier onlyVault() {
         if (msg.sender != vault) revert Unauthorized();
         _;
+    }
+
+    /// @dev Not applied to onFlashLoan: that callback runs inside a guarded unwindPosition, so
+    ///      guarding it too would deadlock the flash-unwind path.
+    modifier nonReentrant() {
+        if (_status == _ENTERED) revert Unauthorized();
+        _status = _ENTERED;
+        _;
+        _status = _NOT_ENTERED;
     }
 
     // ============ Constructor ============
@@ -181,6 +195,7 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
         }
         if (_maxOracleStaleness == 0) revert InvalidAddress();
         maxOracleStaleness = _maxOracleStaleness;
+        _status = _NOT_ENTERED;
 
         collateralToken = IERC20(_collateralAsset);
         debtToken = IERC20(_debtAsset);
@@ -248,7 +263,7 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     }
 
     /// @inheritdoc ILoanManager
-    function repayDebt(uint256 amount) external onlyVault {
+    function repayDebt(uint256 amount) external onlyVault nonReentrant {
         if (amount == 0) revert ZeroAmount();
         _checkOracleFreshness();
         _ensureApprove(address(debtToken), address(llamaLend), amount);
@@ -265,7 +280,7 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     }
 
     /// @inheritdoc ILoanManager
-    function unwindPosition(uint256 collateralNeeded) external onlyVault {
+    function unwindPosition(uint256 collateralNeeded) external onlyVault nonReentrant {
         bool fullyClose = (collateralNeeded == type(uint256).max);
         _checkOracleFreshness();
 

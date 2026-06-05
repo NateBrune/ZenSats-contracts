@@ -24,6 +24,11 @@ contract WstEthOracle is IChainlinkOracle {
         wstETH = IWstETH(_wstETH);
         stEthEthFeed = IChainlinkOracle(_stEthEthFeed);
         ethUsdFeed = IChainlinkOracle(_ethUsdFeed);
+        // L-08: the price math hardcodes an 18-decimal stETH/ETH feed and an 8-decimal ETH/USD
+        // feed. Assert the assumption at deploy time to catch a misconfigured or decimal-migrated
+        // feed (cannot guard against a same-address decimal change after deployment).
+        require(stEthEthFeed.decimals() == 18, "stETH/ETH: expected 18 decimals");
+        require(ethUsdFeed.decimals() == 8, "ETH/USD: expected 8 decimals");
     }
 
     /// @inheritdoc IChainlinkOracle
@@ -75,6 +80,13 @@ contract WstEthOracle is IChainlinkOracle {
         // reflects the true age of the composite price. The stETH/ETH leg has a 24h Chainlink
         // heartbeat, so consumers must allow up to ~25h staleness for wstETH. Both legs remain
         // independently bounded above (stETH/ETH <= 25h, ETH/USD <= 2h, validated here).
+        //
+        // L-07: roundId/answeredInRound deliberately track the ETH/USD leg only (a composite has
+        // no single comparable roundId, and switching feeds would break cross-call monotonicity).
+        // This is safe to rely on because the stETH/ETH leg's round completeness AND staleness are
+        // already enforced INTERNALLY above (require answeredInRound >= roundId + staleness bound),
+        // so any data returned here has been fully validated across BOTH legs. A consumer doing the
+        // standard `answeredInRound >= roundId` check is therefore backed by both legs.
         updatedAt = stEthEthUpdatedAt < ethUsdUpdatedAt ? stEthEthUpdatedAt : ethUsdUpdatedAt;
         startedAt = ethUsdStartedAt;
         roundId = ethUsdRoundId;

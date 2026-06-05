@@ -133,6 +133,16 @@ abstract contract BaseLPStrategy is BaseYieldStrategy {
     /// @notice Manipulation-resistant unit value: clamp current to ±MAX_VP_DEVIATION around
     ///         the cache. Bypass the clamp when the cache is older than MAX_VP_STALENESS so
     ///         long idle periods don't permanently anchor balanceOf() to an outdated value.
+    /// @dev L-03 (accepted trade-off): after MAX_VP_STALENESS the ±MAX_VP_DEVIATION clamp is
+    ///      bypassed and the raw virtual price is used. This is a deliberate liveness choice and the
+    ///      residual manipulation risk is accepted because: (1) the clamp targets SAME-TX VP
+    ///      manipulation, but every state-changing withdraw calls `_syncValueCache()` FIRST, so the
+    ///      clamp re-anchors to the just-updated value on the path that actually moves funds;
+    ///      (2) Curve `get_virtual_price()` is the invariant-per-share and cannot be profitably
+    ///      moved within a single transaction (it only ratchets up from fees); and (3) the vault's
+    ///      sensitive paths are reentrancy-guarded, so an attacker cannot move the pool's VP and
+    ///      the vault's accounting atomically. The bypass only affects pure-view reads after a
+    ///      multi-day idle period.
     function _getSafeUnitValue() internal view returns (uint256) {
         uint256 cached = cachedVirtualPrice;
         uint256 current = _lpUnitValue();

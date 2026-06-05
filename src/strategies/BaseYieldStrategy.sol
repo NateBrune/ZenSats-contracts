@@ -187,8 +187,12 @@ abstract contract BaseYieldStrategy is IYieldStrategy, ReentrancyGuard {
         if (currentValue == 0) return 0;
         if (amount > currentValue) amount = currentValue;
 
-        uint256 basisReduction = (_costBasis * amount) / currentValue;
         received = _withdraw(amount);
+        // L-06: reduce the cost basis by the proportion ACTUALLY realized (min of requested and
+        // received), not the requested amount. An exit-slippage shortfall would otherwise
+        // over-reduce the basis and be recognized as phantom profit later (minor fee over-accrual).
+        uint256 effectiveAmount = received < amount ? received : amount;
+        uint256 basisReduction = (_costBasis * effectiveAmount) / currentValue;
         _costBasis = _costBasis > basisReduction ? _costBasis - basisReduction : 0;
 
         if (received > 0) {
