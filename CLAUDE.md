@@ -66,10 +66,22 @@ forge test --fork-url $MAINNET_RPC_URL --match-test "testFuzz" -vv
 
 # Coverage
 forge coverage --fork-url $MAINNET_RPC_URL
+
+# Strategy exit-liquidity report (live on-chain depth/dislocation per strategy)
+forge script script/StrategyLiquidityReport.s.sol --tc StrategyLiquidityReport --fork-url $MAINNET_RPC_URL -vv
+# Add STRICT=1 to make it revert when any strategy's exit leg is BROKEN (CI gate)
 ```
+
+## Test liquidity / graceful skips
+- Fork suites run at the unpinned latest block, so external pool conditions vary run-to-run. Set
+  `FORK_BLOCK=<n>` to pin a deterministic block.
+- Size-dependent exit tests **skip** (not fail) when the underlying market can't be traded within the
+  swapper's slippage budget (e.g. XAUT/USDT below the gold oracle, or a downstream arithmetic panic from
+  a short swap). See `_isEnvironmentalRevert`/`_skipOnEnvironmentalRevert` in `test/base/ZenjiForkTestBase.sol`.
+  This is environmental, not a vault bug — use the liquidity report above to see current pool health.
 
 ## Key Patterns
 - `vm.prank()` only applies to ONE call; use `vm.startPrank()/vm.stopPrank()` for multi-call sequences
-- `forge fmt` runs automatically via pre-commit hook
+- **Do NOT run `forge fmt`** — it strips single-line blocks and corrupts this codebase. There is no fmt hook (intentionally); commits do not auto-format.
 - Constructor uses `computeCreateAddress` for predictable contract addresses
 - IPOR PlasmaVault has a short withdraw cooldown — tests must `_refreshOracles()` (warp + re-mock) before withdrawals

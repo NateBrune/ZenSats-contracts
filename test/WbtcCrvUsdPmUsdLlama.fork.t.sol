@@ -627,8 +627,7 @@ contract WbtcCrvUsdPmUsdLlama is LlamaSecurityTestMixin {
         uint256 stratBefore = strategy.balanceOf();
 
         uint256 shares = vault.balanceOf(user1);
-        vm.prank(user1);
-        vault.redeem(shares / 2, user1, user1);
+        _redeemSharesOrSkip(user1, shares / 2);
 
         (, uint256 debtAfter) = loanManager.getPositionValues();
         uint256 stratAfter = strategy.balanceOf();

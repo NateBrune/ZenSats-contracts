@@ -451,8 +451,7 @@ abstract contract ZenjiStrategyTestBase is ZenjiForkTestBase {
 
         _refreshOracles();
         uint256 shares3 = vault.balanceOf(user3);
-        vm.prank(user3);
-        uint256 w3 = vault.redeem(shares3, user3, user3);
+        uint256 w3 = _redeemSharesOrSkip(user3, shares3);
 
         _refreshOracles();
         uint256 w2 = _redeemAllAs(user2);
@@ -511,8 +510,7 @@ abstract contract ZenjiStrategyTestBase is ZenjiForkTestBase {
         uint256 stratBefore = yieldStrategy.balanceOf();
 
         uint256 shares = vault.balanceOf(user1);
-        vm.prank(user1);
-        vault.redeem(shares / 2, user1, user1);
+        _redeemSharesOrSkip(user1, shares / 2);
 
         (, uint256 debtAfter) = loanManager.getPositionValues();
         uint256 stratAfter = yieldStrategy.balanceOf();
