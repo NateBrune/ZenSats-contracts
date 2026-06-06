@@ -83,6 +83,11 @@ abstract contract ZenjiStrategyTestBase is ZenjiForkTestBase {
     ///         LP strategies override to assertGt (CRV harvest must increase NAV).
     function _assertHarvestYield(uint256 navBefore, uint256 navAfter) internal virtual { }
 
+    /// @notice Called after vm.warp and before harvestYield() in test_harvestIncreasesNavPerShare.
+    ///         Override to trigger any off-chain checkpoints the strategy relies on (e.g. Stake DAO
+    ///         locker user_checkpoint) so that accrued rewards are visible before harvest.
+    function _checkpointRewards() internal virtual { }
+
     /// @notice Assert pending rewards are non-zero after time has passed.
     ///         Default: non-strict (≥0) — CRV rewards need off-chain accountant to register.
     ///         IPOR base overrides to strict (>0) — interest is visible immediately.
@@ -314,6 +319,7 @@ abstract contract ZenjiStrategyTestBase is ZenjiForkTestBase {
 
         vm.warp(block.timestamp + 30 days);
         _syncAndMockOracles();
+        _checkpointRewards();
 
         vm.prank(owner);
         vault.harvestYield();

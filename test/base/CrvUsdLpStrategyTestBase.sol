@@ -75,17 +75,20 @@ abstract contract CrvUsdLpStrategyTestBase is ZenjiStrategyTestBase {
         assertGt(rvShares, 0, "Stake DAO reward vault should hold LP shares");
     }
 
+    /// @notice Prank as the Stake DAO CRV Liquid Locker and checkpoint the gauge so that
+    ///         integrate_fraction[locker] is updated to the warped timestamp before harvestYield()
+    ///         reads it via the accountant. Without this, the accountant sees stale state and
+    ///         claims zero CRV even though 30 days of emissions have accrued.
+    function _checkpointRewards() internal override {
+        address locker = 0x52f541764E6e90eeBc5c21Ff570De0e2D63766B6; // Stake DAO CRV Liquid Locker
+        address gauge = strategy.gauge();
+        vm.prank(locker);
+        (bool ok,) = gauge.call(abi.encodeWithSignature("user_checkpoint(address)", locker));
+        assertTrue(ok, "gauge user_checkpoint failed");
+    }
+
     /// @notice LP harvest must increase NAV — CRV rewards compound via harvestYield().
-    ///         Skips when NAV decreases, which happens in fork tests because Curve trading
-    ///         fees (~1.5% APY) only accrue via real swap traffic — vm.warp() generates none.
-    ///         harvestYield() captures CRV rewards only; if CRV APR alone < borrow APR the
-    ///         fork NAV decreases even though the full live APR (fees + CRV) exceeds it.
     function _assertHarvestYield(uint256 navBefore, uint256 navAfter) internal override {
-        if (navAfter <= navBefore) {
-            console.log("[ENV SKIP] CRV rewards alone < borrow cost in fork (trading fees don't accrue without swap traffic): before=%d after=%d", navBefore, navAfter);
-            vm.skip(true);
-            return;
-        }
         assertGt(navAfter, navBefore, "LP harvest must increase NAV per share");
     }
 
