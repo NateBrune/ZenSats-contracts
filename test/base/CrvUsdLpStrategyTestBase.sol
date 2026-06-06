@@ -88,7 +88,7 @@ abstract contract CrvUsdLpStrategyTestBase is ZenjiStrategyTestBase {
     }
 
     /// @notice LP harvest must increase NAV — CRV rewards compound via harvestYield().
-    function _assertHarvestYield(uint256 navBefore, uint256 navAfter) internal override {
+    function _assertHarvestYield(uint256 navBefore, uint256 navAfter) internal virtual override {
         assertGt(navAfter, navBefore, "LP harvest must increase NAV per share");
     }
 
