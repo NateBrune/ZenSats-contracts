@@ -30,11 +30,13 @@ contract StrategyLiquidityReport is Script {
     address constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
     address constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
 
-    // ── Curve pools ──
+    // ── Curve StableSwap / CryptoSwap pools ──
     address constant PMUSD_CRVUSD = 0xEcb0F0d68C19BdAaDAEbE24f6752A4Db34e2c2cb; // shared strategy LP
     address constant CRVUSD_USDT = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
-    address constant WBTC_CRVUSD = 0xD9FF8396554A0d18B2CFbeC53e1979b7ecCe8373; // Llama WBTC collateral
-    address constant WSTETH_CRVUSD = 0x37417B2238AA52D0DD2D6252d989E728e8f706e4; // Llama wstETH collateral
+    address constant WBTC_CRVUSD_CURVE = 0xD9FF8396554A0d18B2CFbeC53e1979b7ecCe8373; // WBTC Llama collateral (Curve)
+
+    // ── LlamaLend LLAMMA AMM (doesn't implement balances() — use balanceOf fallback) ──
+    address constant WSTETH_CRVUSD_LLAMMA = 0x37417B2238AA52D0DD2D6252d989E728e8f706e4;
 
     // ── Uniswap V3 ──
     address constant V3_FACTORY = 0x1F98431c8aD98523631AE4a59f267346ea31F984;
@@ -83,22 +85,22 @@ contract StrategyLiquidityReport is Script {
         console.log("");
         console.log("--- LlamaLend debt=crvUSD strategies ---");
         _strategyHeader("WBTC / Llama / pmUSD-crvUSD");
-        _curveGeneric("  collateral exit WBTC/crvUSD (Curve)", WBTC_CRVUSD);
+        _curveGeneric("  collateral exit WBTC/crvUSD (Curve)", WBTC_CRVUSD_CURVE);
         _line("  yield LP", pmusdThin ? "THIN (see pmUSD/crvUSD)" : "OK");
         _verdict(pmusdThin);
 
         _strategyHeader("wstETH / Llama / pmUSD-crvUSD");
-        _curveGeneric("  collateral exit wstETH/crvUSD (Curve)", WSTETH_CRVUSD);
+        _llamaAmm("  collateral exit wstETH/crvUSD (LlamaLend LLAMMA)", WSTETH_CRVUSD_LLAMMA);
         _line("  yield LP", pmusdThin ? "THIN (see pmUSD/crvUSD)" : "OK");
         _verdict(pmusdThin);
 
         _strategyHeader("WBTC / Llama / crvUSD-USDT");
-        _curveGeneric("  collateral exit WBTC/crvUSD (Curve)", WBTC_CRVUSD);
+        _curveGeneric("  collateral exit WBTC/crvUSD (Curve)", WBTC_CRVUSD_CURVE);
         _line("  yield LP crvUSD/USDT", "OK (deep)");
         _verdict(false);
 
         _strategyHeader("wstETH / Llama / crvUSD-USDT");
-        _curveGeneric("  collateral exit wstETH/crvUSD (Curve)", WSTETH_CRVUSD);
+        _llamaAmm("  collateral exit wstETH/crvUSD (LlamaLend LLAMMA)", WSTETH_CRVUSD_LLAMMA);
         _line("  yield LP crvUSD/USDT", "OK (deep)");
         _verdict(false);
 
@@ -190,6 +192,22 @@ contract StrategyLiquidityReport is Script {
         }
     }
 
+    /// @notice LlamaLend LLAMMA AMM: doesn't implement balances() — uses coins() for token
+    ///         addresses then reads balanceOf(pool) directly. Reports active-band oracle price.
+    function _llamaAmm(string memory label, address amm) internal {
+        console.log(label);
+        address c0 = ICurve(amm).coins(0); // crvUSD
+        address c1 = ICurve(amm).coins(1); // collateral (wstETH)
+        string memory s0 = IERC20(c0).symbol();
+        string memory s1 = IERC20(c1).symbol();
+        uint256 b0 = IERC20(c0).balanceOf(amm) / (10 ** IERC20(c0).decimals());
+        uint256 b1 = IERC20(c1).balanceOf(amm) / (10 ** IERC20(c1).decimals());
+        uint256 oraclePrice = ILlamaAmm(amm).price_oracle(); // collateral price in crvUSD, 1e18
+        uint256 oraclePriceK = oraclePrice / 1e15; // display as integer * 1000 for readability
+        console.log(string.concat("    ", s0, ": ", _u(b0), "   |   ", s1, ": ", _u(b1)));
+        console.log(string.concat("    oracle price (1 ", s1, " in crvUSD) = ", _u(oraclePriceK), " (x1e-3)"));
+    }
+
     // ── formatting ───────────────────────────────────────────────────────────
 
     function _strategyHeader(string memory name) internal {
@@ -254,4 +272,8 @@ interface IV3Pool {
 
 interface IAggregator {
     function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80);
+}
+
+interface ILlamaAmm {
+    function price_oracle() external view returns (uint256);
 }
