@@ -76,11 +76,13 @@ abstract contract CrvUsdLpStrategyTestBase is ZenjiStrategyTestBase {
     }
 
     /// @notice LP harvest must increase NAV — CRV rewards compound via harvestYield().
-    ///         Skips when borrowing interest exceeds CRV yield at the current fork state
-    ///         (environmental condition, not a vault bug).
+    ///         Skips when NAV decreases, which happens in fork tests because Curve trading
+    ///         fees (~1.5% APY) only accrue via real swap traffic — vm.warp() generates none.
+    ///         harvestYield() captures CRV rewards only; if CRV APR alone < borrow APR the
+    ///         fork NAV decreases even though the full live APR (fees + CRV) exceeds it.
     function _assertHarvestYield(uint256 navBefore, uint256 navAfter) internal override {
         if (navAfter <= navBefore) {
-            console.log("[ENV SKIP] harvest NAV decreased (borrowing cost > CRV yield at current fork state): before=%d after=%d", navBefore, navAfter);
+            console.log("[ENV SKIP] CRV rewards alone < borrow cost in fork (trading fees don't accrue without swap traffic): before=%d after=%d", navBefore, navAfter);
             vm.skip(true);
             return;
         }
