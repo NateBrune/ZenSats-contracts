@@ -172,7 +172,7 @@ contract M1_Llama_partial_unwind_health is ZenjiForkTestBase {
         swapper.setVault(address(llamaVault));
 
         loanManager = AaveLoanManager(address(llamaManager));
-        vault = Zenji(address(llamaVault));
+        vault = Zenji(payable(address(llamaVault)));
         yieldStrategy = strategy;
     }
 

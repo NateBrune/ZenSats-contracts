@@ -172,7 +172,7 @@ contract M3_LlamaLoanManager_DEBT_FLASH_LENDER_staleness is ZenjiForkTestBase {
         swapper.setVault(address(llamaVault));
 
         loanManager = AaveLoanManager(address(llamaManager));
-        vault = Zenji(address(llamaVault));
+        vault = Zenji(payable(address(llamaVault)));
         yieldStrategy = strategy;
     }
 

@@ -76,7 +76,7 @@ contract LargeLiquidityStressTest is Test {
         if (__forkBlock == 0) vm.createSelectFork(rpcUrl);
         else vm.createSelectFork(rpcUrl, __forkBlock);
 
-        vault = Zenji(DEPLOYED_VAULT);
+        vault = Zenji(payable(DEPLOYED_VAULT));
         strategy = vault.yieldStrategy();
         loanManager = vault.loanManager();
         wbtc = IERC20(WBTC);

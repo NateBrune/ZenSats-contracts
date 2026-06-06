@@ -174,7 +174,7 @@ contract POC_Batch2_HYP02_09_06_11 is ZenjiForkTestBase {
         swapper.setVault(address(llamaVault));
 
         loanManager = AaveLoanManager(address(llamaManager));
-        vault = Zenji(address(llamaVault));
+        vault = Zenji(payable(address(llamaVault)));
         yieldStrategy = strategy;
     }
 

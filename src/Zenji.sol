@@ -3,6 +3,7 @@ pragma solidity ^0.8.33;
 
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import { Proxy } from "@openzeppelin/contracts/proxy/Proxy.sol";
 import { IERC20 } from "./interfaces/IERC20.sol";
 import { IERC4626 } from "./interfaces/IERC4626.sol";
 import { IYieldStrategy } from "./interfaces/IYieldStrategy.sol";
@@ -46,7 +47,7 @@ interface ILoanManagerSwapperRotation {
 /// @notice ERC4626-compliant conservative collateral yield vault using loan managers and yield strategies
 /// @dev Deposits collateral to a loan manager, borrows debt asset, deposits to yield strategy
 
-contract Zenji is ZenjiStorage, IERC4626 {
+contract Zenji is ZenjiStorage, IERC4626, Proxy {
     using TimelockLib for TimelockLib.AddressTimelockData;
     using TimelockLib for TimelockLib.TimelockData;
     using SafeTransferLib for IERC20;
@@ -262,41 +263,44 @@ contract Zenji is ZenjiStorage, IERC4626 {
         // Loan manager is provided externally and immutable for this vault
     }
 
-    /// @notice Cold-path admin selectors stay in the ABI as thin stubs that delegatecall
-    ///         the ZenjiAdmin facet (shared storage). Keeps typed callers working while the
-    ///         logic lives in the facet to save vault bytecode.
-    function _adminDelegate() private {
-        address facet = adminFacet;
-        assembly {
-            calldatacopy(0, 0, calldatasize())
-            let ok := delegatecall(gas(), facet, 0, calldatasize(), 0, 0)
-            returndatacopy(0, 0, returndatasize())
-            switch ok
-            case 0 { revert(0, returndatasize()) }
-            default { return(0, returndatasize()) }
-        }
+    /// @notice Cold-path admin selectors stay in the ABI as thin stubs that delegatecall the
+    ///         ZenjiAdmin facet (shared storage), keeping typed callers working while the logic
+    ///         lives in the facet to save vault bytecode. Forwarding uses OpenZeppelin
+    ///         `Proxy._delegate` (the audited calldatacopy/delegatecall/returndatacopy primitive).
+    /// @dev OZ Proxy hook — the delegatecall target for the forwarding stubs below.
+    function _implementation() internal view override returns (address) {
+        return adminFacet;
     }
 
-    function proposeSwapper(address) external { _adminDelegate(); }
-    function executeSwapper() external { _adminDelegate(); }
-    function cancelSwapper() external { _adminDelegate(); }
-    function transferRole(uint8, address) external { _adminDelegate(); }
-    function acceptRole(uint8) external { _adminDelegate(); }
-    function cancelRole(uint8) external { _adminDelegate(); }
-    function guardianCancelRole(uint8) external { _adminDelegate(); }
-    function guardianCancelSwapper() external { _adminDelegate(); }
-    function enterEmergencyMode() external { _adminDelegate(); }
-    function emergencyStep(uint8) external { _adminDelegate(); }
-    function emergencySkipStep(uint8) external { _adminDelegate(); }
-    function cancelEmergencySkip(uint8) external { _adminDelegate(); }
-    function cancelEmergencyMode() external { _adminDelegate(); }
-    function pauseDeposits() external { _adminDelegate(); }
-    function resumeDeposits() external { _adminDelegate(); }
-    function proposeRescueRecipient(address) external { _adminDelegate(); }
-    function executeRescueRecipient() external { _adminDelegate(); }
-    function cancelRescueRecipient() external { _adminDelegate(); }
-    function rescueAssets(address, address) external { _adminDelegate(); }
-    function emergencyRescue(uint8) external { _adminDelegate(); }
+    /// @dev The admin facet is reached ONLY through the explicit forwarding stubs (which keep every
+    ///      admin selector in this contract's ABI). OZ `Proxy` ships a catch-all `fallback()` that
+    ///      would delegatecall on *any* unmatched selector; it is intentionally disabled here so
+    ///      unknown selectors revert — preserving the pre-Proxy behavior and adding no payable
+    ///      fallback surface.
+    fallback() external payable override {
+        revert();
+    }
+
+    function proposeSwapper(address) external { _delegate(_implementation()); }
+    function executeSwapper() external { _delegate(_implementation()); }
+    function cancelSwapper() external { _delegate(_implementation()); }
+    function transferRole(uint8, address) external { _delegate(_implementation()); }
+    function acceptRole(uint8) external { _delegate(_implementation()); }
+    function cancelRole(uint8) external { _delegate(_implementation()); }
+    function guardianCancelRole(uint8) external { _delegate(_implementation()); }
+    function guardianCancelSwapper() external { _delegate(_implementation()); }
+    function enterEmergencyMode() external { _delegate(_implementation()); }
+    function emergencyStep(uint8) external { _delegate(_implementation()); }
+    function emergencySkipStep(uint8) external { _delegate(_implementation()); }
+    function cancelEmergencySkip(uint8) external { _delegate(_implementation()); }
+    function cancelEmergencyMode() external { _delegate(_implementation()); }
+    function pauseDeposits() external { _delegate(_implementation()); }
+    function resumeDeposits() external { _delegate(_implementation()); }
+    function proposeRescueRecipient(address) external { _delegate(_implementation()); }
+    function executeRescueRecipient() external { _delegate(_implementation()); }
+    function cancelRescueRecipient() external { _delegate(_implementation()); }
+    function rescueAssets(address, address) external { _delegate(_implementation()); }
+    function emergencyRescue(uint8) external { _delegate(_implementation()); }
 
     /// @notice Returns true iff `yieldStrategy.owner() == gov`. Off-chain monitoring should
     ///         call this post-deploy and on any role transfer; a `false` result means the

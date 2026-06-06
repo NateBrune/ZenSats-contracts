@@ -70,7 +70,7 @@ contract SlippageSocialization is Test {
         if (__forkBlock == 0) vm.createSelectFork(rpcUrl);
         else vm.createSelectFork(rpcUrl, __forkBlock);
 
-        vault = Zenji(VAULT);
+        vault = Zenji(payable(VAULT));
         strategy = vault.yieldStrategy();
         loanManager = vault.loanManager();
         wbtc = IERC20(WBTC);
@@ -339,7 +339,7 @@ contract SlippageSocialization is Test {
             if (__forkBlock == 0) vm.createSelectFork(rpcUrl);
             else vm.createSelectFork(rpcUrl, __forkBlock);
 
-            vault = Zenji(VAULT);
+            vault = Zenji(payable(VAULT));
             strategy = vault.yieldStrategy();
             loanManager = vault.loanManager();
             wbtc = IERC20(WBTC);
