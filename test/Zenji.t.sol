@@ -11,7 +11,6 @@ import { ILoanManager } from "../src/interfaces/ILoanManager.sol";
 import { ILlamaLendController } from "../src/interfaces/ILlamaLendController.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
 import { ISwapper } from "../src/interfaces/ISwapper.sol";
-import { CrvUsdIporStrategy } from "../src/strategies/vault/CrvUsdIporStrategy.sol";
 import { TimelockLib } from "../src/libraries/TimelockLib.sol";
 import { ERC4626 } from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -548,10 +547,6 @@ contract MockYieldStrategy is IYieldStrategy {
 
             uint256 constant STAMP = 1710000000;
 
-            /// @notice Called in setUp - always use mock yield strategy
-            function increaseIporVaultCap() internal {
-                setupMockYieldStrategy();
-            }
 
             function setUp() public {
                 // Fork mainnet - try MAINNET_RPC_URL first, then ETH_RPC_URL, otherwise respect --fork-url
@@ -587,8 +582,8 @@ contract MockYieldStrategy is IYieldStrategy {
 
                 viewHelper = new ZenjiViewHelper();
 
-                // Deploy mock yield strategy (IPOR PlasmaVault is at capacity)
-                increaseIporVaultCap();
+                // Deploy mock yield strategy
+                setupMockYieldStrategy();
             }
 
             // ============ Basic Deposit/Withdraw Tests ============
