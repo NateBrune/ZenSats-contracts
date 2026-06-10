@@ -216,7 +216,15 @@ contract InvMockYieldStrategy is IYieldStrategy {
             _collateralAsset.transfer(vault, remove);
         }
 
+        function emergencyUnwindPosition() external onlyVault {
+            _unwindPosition(type(uint256).max);
+        }
+
         function unwindPosition(uint256 collateralNeeded) external onlyVault {
+            _unwindPosition(collateralNeeded);
+        }
+
+        function _unwindPosition(uint256 collateralNeeded) internal {
             bool fullyClose =
                 collateralNeeded == type(uint256).max || collateralNeeded >= positionCollateral;
 

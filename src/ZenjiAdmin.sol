@@ -88,6 +88,8 @@ contract ZenjiAdmin is ZenjiStorage {
     event EmergencySkipStepProposed(uint8 indexed step, uint256 effectiveTime);
     event EmergencySkipCancelled(uint8 indexed step);
     event EmergencyModeCancelled();
+    event GovEmergencyProposed(uint256 effectiveTime);
+    event GovEmergencyCancelled(address indexed canceller);
     event StrategyOwnerPropagationFailed(address indexed newOwner);
     event SwapperGovPropagationFailed(address indexed newGov);
 
@@ -317,8 +319,47 @@ contract ZenjiAdmin is ZenjiStorage {
     /// @notice Enter emergency mode - one-way latch, no exit
     /// @dev Guardian-only. Blocks deposits permanently. Withdrawals resume after liquidation completes.
     function enterEmergencyMode() external onlyGuardian {
+        _enterEmergencyMode();
+    }
+
+    /// @notice M-06 break-glass: gov can enter emergency mode behind a 48h timelock.
+    /// @dev Two-call pattern (mirrors emergencySkipStep): first call proposes, second call after
+    ///      GOV_EMERGENCY_DELAY executes. Covers guardian key loss — without this, the vault has
+    ///      no emergency response for the 4-week guardian rotation (deposits keep flowing into a
+    ///      potentially compromised strategy). Scope is deliberately minimal: gov only gains
+    ///      ENTRY (a defensive stop — blocks deposits/harvest/rebalance/withdrawFees); the
+    ///      emergency steps stay guardian-only so a compromised gov cannot force a lossy
+    ///      skip-skip-liquidate (gov is the only skip veto, so it must not also hold the steps).
+    ///      A live guardian (or gov itself) can veto the proposal via cancelGovEmergency during
+    ///      the 48h window; an unwanted executed entry is still reversible via
+    ///      cancelEmergencyMode before any step runs.
+    function govEnterEmergencyMode() external onlyGov {
+        if (emergencyMode) revert EmergencyModeActive();
+        uint256 pending = pendingGovEmergencyTimestamp;
+        if (pending == 0) {
+            pendingGovEmergencyTimestamp = block.timestamp + GOV_EMERGENCY_DELAY;
+            emit GovEmergencyProposed(pendingGovEmergencyTimestamp);
+        } else {
+            if (block.timestamp < pending) revert TimelockLib.TimelockNotReady();
+            pendingGovEmergencyTimestamp = 0;
+            _enterEmergencyMode();
+        }
+    }
+
+    /// @notice Veto a pending gov emergency-mode proposal.
+    /// @dev Callable by guardian (counter to a compromised gov) or gov (changed its mind).
+    function cancelGovEmergency() external {
+        if (msg.sender != gov && msg.sender != guardian) revert Unauthorized();
+        if (pendingGovEmergencyTimestamp == 0) revert TimelockLib.NoTimelockPending();
+        pendingGovEmergencyTimestamp = 0;
+        emit GovEmergencyCancelled(msg.sender);
+    }
+
+    function _enterEmergencyMode() internal {
         if (emergencyMode) revert EmergencyModeActive();
         emergencyMode = true;
+        // A pending gov proposal is moot once emergency mode is active.
+        pendingGovEmergencyTimestamp = 0;
         emit EmergencyModeEntered();
     }
 
@@ -330,7 +371,7 @@ contract ZenjiAdmin is ZenjiStorage {
         // Step 2: requires both prior steps to be resolved (run or explicitly skipped)
         if (step == 2 && emergencyStepsCompleted & 0x3 != 0x3) revert EmergencyStepsIncomplete();
 
-        (uint256 newLSB, uint256 newFees, bool setLiq) = ZenjiCoreLib.executeEmergencyStep(
+        (uint256 newLSB, uint256 newFees, bool setLiq, bool yieldWithdrawn) = ZenjiCoreLib.executeEmergencyStep(
             step,
             yieldStrategy,
             loanManager,
@@ -347,7 +388,11 @@ contract ZenjiAdmin is ZenjiStorage {
 
         if (step == 0) {
             feesAtLastRebalance = 0;
-            emergencyStepsCompleted |= 0x1;
+            // Only mark step 0 complete when the strategy exit ran to completion (or no strategy
+            // exists). A clean 0-return from an already-empty strategy counts as complete. If
+            // both withdrawAll() and emergencyWithdraw() reverted (e.g. oracle stale), leave the
+            // bit clear so the guardian can retry after the oracle recovers, or explicitly skip.
+            if (yieldWithdrawn) emergencyStepsCompleted |= 0x1;
         } else if (step == 1) {
             emergencyStepsCompleted |= 0x2;
         }
@@ -415,6 +460,8 @@ contract ZenjiAdmin is ZenjiStorage {
         // Clear any pending skip proposals — they are meaningless outside emergency mode
         pendingSkipTimestamp[0] = 0;
         pendingSkipTimestamp[1] = 0;
+        // Gov is standing down from the emergency; clear its own pending entry proposal too.
+        pendingGovEmergencyTimestamp = 0;
         emit EmergencyModeCancelled();
     }
 

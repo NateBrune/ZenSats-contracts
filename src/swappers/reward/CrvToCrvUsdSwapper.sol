@@ -96,9 +96,8 @@ contract CrvToCrvUsdSwapper is BaseSwapper {
     /// @param crvAmount Amount of CRV to swap
     /// @return crvUsdReceived Amount of crvUSD received
     function swap(uint256 crvAmount) external returns (uint256 crvUsdReceived) {
-        if (authorizedCaller != address(0) && msg.sender != authorizedCaller) {
-            revert Unauthorized();
-        }
+        // L-05: treat address(0) as "not yet configured" — fully locked until setAuthorizedCaller is called
+        if (msg.sender != authorizedCaller) revert Unauthorized();
         if (crvAmount == 0) return 0;
 
         uint256 expectedOut = triCryptoPool.get_dy(CRV_INDEX, CRVUSD_INDEX, crvAmount);

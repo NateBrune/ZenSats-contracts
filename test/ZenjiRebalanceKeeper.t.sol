@@ -124,6 +124,8 @@ contract MockKeeperLoanManager is ILoanManager {
 
     function unwindPosition(uint256) external pure { }
 
+    function emergencyUnwindPosition() external pure { }
+
     function initializeVault(address) external pure { }
 
     function setMaxLtvBps(uint256) external pure { }

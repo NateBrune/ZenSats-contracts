@@ -219,6 +219,7 @@ contract MockLoanManager_H3 is ILoanManager {
     function repayDebt(uint256) external { }
     function removeCollateral(uint256) external { }
     function unwindPosition(uint256) external { }
+    function emergencyUnwindPosition() external { }
     function transferCollateral(address, uint256) external { }
     function transferDebt(address, uint256) external { }
 }

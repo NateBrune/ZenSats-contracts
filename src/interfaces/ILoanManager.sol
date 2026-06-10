@@ -49,6 +49,14 @@ interface ILoanManager {
     /// @param collateralNeeded Amount of collateral to free, or type(uint256).max for full close
     function unwindPosition(uint256 collateralNeeded) external;
 
+    /// @notice Fully close the position without the oracle staleness gate (emergency flow only).
+    /// @dev Repays debt from this contract's debt-token balance and withdraws collateral to the
+    ///      vault. Fully oracle-free when the held balance covers the debt. Shortfall behaviour
+    ///      while the feed is stale is implementation-defined: AaveLoanManager degrades to a
+    ///      partial exit sized by Aave's own oracle (residual dust loan left for a post-recovery
+    ///      re-run); LlamaLoanManager's flashloan/swap path is oracle-priced and reverts.
+    function emergencyUnwindPosition() external;
+
     // ============ View Functions ============
 
     /// @notice Get current LTV ratio

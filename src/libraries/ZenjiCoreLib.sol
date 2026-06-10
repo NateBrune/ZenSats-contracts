@@ -33,6 +33,8 @@ library ZenjiCoreLib {
     /// @return newLastStrategyBalance Updated lastStrategyBalance value
     /// @return newAccumulatedFees Updated accumulatedFees value
     /// @return setLiquidationComplete Whether to set liquidationComplete = true
+    /// @return yieldWithdrawn True when step 0 completed: no strategy, or the strategy's exit
+    ///         call succeeded (a 0 return from an already-empty strategy counts as success)
     function executeEmergencyStep(
         uint8 step,
         IYieldStrategy yieldStrategy,
@@ -47,7 +49,8 @@ library ZenjiCoreLib {
         returns (
             uint256 newLastStrategyBalance,
             uint256 newAccumulatedFees,
-            bool setLiquidationComplete
+            bool setLiquidationComplete,
+            bool yieldWithdrawn
         )
     {
         newLastStrategyBalance = lastStrategyBalance;
@@ -55,43 +58,47 @@ library ZenjiCoreLib {
 
         if (step == 0) {
             uint256 withdrawn = 0;
+            bool exitSucceeded = false;
             if (address(yieldStrategy) != address(0)) {
                 try yieldStrategy.withdrawAll() returns (uint256 r) {
                     withdrawn = r;
+                    exitSucceeded = true;
                 } catch {
                     try yieldStrategy.emergencyWithdraw() returns (uint256 r) {
                         withdrawn = r;
+                        exitSucceeded = true;
                     } catch { }
                 }
             }
+            // Step 0 is complete when there is no strategy, or when the strategy's exit path ran
+            // to completion. Success with withdrawn == 0 means the strategy was already empty
+            // (withdrawAll on an empty strategy is a clean no-op) — that must mark the step done,
+            // or an idle/already-drained vault would be forced through the 3-day skip path. Only
+            // when BOTH calls revert (e.g. stale oracle) is the bit left clear, so the guardian
+            // must retry after the oracle recovers or explicitly use the vetoable skip.
+            yieldWithdrawn = address(yieldStrategy) == address(0) || exitSucceeded;
             newLastStrategyBalance = 0;
             newAccumulatedFees = 0;
             emit EmergencyYieldRedeemed(withdrawn);
         } else if (step == 1) {
             if (!loanManager.loanExists()) {
                 _recoverLoanManagerFunds(loanManager);
-                _swapRemainingDebtToCollateral(debtAsset, swapper);
+                _swapRemainingDebtToCollateral(loanManager, debtAsset, swapper);
                 emit EmergencyLoanUnwound(collateralAsset.balanceOf(address(this)), 0);
-                return (newLastStrategyBalance, newAccumulatedFees, false);
+                return (newLastStrategyBalance, newAccumulatedFees, false, false);
             }
-            uint256 totalDebt = loanManager.getCurrentDebt();
+            // Send all held debt asset to the loan manager up-front; emergencyUnwindPosition
+            // repays min(debt, balance) internally and only needs the (oracle-priced) flashloan
+            // path for a shortfall. Routing the repay through the unwind instead of repayDebt()
+            // keeps the covered-debt exit oracle-free — a stale Chainlink feed must not block
+            // the emergency escape (M-03). Excess debt asset is recovered right after.
             uint256 availableDebt = debtAsset.balanceOf(address(this));
-            if (availableDebt >= totalDebt) {
-                if (totalDebt > 0) {
-                    debtAsset.safeTransfer(address(loanManager), totalDebt);
-                    loanManager.repayDebt(totalDebt);
-                }
-                // Debt is fully repaid; withdraw collateral (e.g. aTokens) from the lending protocol.
-                // unwindPosition handles zero-debt by skipping the flashloan and calling withdraw directly.
-                loanManager.unwindPosition(type(uint256).max);
-            } else {
-                if (availableDebt > 0) {
-                    debtAsset.safeTransfer(address(loanManager), availableDebt);
-                }
-                loanManager.unwindPosition(type(uint256).max);
+            if (availableDebt > 0) {
+                debtAsset.safeTransfer(address(loanManager), availableDebt);
             }
+            loanManager.emergencyUnwindPosition();
             _recoverLoanManagerFunds(loanManager);
-            _swapRemainingDebtToCollateral(debtAsset, swapper);
+            _swapRemainingDebtToCollateral(loanManager, debtAsset, swapper);
             emit EmergencyLoanUnwound(collateralAsset.balanceOf(address(this)), 0);
         } else {
             setLiquidationComplete = true;
@@ -126,7 +133,7 @@ library ZenjiCoreLib {
             uint256 withdrawn = yieldStrategy.emergencyWithdraw();
             newAccumulatedFees = 0;
             newLastStrategyBalance = 0;
-            _swapRemainingDebtToCollateral(debtAsset, swapper);
+            _swapRemainingDebtToCollateral(loanManager, debtAsset, swapper);
             emit EmergencyYieldRedeemed(withdrawn);
         }
     }
@@ -419,9 +426,21 @@ library ZenjiCoreLib {
         if (lmDebt > 0) loanManager.transferDebt(address(this), lmDebt);
     }
 
-    function _swapRemainingDebtToCollateral(IERC20 debtAsset, ISwapper swapper) private {
+    function _swapRemainingDebtToCollateral(
+        ILoanManager loanManager,
+        IERC20 debtAsset,
+        ISwapper swapper
+    ) private {
         uint256 debtBal = debtAsset.balanceOf(address(this));
         if (debtBal > 10 ** debtAsset.decimals() && address(swapper) != address(0)) {
+            // Best-effort: the swapper's price floor is derived from the same Chainlink feeds
+            // the loan manager checks. While stale, the swap would revert and take the whole
+            // emergency step down with it — keep the debt asset at the vault instead; re-running
+            // the step once the feed heals converts it (M-03).
+            try loanManager.checkOracleFreshness() { }
+            catch {
+                return;
+            }
             debtAsset.safeTransfer(address(swapper), debtBal);
             swapper.swapDebtForCollateral(debtBal);
         }

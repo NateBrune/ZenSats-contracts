@@ -229,11 +229,11 @@ contract AC3_StaleOracle_WithdrawFreeze is ZenjiForkTestBase {
         console.log("Recovery: Guardian must enter emergency mode to bypass");
     }
 
-    /// @dev AC-3: Demonstrates that emergency mode is partially masked but still broken.
-    ///      emergencyStep(0) has a try/catch around withdrawAll() that masks the
-    ///      StaleOrInvalidOracle error, but BOTH withdrawAll() and emergencyWithdraw()
-    ///      fail silently — yield is NOT recovered.
-    ///      emergencySkipStep(0) succeeds (no balanceOf call), but step 1 would fail.
+    /// @dev AC-3 (updated for the M-01 fix): emergencyStep(0)'s try/catch still masks the
+    ///      StaleOrInvalidOracle revert — BOTH withdrawAll() and emergencyWithdraw() fail and
+    ///      yield is NOT recovered — but the step is no longer falsely marked complete.
+    ///      The bit stays clear, so the guardian can retry after the oracle heals or take the
+    ///      vetoable emergencySkipStep(0) path, which now correctly proposes the skip.
     function test_AC3_emergencyMode_masked_but_broken() public {
         _deployVault();
         uint256 depositAmount = _baseDeposit();
@@ -257,25 +257,24 @@ contract AC3_StaleOracle_WithdrawFreeze is ZenjiForkTestBase {
         vault.emergencyStep(0);
         uint256 debtBalAfter = IERC20(USDT).balanceOf(address(vault));
         // Yield was NOT recovered — both withdrawAll and emergencyWithdraw failed
+        assertEq(debtBalAfter, debtBalBefore, "no yield recovered while oracle is stale");
         console.log("  PASS emergencyStep(0) did not revert (try/catch masks error)");
         console.log("  WARNING: Yield NOT recovered (both withdrawAll and emergencyWithdraw fail)");
 
-        // emergencySkipStep(0) would fail because emergencyStep(0) already
-        // set the bitmask (emergencyStepsCompleted |= 0x1)
-        console.log("Step 3: emergencySkipStep(0) would revert (step already completed)");
+        // M-01 FIX: the failed step 0 no longer sets the bitmask, so the guardian keeps both
+        // recovery options: retry step 0 after the oracle heals, or propose the vetoable skip.
+        assertEq(
+            vault.emergencyStepsCompleted() & 0x1,
+            0,
+            "M-01 fix: failed step 0 must NOT be marked complete"
+        );
+        console.log("Step 3: emergencySkipStep(0) proposes the skip (bit correctly clear)");
         vm.prank(vault.guardian());
-        vm.expectRevert();
-        vault.emergencySkipStep(0);
-        console.log("  PASS emergencySkipStep(0) reverts (step already marked complete)");
+        vault.emergencySkipStep(0); // first call proposes with the 3-day gov-veto delay
+        console.log("  PASS emergencySkipStep(0) proposal accepted");
 
-        // Step 1 (unwind loan) would fail because _swapRemainingDebtToCollateral
-        // calls the oracle for price conversion
-        console.log("Step 4: emergencyStep(1) would fail at _swapRemainingDebtToCollateral");
-        console.log("  because the oracle is stale and swap conversion needs prices");
-
-        console.log("\nAC-3 PoC: Emergency mode is partially masked but still broken");
-        console.log("Impact: Guardian can enter emergency mode but cannot recover funds");
-        console.log("The try/catch in executeEmergencyStep masks the error but doesn't fix it");
+        console.log("\nAC-3 PoC (post-fix): oracle staleness still blocks yield recovery, but");
+        console.log("the step is no longer falsely marked complete; retry/skip paths remain open");
     }
 
     /// @dev AC-3: Demonstrates the same freeze with crvUSD oracle stale (USDT variant)

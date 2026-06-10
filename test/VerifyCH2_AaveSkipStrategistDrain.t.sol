@@ -47,6 +47,7 @@ contract MockLoanManagerCH2 is ILoanManager {
     function repayDebt(uint256) external override { }
     function removeCollateral(uint256) external override { }
     function unwindPosition(uint256) external override { }
+    function emergencyUnwindPosition() external override { }
     function transferCollateral(address, uint256) external override { }
     function transferDebt(address, uint256) external override { }
 
@@ -328,7 +329,10 @@ contract VerifyCH2_AaveSkipStrategistDrain is Test {
         // ===== ATTACK: Strategist tries to drain USDT =====
         uint256 recipientBefore = usdt.balanceOf(feeRecipient);
 
+        // M-05 fix: withdrawFees() is blocked outright during emergency mode — even before
+        // step 0 zeroes accumulatedFees, the strategist cannot extract anything.
         vm.prank(owner); // owner = strategist
+        vm.expectRevert(Zenji.EmergencyModeActive.selector);
         vault.withdrawFees(feeRecipient);
 
         uint256 drained = usdt.balanceOf(feeRecipient) - recipientBefore;
@@ -369,15 +373,17 @@ contract VerifyCH2_AaveSkipStrategistDrain is Test {
         vm.prank(owner);
         vault.enterEmergencyMode();
 
-        // Strategist front-runs: withdraws fees BEFORE step 0
+        // Strategist front-runs: tries to withdraw fees BEFORE step 0.
+        // M-05 fix: withdrawFees() reverts during emergency mode, so the front-run window
+        // between enterEmergencyMode() and emergencyStep(0) is closed entirely.
         uint256 recipientBefore = usdt.balanceOf(feeRecipient);
         vm.prank(owner);
+        vm.expectRevert(Zenji.EmergencyModeActive.selector);
         vault.withdrawFees(feeRecipient);
         uint256 feeDrained = usdt.balanceOf(feeRecipient) - recipientBefore;
         console.log("Fees front-run withdrawn:", feeDrained);
 
-        // Strategist can only take their accumulated fees, not arbitrary amounts
-        assertLe(feeDrained, feesBeforeEmergency, "can only take accumulatedFees");
+        assertEq(feeDrained, 0, "M-05: emergency mode blocks the fee front-run entirely");
 
         // Now continue emergency
         vm.prank(owner);

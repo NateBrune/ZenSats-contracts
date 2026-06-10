@@ -1293,8 +1293,22 @@ contract MockYieldStrategy is IYieldStrategy {
 
                 vm.startPrank(owner);
                 brickedVault.enterEmergencyMode();
+                // M-01 fix: a bricked strategy (withdrawAll AND emergencyWithdraw revert) no
+                // longer silently marks step 0 complete — the guardian must take the vetoable
+                // emergencySkipStep(0) path (3-day delay) before step 2 can run.
                 brickedVault.emergencyStep(0);
-                brickedVault.emergencyStep(1);
+                assertEq(
+                    brickedVault.emergencyStepsCompleted() & 0x1,
+                    0,
+                    "bricked strategy must not auto-resolve step 0"
+                );
+                brickedVault.emergencySkipStep(0); // propose skip (3-day gov-veto window)
+                brickedVault.emergencyStep(1); // unwind loan while oracles are still fresh
+                vm.stopPrank();
+
+                vm.warp(block.timestamp + brickedVault.EMERGENCY_SKIP_DELAY() + 1);
+                vm.startPrank(owner);
+                brickedVault.emergencySkipStep(0); // execute skip after the delay
                 brickedVault.emergencyStep(2);
                 vm.stopPrank();
 

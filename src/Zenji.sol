@@ -290,6 +290,8 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
     function guardianCancelRole(uint8) external { _delegate(_implementation()); }
     function guardianCancelSwapper() external { _delegate(_implementation()); }
     function enterEmergencyMode() external { _delegate(_implementation()); }
+    function govEnterEmergencyMode() external { _delegate(_implementation()); }
+    function cancelGovEmergency() external { _delegate(_implementation()); }
     function emergencyStep(uint8) external { _delegate(_implementation()); }
     function emergencySkipStep(uint8) external { _delegate(_implementation()); }
     function cancelEmergencySkip(uint8) external { _delegate(_implementation()); }
@@ -552,6 +554,7 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
 
     /// @notice Rebalance LTV and/or strategy-debt coverage
     function rebalance() external nonReentrant {
+        if (emergencyMode) revert EmergencyModeActive();
         if (!loanManager.loanExists()) revert RebalanceNotNeeded();
 
         uint256 currentLtv = 0;
@@ -633,6 +636,7 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
     /// @notice Accrue outstanding fees from yield vault profits
     /// @dev Permissionless - anyone can trigger fee accrual
     function accrueYieldFees() external nonReentrant {
+        if (emergencyMode) revert EmergencyModeActive();
         _accrueYieldFees();
     }
 
@@ -683,6 +687,14 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
         } else {
             idle = false;
             emit IdleModeExited();
+            // L-03: anchor fee baseline at idle-exit point so the residual strategy balance
+            // (dust / in-flight interest from the prior idle period) isn't treated as new yield
+            // by the first _accrueYieldFees() inside _deployDebtToYield.
+            if (address(yieldStrategy) != address(0)) {
+                try yieldStrategy.balanceOf() returns (uint256 bal) {
+                    lastStrategyBalance = bal;
+                } catch {}
+            }
             _deployCapital();
         }
     }
@@ -703,6 +715,7 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
     /// @notice Withdraw accumulated strategy fees
     /// @dev Strategist-only. Accrues pending fees before withdrawal.
     function withdrawFees(address recipient) external nonReentrant onlyStrategist {
+        if (emergencyMode) revert EmergencyModeActive();
         if (recipient == address(0)) revert InvalidAddress();
         // Advance the strategy's cached VP before accruing fees (mirrors rebalance()), so the
         // accrual sees an up-to-date strategy balance and VP drift can't cause phantom fees.
@@ -878,6 +891,9 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
             // to ~2×slippage even on a fair swap.
             uint256 baseSlip = slippageOverride == 0 ? maxSlippage : slippageOverride;
             uint256 swapperSlippage = ISwapperSlippageConfig(address(swapper)).slippage();
+            // Clamp swapper's self-reported slippage to 5% (BaseSwapper.MAX_SLIPPAGE) so a
+            // malicious or misconfigured swapper cannot hollow out the vault-side minOut check.
+            if (swapperSlippage > 5e16) swapperSlippage = 5e16;
             uint256 effectiveSlippage =
                 swapperSlippage > baseSlip * 2 ? swapperSlippage : baseSlip * 2;
             uint256 minOut = (oracleExpected * (PRECISION - effectiveSlippage)) / PRECISION;
@@ -1130,7 +1146,13 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
     ///      so changing feeRate from 0 to non-zero never retroactively charges old gains.
     function _accrueYieldFees() internal {
         if (address(yieldStrategy) == address(0)) return;
-        uint256 currentBalance = yieldStrategy.balanceOf();
+        uint256 currentBalance;
+        try yieldStrategy.balanceOf() returns (uint256 bal) {
+            currentBalance = bal;
+        } catch {
+            // Oracle or strategy unavailable — skip accrual, preserve last known balance.
+            return;
+        }
         if (feeRate > 0 && currentBalance > lastStrategyBalance) {
             uint256 delta = currentBalance - lastStrategyBalance;
             uint256 fees = (delta * feeRate) / PRECISION;

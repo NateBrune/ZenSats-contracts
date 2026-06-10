@@ -47,6 +47,7 @@ contract MockLoanManagerB3 is ILoanManager {
     function repayDebt(uint256) external override { }
     function removeCollateral(uint256) external override { }
     function unwindPosition(uint256) external override { }
+    function emergencyUnwindPosition() external override { }
     function transferCollateral(address, uint256) external override { }
     function transferDebt(address, uint256) external override { }
     function checkOracleFreshness() external view override { }

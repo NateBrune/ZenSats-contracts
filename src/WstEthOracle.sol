@@ -15,10 +15,12 @@ contract WstEthOracle is IChainlinkOracle {
     IChainlinkOracle public immutable stEthEthFeed;
     IChainlinkOracle public immutable ethUsdFeed;
 
-    /// @notice stETH/ETH Chainlink heartbeat is 24 hours
+    /// @notice stETH/ETH Chainlink heartbeat is 24 hours; 25h window accounts for keeper latency.
+    /// @dev  The composite wstETH/USD price can be no fresher than this leg — consumers must allow
+    ///       up to 25h staleness (e.g. MAX_DEBT_ORACLE_STALENESS = 90000 in AaveLoanManager).
     uint256 public constant STETH_ETH_MAX_STALENESS = 90000; // 25 hours
-    /// @notice ETH/USD Chainlink heartbeat is 1 hour
-    uint256 public constant ETH_USD_MAX_STALENESS = 7200; // 2 hours
+    /// @notice ETH/USD Chainlink heartbeat is 1 hour; 5-minute grace period for keeper latency.
+    uint256 public constant ETH_USD_MAX_STALENESS = 3900; // 1 hour + 5 min
 
     constructor(address _wstETH, address _stEthEthFeed, address _ethUsdFeed) {
         wstETH = IWstETH(_wstETH);
@@ -79,7 +81,7 @@ contract WstEthOracle is IChainlinkOracle {
         // Report the OLDEST of the two component timestamps so a consumer's staleness check
         // reflects the true age of the composite price. The stETH/ETH leg has a 24h Chainlink
         // heartbeat, so consumers must allow up to ~25h staleness for wstETH. Both legs remain
-        // independently bounded above (stETH/ETH <= 25h, ETH/USD <= 2h, validated here).
+        // independently bounded above (stETH/ETH <= 25h, ETH/USD <= 1h+5min, validated here).
         //
         // L-07: roundId/answeredInRound deliberately track the ETH/USD leg only (a composite has
         // no single comparable roundId, and switching feeds would break cross-call monotonicity).

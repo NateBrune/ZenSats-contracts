@@ -22,6 +22,10 @@ library ZenjiConstants {
     uint256 internal constant GOV_GUARDIAN_TRANSFER_DELAY = 4 weeks;
     uint256 internal constant PARAM_TIMELOCK_DELAY = 1 weeks;
     uint256 internal constant EMERGENCY_SKIP_DELAY = 3 days;
+    /// @dev M-06 break-glass: delay before a gov-proposed emergency-mode entry takes effect.
+    ///      Short enough to cut the guardian-key-loss blackout from 4 weeks to 2 days; long
+    ///      enough for the guardian (if alive) or social response to veto a compromised gov.
+    uint256 internal constant GOV_EMERGENCY_DELAY = 48 hours;
     uint256 internal constant MAX_USER_SLIPPAGE = 2e17; // 20%
     /// @dev Must match BaseYieldStrategy.MIN_SLIPPAGE (used only by ZenjiGovLib).
     uint256 internal constant MIN_VAULT_SLIPPAGE = 1e15; // 0.1%

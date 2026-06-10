@@ -2,7 +2,12 @@
 pragma solidity ^0.8.33;
 
 import { IERC20 } from "../interfaces/IERC20.sol";
-import { IAavePool } from "../interfaces/IAavePool.sol";
+import {
+    IAavePool,
+    IAavePoolAddressesProvider,
+    IAavePoolEmergencyView,
+    IAaveOracle
+} from "../interfaces/IAavePool.sol";
 import { IChainlinkOracle } from "../interfaces/IChainlinkOracle.sol";
 import { IFlashLoanSimpleReceiver } from "../interfaces/IFlashLoanSimpleReceiver.sol";
 import { ILoanManager } from "../interfaces/ILoanManager.sol";
@@ -245,8 +250,25 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
 
     /// @inheritdoc ILoanManager
     function unwindPosition(uint256 collateralNeeded) external onlyVault {
-        bool fullyClose = (collateralNeeded == type(uint256).max);
         _checkOracleFreshness();
+        _unwindPosition(collateralNeeded, false);
+    }
+
+    /// @inheritdoc ILoanManager
+    /// @dev M-03: skips the oracle freshness gate so a stale Chainlink feed cannot block the
+    ///      guardian's emergency exit. When this contract's debt-token balance covers the debt,
+    ///      the path is fully oracle-free (repay + withdraw, no swaps). On a shortfall while the
+    ///      feed is stale, the flashloan/swap path cannot be priced — instead the exit repays
+    ///      what it can and withdraws all collateral not needed to keep the residual debt at
+    ///      MIN_HEALTH per Aave's own oracle (no staleness gate; the same pricing that governs
+    ///      liquidations). The residual dust position is closed by re-running the emergency step
+    ///      once the feed recovers.
+    function emergencyUnwindPosition() external onlyVault {
+        _unwindPosition(type(uint256).max, true);
+    }
+
+    function _unwindPosition(uint256 collateralNeeded, bool emergency) internal {
+        bool fullyClose = (collateralNeeded == type(uint256).max);
 
         uint256 collateral = aToken.balanceOf(address(this));
         uint256 debt = variableDebtToken.balanceOf(address(this));
@@ -286,6 +308,14 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
             }
         }
         if (needFlashloan) {
+            if (emergency && !_oracleIsFresh()) {
+                // Stale feed during an emergency exit: the flashloan's shortfall swap cannot be
+                // sized or floored. Withdraw every wei of collateral not needed to keep the
+                // residual debt at MIN_HEALTH per Aave's own (staleness-free) oracle, and leave
+                // the dust position for a re-run of the emergency step once the feed heals.
+                _emergencyStaleExit();
+                return;
+            }
             uint256 flashDebt = fullyClose ? remainingDebt : unrepaidDebt;
             uint256 flashloanAmount = (flashDebt * 10300) / 10000;
             bytes memory data = abi.encode(collateralNeeded, fullyClose);
@@ -685,6 +715,51 @@ contract AaveLoanManager is ILoanManager, IFlashLoanSimpleReceiver {
         OracleLib.checkOracleFreshness(
             collateralOracle, maxCollateralOracleStaleness, debtOracle, MAX_DEBT_ORACLE_STALENESS
         );
+    }
+
+    /// @notice Non-reverting freshness probe for the emergency exit path.
+    function _oracleIsFresh() internal view returns (bool) {
+        try this.checkOracleFreshness() {
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    /// @notice Emergency exit when the Chainlink feed is stale and a debt shortfall remains.
+    /// @dev Withdraws the maximum collateral that keeps the residual debt at MIN_HEALTH, valued
+    ///      by Aave's own price oracle (getUserAccountData / getAssetPrice carry no staleness
+    ///      gate — they are the prices Aave's HF validation and liquidations actually use, so a
+    ///      withdraw sized against them cannot be blocked by our gated feeds). The 0.5% haircut
+    ///      absorbs rounding drift against Aave's internal HF check. The residual dust loan is
+    ///      closed by re-running the emergency step after the feed recovers.
+    function _emergencyStaleExit() internal {
+        (uint256 collBase, uint256 debtBase,, uint256 liqThresholdBps_,,) =
+            IAavePoolEmergencyView(address(aavePool)).getUserAccountData(address(this));
+        if (debtBase > 0 && liqThresholdBps_ > 0) {
+            uint256 requiredBase =
+                (uint256(MIN_HEALTH) * debtBase * AAVE_LTV_SCALE) / (liqThresholdBps_ * 1e18);
+            if (collBase > requiredBase) {
+                address aaveOracle = IAavePoolAddressesProvider(
+                    IAavePoolEmergencyView(address(aavePool)).ADDRESSES_PROVIDER()
+                ).getPriceOracle();
+                uint256 price = IAaveOracle(aaveOracle).getAssetPrice(address(collateralToken));
+                if (price > 0) {
+                    uint256 tokens = ((collBase - requiredBase)
+                        * (10 ** uint256(collateralToken.decimals()))) / price;
+                    tokens = (tokens * 9950) / 10000;
+                    uint256 available = aToken.balanceOf(address(this));
+                    if (tokens > available) tokens = available;
+                    if (tokens > 0) {
+                        aavePool.withdraw(address(collateralToken), tokens, address(this));
+                    }
+                }
+            }
+        }
+        uint256 idleColl = collateralToken.balanceOf(address(this));
+        if (idleColl > 0) {
+            collateralToken.safeTransfer(vault, idleColl);
+        }
     }
 
     function _getCollateralValue(uint256 collateralAmount) internal view returns (uint256) {

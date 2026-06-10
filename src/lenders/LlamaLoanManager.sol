@@ -107,6 +107,8 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     error SwapperUnderperformed(uint256 expected, uint256 received);
     /// @notice A partial repay reverted for a reason other than LlamaLend's dust assertion.
     error PartialRepayFailed();
+    /// @notice A health_calculator or remove_collateral call reverted for a non-dust reason.
+    error PartialUnwindFailed();
 
     event PositionUnwound(
         uint256 collateralRequested, uint256 debtRepaid, uint256 collateralRemoved
@@ -281,8 +283,25 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
 
     /// @inheritdoc ILoanManager
     function unwindPosition(uint256 collateralNeeded) external onlyVault nonReentrant {
-        bool fullyClose = (collateralNeeded == type(uint256).max);
         _checkOracleFreshness();
+        _unwindPosition(collateralNeeded, false);
+    }
+
+    /// @inheritdoc ILoanManager
+    /// @dev M-03: skips the oracle freshness gate so a stale Chainlink feed cannot block the
+    ///      guardian's emergency exit. When this contract's debt-token balance covers the debt,
+    ///      the close is oracle-free (repay closes the loan and LlamaLend returns all
+    ///      collateral). The trailing leftover-debt→collateral swap becomes best-effort: it is
+    ///      skipped while the oracle is stale (the swapper's price floor would revert), leaving
+    ///      the debt token here for the vault to recover and convert once the feed heals. A debt
+    ///      shortfall still routes through the oracle-priced flashloan path, which reverts while
+    ///      stale.
+    function emergencyUnwindPosition() external onlyVault nonReentrant {
+        _unwindPosition(type(uint256).max, true);
+    }
+
+    function _unwindPosition(uint256 collateralNeeded, bool emergency) internal {
+        bool fullyClose = (collateralNeeded == type(uint256).max);
 
         // 1. If no loan, just transfer any collateral to vault and return
         if (!llamaLend.loan_exists(address(this))) {
@@ -420,15 +439,24 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
                                 int256 projectedHealth
                             ) {
                                 if (projectedHealth < MIN_HEALTH) revert HealthTooLow();
-                            } catch {
+                            } catch Error(string memory reason) {
+                                // Only the dust assertion ("Amount too low") may be escalated to a
+                                // full close. Any other revert (oracle fault, paused controller)
+                                // must surface rather than silently socialize exit costs.
+                                if (keccak256(bytes(reason)) != _DUST_REVERT_HASH) revert PartialUnwindFailed();
                                 escalate = true;
+                            } catch {
+                                // Non-string revert (Vyper Panic / empty returndata) — fail safe.
+                                revert PartialUnwindFailed();
                             }
                             if (!escalate) {
                                 try llamaLend.remove_collateral(toRemove) {
                                 // success
-                                }
-                                catch {
+                                } catch Error(string memory reason) {
+                                    if (keccak256(bytes(reason)) != _DUST_REVERT_HASH) revert PartialUnwindFailed();
                                     escalate = true;
+                                } catch {
+                                    revert PartialUnwindFailed();
                                 }
                             }
                             if (escalate) {
@@ -453,8 +481,12 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
             }
         }
 
-        // 7. Swap any remaining debt → collateral
-        _swapRemainingDebt();
+        // 7. Swap any remaining debt → collateral. In the emergency path this is best-effort:
+        //    the swapper's oracle floor would revert on a stale feed and take the whole exit
+        //    down with it, so skip the conversion and let the vault recover the debt token.
+        if (!emergency || _oracleIsFresh()) {
+            _swapRemainingDebt();
+        }
 
         // 8. Enforce terminal state for full close
         if (fullyClose && llamaLend.loan_exists(address(this))) {
@@ -491,6 +523,7 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
         if (msg.sender != DEBT_FLASH_LENDER) revert Unauthorized();
         if (initiator != address(this)) revert Unauthorized();
         if (token != address(debtToken)) revert InvalidAddress();
+        if (amount == 0) revert ZeroAmount(); // L-10: defensive guard; zero-amount callbacks corrupt repay logic
 
         uint256 repaymentNeeded = amount + fee;
         UnwindContext memory ctx = abi.decode(data, (UnwindContext));
@@ -740,6 +773,16 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
         OracleLib.checkOracleFreshness(
             collateralOracle, maxOracleStaleness, debtOracle, MAX_DEBT_ORACLE_STALENESS
         );
+    }
+
+    /// @notice Non-reverting freshness probe for the best-effort emergency swap. The swapper's
+    ///         price floor is derived from the same Chainlink feeds checked here.
+    function _oracleIsFresh() internal view returns (bool) {
+        try this.checkOracleFreshness() {
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     /// @notice Canonical dust definition for partial unwinds

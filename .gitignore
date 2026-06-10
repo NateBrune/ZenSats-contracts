@@ -142,3 +142,7 @@ misc
 
 # Forge deploy/simulation artifacts
 broadcast/
+
+# Plamen audit scratchpad
+.plamen-audit/
+.plamen-audit-prior-*/

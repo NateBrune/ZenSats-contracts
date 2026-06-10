@@ -33,6 +33,7 @@ abstract contract ZenjiStorage is ERC20 {
     uint256 public constant GOV_GUARDIAN_TRANSFER_DELAY = ZenjiConstants.GOV_GUARDIAN_TRANSFER_DELAY;
     uint256 public constant PARAM_TIMELOCK_DELAY = ZenjiConstants.PARAM_TIMELOCK_DELAY;
     uint256 public constant EMERGENCY_SKIP_DELAY = ZenjiConstants.EMERGENCY_SKIP_DELAY;
+    uint256 public constant GOV_EMERGENCY_DELAY = ZenjiConstants.GOV_EMERGENCY_DELAY;
     uint256 public constant MAX_USER_SLIPPAGE = ZenjiConstants.MAX_USER_SLIPPAGE;
 
     // ============ Immutables ============
@@ -104,4 +105,9 @@ abstract contract ZenjiStorage is ERC20 {
     /// @notice Pending emergencySkipStep timestamps. Index 0 = step 0 (yield withdraw),
     /// index 1 = step 1 (loan unwind). Zero means no pending skip.
     uint256[2] public pendingSkipTimestamp;
+
+    /// @notice M-06 break-glass: pending gov-proposed emergency-mode entry. Zero means no
+    /// pending proposal. Set by govEnterEmergencyMode (first call), consumed by the second
+    /// call after GOV_EMERGENCY_DELAY, cleared by cancelGovEmergency (gov or guardian).
+    uint256 public pendingGovEmergencyTimestamp;
 }
