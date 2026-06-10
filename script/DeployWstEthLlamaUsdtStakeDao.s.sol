@@ -122,6 +122,7 @@ contract DeployWstEthLlamaUsdtStakeDao is Script {
         loanManager.initializeVault(address(vault));
         strategy.initializeVault(address(vault));
         swapper.setVault(address(vault));
+        crvSwapper.setAuthorizedCaller(address(strategy));
 
         vm.stopBroadcast();
 
