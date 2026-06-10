@@ -183,7 +183,7 @@ Fork suites run at the latest block by default, so external pool conditions vary
 
 ### Toolchain
 
-- **Solidity** 0.8.33 · **EVM** Cancun · **Optimizer** via-IR, 1 run
+- **Solidity** 0.8.34 · **EVM** Cancun · **Optimizer** via-IR, 200 runs (tuned for runtime gas; vaults sit ~1.7 KB under the EIP-170 limit)
 - **Fuzz** 5,000 runs (CI profile)
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for a full contract-by-contract reference.

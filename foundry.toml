@@ -10,7 +10,11 @@ remappings = [
 
 # Optimizer settings to reduce contract size
 optimizer = true
-optimizer_runs = 1  # Low runs optimizes for deployment size over runtime gas
+# 200 runs optimizes for runtime gas (every deposit/withdraw/rebalance is cheaper for users).
+# via-IR keeps the size cost small: deployed vaults are ~22.8KB, still ~1.7KB under the
+# 24,576-byte EIP-170 limit. The immutable core means no code is added post-deploy, so the
+# reduced headroom (vs 1 run) is acceptable. Drop back toward 1 only if a future vault overflows.
+optimizer_runs = 200
 
 # Via IR for better optimization (reduces contract size significantly)
 via_ir = true
