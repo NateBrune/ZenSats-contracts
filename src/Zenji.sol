@@ -43,10 +43,37 @@ interface ILoanManagerSwapperRotation {
     function cancelSwapper() external;
 }
 
-/// @title Zenji
-/// @notice ERC4626-compliant conservative collateral yield vault using loan managers and yield strategies
-/// @dev Deposits collateral to a loan manager, borrows debt asset, deposits to yield strategy
+/*//////////////////////////////////////////////////////////////////////////
+//                                                                          //
+//                                 ZENJI                                    //
+//                                                                          //
+//      Conservative ERC-4626 carry-trade vault for hard assets            //
+//                                                                          //
+//      deposit collateral ─► borrow stablecoin ─► Curve LP yield          //
+//      (WBTC/wstETH/XAUT)    (Aave V3/LlamaLend)   (Stake DAO gauge)       //
+//                                                                          //
+//      share price accrues:  yield earned − borrow cost                   //
+//                                                                          //
+//////////////////////////////////////////////////////////////////////////*/
 
+/// @title Zenji
+/// @notice ERC-4626 vault that holds hard collateral, borrows a stablecoin against it
+///         at a bounded LTV, and deploys the proceeds into a Curve + Stake DAO LP
+///         strategy. The spread between LP yield and borrow cost accrues to share
+///         price; withdrawals unwind the position pro-rata.
+/// @dev    Trust architecture:
+///         - LoanManager and YieldStrategy are IMMUTABLE per deployment. The swapper is
+///           the only mutable dependency, rotated through a 1-week timelock.
+///         - Cold-path admin logic (role rotation, emergency state machine, deposit
+///           pause, rescue) lives in the storage-layout-identical ZenjiAdmin facet,
+///           reached via the explicit delegatecall forwarding stubs below. This keeps
+///           the vault under the EIP-170 size limit. ZenjiStorage MUST remain
+///           byte-identical between Zenji and ZenjiAdmin — verify with
+///           `forge inspect <contract> storageLayout` after any storage change.
+///         - Three roles: Strategist (day-to-day ops), Gov (infrastructure, timelocked),
+///           Guardian (emergency-only, with Gov-vetoable step skips).
+///         - Concrete vaults in src/implementations/ pin the asset pair and override
+///           name/symbol, VIRTUAL_SHARE_OFFSET, MIN_DEPOSIT, and MAX_TARGET_LTV.
 contract Zenji is ZenjiStorage, IERC4626, Proxy {
     using TimelockLib for TimelockLib.AddressTimelockData;
     using TimelockLib for TimelockLib.TimelockData;
@@ -115,7 +142,6 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
     event EmergencySkipStepProposed(uint8 indexed step, uint256 effectiveTime);
     event EmergencySkipCancelled(uint8 indexed step);
     event EmergencyModeCancelled();
-    event StrategyOwnerPropagationFailed(address indexed newOwner);
     event SwapperGovPropagationFailed(address indexed newGov);
 
     // Strategy events
@@ -206,7 +232,9 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
         address _swapper,
         address _owner,
         address _viewHelper
-    ) ERC20("Zen WBTC", "zenWBTC") {
+    // Placeholder ERC20 metadata — concrete vaults (src/implementations/) override
+    // name()/symbol() with pure functions, so these storage strings are never user-visible.
+    ) ERC20("Zenji Vault", "zenVAULT") {
         if (
             _collateralAsset == address(0) || _debtAsset == address(0) || _loanManager == address(0)
                 || _yieldStrategy == address(0) || _swapper == address(0) || _owner == address(0)
@@ -278,6 +306,15 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
     ///      unknown selectors revert — preserving the pre-Proxy behavior and adding no payable
     ///      fallback surface.
     fallback() external payable override {
+        revert();
+    }
+
+    /// @dev The vault never holds ETH. The fallback above must stay `payable` (Solidity
+    ///      forbids a payable → non-payable override of OZ Proxy's fallback), which trips
+    ///      compiler warning 3628 unless a receive function exists. Reject plain ETH
+    ///      transfers explicitly — same outcome as before (the fallback already reverted
+    ///      them), but now self-documenting and warning-free.
+    receive() external payable {
         revert();
     }
 
@@ -582,7 +619,8 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
         yieldStrategy.updateCachedVirtualPrice();
 
         // Accrue fees and pay keeper bounty before adjusting LTV
-        // (must happen before deposit to avoid IPOR lock conflict)
+        // (must run before any strategy deposit — some venues enforce short
+        // post-deposit withdraw cooldowns that would block the bounty transfer)
         _accrueYieldFees();
 
         uint256 bountyPaid;
@@ -699,19 +737,6 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
         }
     }
 
-    // ============ Gov Functions ============
-
-
-
-
-    // ============ Role Management (Gov-only) ============
-
-
-
-
-
-
-
     /// @notice Withdraw accumulated strategy fees
     /// @dev Strategist-only. Accrues pending fees before withdrawal.
     function withdrawFees(address recipient) external nonReentrant onlyStrategist {
@@ -731,29 +756,17 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
         // processRebalanceBounty guards the subtraction, so leaving it unchanged is underflow-safe.
     }
 
-    // ============ Guardian Functions ============
-
-
-
-
-
-
-    // ============ Deposit pause (guardian fast, gov slow) ============
-
-
-
-    // ============ Rescue recipient (gov, timelocked) ============
-
-
-
-
-
+    // ============ Gov Functions (parameter timelocks) ============
+    // Role management, guardian/emergency operations, deposit pause, and the rescue
+    // recipient timelock live in the ZenjiAdmin facet (see forwarding stubs above).
 
     /// @notice Set vault parameter:
     /// 0=feeRate, 1=targetLtv, 2=depositCap, 3=bountyRate, 4=maxSlippage (propagates to strategy and swapper)
-    /// @dev Gov-only. Adverse changes (feeRate increase, targetLtv increase) are timelocked
-    ///      and require executeParamChange after PARAM_TIMELOCK_DELAY. User-favorable
-    ///      changes (decreases) take effect immediately.
+    /// @dev Gov-only. Changes adverse to depositors are timelocked and require
+    ///      executeParamChange after PARAM_TIMELOCK_DELAY; favorable changes apply now.
+    ///      For feeRate/targetLtv/bountyRate/maxSlippage, increases are adverse. For
+    ///      depositCap (0 = unlimited), RAISING or removing the cap is adverse (exposes
+    ///      existing depositors to new inflows); lowering or imposing one applies now.
     function setParam(uint8 p, uint256 v) external onlyGov {
         ZenjiGovLib.ParamState memory st =
             ZenjiGovLib.ParamState(feeRate, targetLtv, depositCap, rebalanceBountyRate, maxSlippage);
@@ -1272,7 +1285,24 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
         if (lmDebtBalance > 0) {
             loanManager.transferDebt(address(this), lmDebtBalance);
         }
-        _swapRemainingDebtToCollateral(fullyClose, effectiveSlippage);
+        if (fullyClose) {
+            _swapRemainingDebtToCollateral(true, effectiveSlippage);
+        } else {
+            // Partial unwind: the recovered debt is the unused 5% withdraw buffer just
+            // pulled from the strategy — put it back rather than force-swapping it to
+            // collateral. The debt→collateral route cannot absorb large surpluses within
+            // its oracle floor, and redepositing exactly preserves strategyToDebtRatio.
+            // Surplus stays visible to share pricing either way (idle debt and strategy
+            // balance are both counted by getTotalCollateral).
+            uint256 surplus = debtAsset.balanceOf(address(this));
+            if (surplus > 10 ** debtAsset.decimals()) {
+                if (!idle && address(yieldStrategy) != address(0)) {
+                    _deployDebtToYield(surplus);
+                } else {
+                    _swapRemainingDebtToCollateral(false, effectiveSlippage);
+                }
+            }
+        }
 
         emit CapitalUnwound(collateralNeeded, collateralAsset.balanceOf(address(this)));
     }

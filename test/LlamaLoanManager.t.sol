@@ -469,7 +469,11 @@ contract LlamaLoanManagerTest is LoanManagerTestBase {
         manager.createLoan(2e8, 1e18);
         crvUSD.mint(address(manager), 5e17);
         manager.unwindPosition(1e8);
-        assertGt(wbtc.balanceOf(vault), 0);
+        // Partial unwinds no longer force-swap leftover debt to collateral; the
+        // surplus stays in the manager for the vault to recover and redeposit
+        // (Zenji._unwindPosition step 5). Only full closes swap remaining debt.
+        assertEq(llamaLend.debt(address(manager)), 0, "debt should be fully repaid");
+        assertGt(crvUSD.balanceOf(address(manager)), 0, "surplus retained for vault recovery");
     }
 
     function test_unwindPosition_dustDebt_fullRepayWithDust() public {

@@ -92,7 +92,15 @@ library ZenjiGovLib {
                 s.targetLtv = v;
             }
         } else if (p == 2) {
-            if (v < s.depositCap) {
+            // depositCap == 0 means "no limit" (see Zenji.maxDeposit). Raising the cap — or
+            // removing it via 0 — is the permissive direction: it exposes existing depositors
+            // to sudden new inflows, so it is timelocked to give them notice. Lowering the cap
+            // (or imposing one where there was none) is a safety action that stops inflows and
+            // applies immediately. This inverts the "favorable now" rule used by the other
+            // params because a more-permissive cap is adverse to *existing* depositors.
+            bool morePermissive = (v == 0 && s.depositCap != 0)
+                || (v != 0 && s.depositCap != 0 && v > s.depositCap);
+            if (morePermissive) {
                 capT.propose(v, PARAM_TIMELOCK_DELAY);
                 emit DepositCapChangeProposed(s.depositCap, v, block.timestamp + PARAM_TIMELOCK_DELAY);
             } else {

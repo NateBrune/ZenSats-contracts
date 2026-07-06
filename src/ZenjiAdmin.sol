@@ -90,7 +90,6 @@ contract ZenjiAdmin is ZenjiStorage {
     event EmergencyModeCancelled();
     event GovEmergencyProposed(uint256 effectiveTime);
     event GovEmergencyCancelled(address indexed canceller);
-    event StrategyOwnerPropagationFailed(address indexed newOwner);
     event SwapperGovPropagationFailed(address indexed newGov);
 
     // Strategy events

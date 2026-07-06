@@ -426,12 +426,16 @@ abstract contract ZenjiForkTestBase is Test {
         }
     }
 
-    /// @notice Set deposit cap, handling the timelock for adverse (decrease) changes.
+    /// @notice Set deposit cap, handling the timelock for permissive (raise / remove-cap) changes.
+    /// @dev depositCap == 0 means "no limit", so raising the cap — or removing it via 0 — is the
+    ///      permissive direction and is timelocked; lowering it (or imposing one) applies now.
     function _setDepositCap(uint256 newCap) internal {
         uint256 cur = vault.depositCap();
         vm.prank(vault.gov());
         vault.setParam(2, newCap);
-        if (newCap < cur) {
+        bool morePermissive =
+            (newCap == 0 && cur != 0) || (newCap != 0 && cur != 0 && newCap > cur);
+        if (morePermissive) {
             vm.warp(block.timestamp + vault.PARAM_TIMELOCK_DELAY());
             address[] memory oracles = _oracleList();
             for (uint256 i = 0; i < oracles.length; i++) {
@@ -885,7 +889,7 @@ abstract contract ZenjiForkTestBase is Test {
     function test_deposit_atCap_reverts() public {
         _deployVault();
 
-        // depositCap drop is timelocked (helper handles propose+warp+execute).
+        // Imposing a cap from the default unlimited (0) is restrictive → applies immediately.
         _setDepositCap(_baseDeposit());
 
         _depositAs(user1, _baseDeposit());
@@ -957,10 +961,11 @@ abstract contract ZenjiForkTestBase is Test {
         vault.setParam(3, overBounty);
         vm.stopPrank();
 
-        // depositCap: raises are immediate, drops are now timelocked.
-        _setDepositCap(type(uint256).max); // raise: immediate
+        // depositCap: 0 == unlimited, so raising/removing the cap is timelocked, lowering is now.
+        // From the default 0 (unlimited), setting a finite max is more restrictive → immediate.
+        _setDepositCap(type(uint256).max); // restrictive (unlimited → finite): immediate
         assertEq(vault.depositCap(), type(uint256).max, "Should accept max cap");
-        _setDepositCap(0); // drop: timelocked, helper handles
+        _setDepositCap(0); // permissive (finite → unlimited): timelocked, helper handles
         assertEq(vault.depositCap(), 0, "Should accept 0 cap");
     }
 

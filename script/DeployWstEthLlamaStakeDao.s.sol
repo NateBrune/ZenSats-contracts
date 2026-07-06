@@ -5,7 +5,6 @@ import "forge-std/Script.sol";
 import "forge-std/console2.sol";
 
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
-import { ZenjiRebalanceKeeper } from "../src/keepers/ZenjiRebalanceKeeper.sol";
 import { WstEthOracle } from "../src/WstEthOracle.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import { UniswapMixedCurveSwapper } from "../src/swappers/base/UniswapMixedCurveSwapper.sol";
@@ -113,8 +112,6 @@ contract DeployWstEthLlamaStakeDao is Script {
             address(loanManager), address(strategy), address(swapper), owner, address(viewHelper)
         );
 
-        ZenjiRebalanceKeeper rebalanceKeeper = new ZenjiRebalanceKeeper(address(vault), owner);
-
         loanManager.initializeVault(address(vault));
         strategy.initializeVault(address(vault));
         swapper.setVault(address(vault));
@@ -128,7 +125,6 @@ contract DeployWstEthLlamaStakeDao is Script {
         console2.log("LoanManager", address(loanManager));
         console2.log("Strategy", address(strategy));
         console2.log("Vault", address(vault));
-        console2.log("RebalanceKeeper", address(rebalanceKeeper));
     }
 
     function _wethCrvUsdIndices() internal view returns (uint256 wethIdx, uint256 crvUsdIdx) {

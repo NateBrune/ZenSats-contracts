@@ -5,13 +5,14 @@ import "forge-std/Script.sol";
 import "forge-std/console2.sol";
 
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
-import { ZenjiRebalanceKeeper } from "../src/keepers/ZenjiRebalanceKeeper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import { UniswapMixedCurveSwapper } from "../src/swappers/base/UniswapMixedCurveSwapper.sol";
 import { LlamaLoanManager } from "../src/lenders/LlamaLoanManager.sol";
 import { CrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/CrvUsdLpStakeDaoStrategy.sol";
 import { ICurveTriCrypto } from "../src/interfaces/ICurveTriCrypto.sol";
-import { ZenjiWbtcLlamaStakeDao } from "../src/implementations/stakedao/ZenjiWbtcLlamaStakeDao.sol";
+import {
+    ZenjiWbtcLlamaUsdtStakeDao
+} from "../src/implementations/stakedao/ZenjiWbtcLlamaUsdtStakeDao.sol";
 
 /// @notice Deploys WBTC/crvUSD vault with USDT/crvUSD Stake DAO strategy on LlamaLend.
 ///         Yield path: LlamaLend borrows crvUSD → single-sided crvUSD deposit into the
@@ -105,11 +106,9 @@ contract DeployWbtcLlamaUsdtStakeDao is Script {
             3600
         );
 
-        ZenjiWbtcLlamaStakeDao vault = new ZenjiWbtcLlamaStakeDao(
+        ZenjiWbtcLlamaUsdtStakeDao vault = new ZenjiWbtcLlamaUsdtStakeDao(
             address(loanManager), address(strategy), address(swapper), owner, address(viewHelper)
         );
-
-        ZenjiRebalanceKeeper rebalanceKeeper = new ZenjiRebalanceKeeper(address(vault), owner);
 
         loanManager.initializeVault(address(vault));
         strategy.initializeVault(address(vault));
@@ -124,7 +123,6 @@ contract DeployWbtcLlamaUsdtStakeDao is Script {
         console2.log("LoanManager             ", address(loanManager));
         console2.log("Strategy                ", address(strategy));
         console2.log("Vault                   ", address(vault));
-        console2.log("RebalanceKeeper         ", address(rebalanceKeeper));
     }
 
     function _triCryptoIndices() internal view returns (uint256 wethIdx, uint256 crvUsdIdx) {

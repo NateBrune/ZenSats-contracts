@@ -146,7 +146,14 @@ contract CrvToCrvUsdSwapperTest is SwapperTestBase {
     }
 
     function test_zero_swap() public {
-        assertEq(swapper.swap(0), 0, "Zero swap should return zero");
+        // L-05: the swapper is fully locked until setAuthorizedCaller is called —
+        // even a zero-amount swap reverts while authorizedCaller == address(0).
+        vm.expectRevert(BaseSwapper.Unauthorized.selector);
+        swapper.swap(0);
+
+        vm.prank(owner);
+        swapper.setAuthorizedCaller(address(this));
+        assertEq(swapper.swap(0), 0, "Zero swap should return zero once authorized");
     }
 }
 

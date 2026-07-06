@@ -5,7 +5,6 @@ import "forge-std/Script.sol";
 import "forge-std/console2.sol";
 
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
-import { ZenjiRebalanceKeeper } from "../src/keepers/ZenjiRebalanceKeeper.sol";
 import { WstEthOracle } from "../src/WstEthOracle.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import { UniswapMixedCurveSwapper } from "../src/swappers/base/UniswapMixedCurveSwapper.sol";
@@ -13,8 +12,8 @@ import { LlamaLoanManager } from "../src/lenders/LlamaLoanManager.sol";
 import { CrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/CrvUsdLpStakeDaoStrategy.sol";
 import { ICurveTriCrypto } from "../src/interfaces/ICurveTriCrypto.sol";
 import {
-    ZenjiWstEthLlamaStakeDao
-} from "../src/implementations/stakedao/ZenjiWstEthLlamaStakeDao.sol";
+    ZenjiWstEthLlamaUsdtStakeDao
+} from "../src/implementations/stakedao/ZenjiWstEthLlamaUsdtStakeDao.sol";
 
 /// @notice Deploys wstETH/crvUSD vault with USDT/crvUSD Stake DAO strategy on LlamaLend.
 ///         Yield path: LlamaLend borrows crvUSD → single-sided crvUSD deposit into the
@@ -113,11 +112,9 @@ contract DeployWstEthLlamaUsdtStakeDao is Script {
             90000
         );
 
-        ZenjiWstEthLlamaStakeDao vault = new ZenjiWstEthLlamaStakeDao(
+        ZenjiWstEthLlamaUsdtStakeDao vault = new ZenjiWstEthLlamaUsdtStakeDao(
             address(loanManager), address(strategy), address(swapper), owner, address(viewHelper)
         );
-
-        ZenjiRebalanceKeeper rebalanceKeeper = new ZenjiRebalanceKeeper(address(vault), owner);
 
         loanManager.initializeVault(address(vault));
         strategy.initializeVault(address(vault));
@@ -133,7 +130,6 @@ contract DeployWstEthLlamaUsdtStakeDao is Script {
         console2.log("LoanManager              ", address(loanManager));
         console2.log("Strategy                 ", address(strategy));
         console2.log("Vault                    ", address(vault));
-        console2.log("RebalanceKeeper          ", address(rebalanceKeeper));
     }
 
     function _triCryptoIndices() internal view returns (uint256 wethIdx, uint256 crvUsdIdx) {

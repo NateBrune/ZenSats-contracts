@@ -181,7 +181,7 @@ abstract contract BaseYieldStrategy is IYieldStrategy, ReentrancyGuard {
 
         // Advance any cached unit value FIRST so basisReduction below and the share math inside
         // _withdraw() read one consistent snapshot (otherwise they can diverge by up to the VP
-        // clamp, skewing cost-basis decay). No-op for cacheless strategies (e.g. IPOR).
+        // clamp, skewing cost-basis decay). No-op for cacheless strategies.
         _syncValueCache();
         uint256 currentValue = balanceOf();
         if (currentValue == 0) return 0;

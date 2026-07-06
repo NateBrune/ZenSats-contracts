@@ -420,6 +420,20 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
                     // Re-check after dust repay
                     if (llamaLend.loan_exists(address(this))) {
                         (collAvail,) = _getPositionValues();
+                        // Pro-rata shortfall guard: when the repay was balance-capped
+                        // (strategy exit cost ate into the proportional debt share),
+                        // scale the collateral removal down to the debt actually repaid
+                        // so the residual position's LTV cannot worsen. Without this, a
+                        // near-total exit parks the shortfall as debt on a dust residual
+                        // position and LlamaLend rejects the removal with "Debt too
+                        // high", bricking the withdrawal. The withdrawer absorbs the
+                        // shortfall via the vault's post-unwind share re-pricing.
+                        // Zero-repay unwinds (no debt token sent) are NOT scaled: they
+                        // are deliberate collateral removals gated solely by the health
+                        // check below (see M1_Llama_partial_unwind_health).
+                        if (repayNow > 0 && repayNow < debtToRepay) {
+                            collateralNeeded = (collateralNeeded * repayNow) / debtToRepay;
+                        }
                         uint256 toRemove =
                             collateralNeeded < collAvail ? collateralNeeded : collAvail;
                         if (toRemove > 0) {
@@ -481,10 +495,14 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
             }
         }
 
-        // 7. Swap any remaining debt → collateral. In the emergency path this is best-effort:
-        //    the swapper's oracle floor would revert on a stale feed and take the whole exit
-        //    down with it, so skip the conversion and let the vault recover the debt token.
-        if (!emergency || _oracleIsFresh()) {
+        // 7. Full close only: swap any remaining debt → collateral. In the emergency path this
+        //    is best-effort: the swapper's oracle floor would revert on a stale feed and take
+        //    the whole exit down with it, so skip the conversion and let the vault recover the
+        //    debt token. Partial unwinds leave the surplus (the vault's 5% withdraw buffer) as
+        //    debt token for the vault to recover and redeposit into the strategy — the
+        //    debt→collateral route cannot absorb large surpluses within its oracle floor
+        //    (see WhaleExitUnwindRepro), and AaveLoanManager's direct path behaves the same.
+        if (fullyClose && (!emergency || _oracleIsFresh())) {
             _swapRemainingDebt();
         }
 
@@ -504,11 +522,11 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
         }
     }
 
-    // TODO: Refactor onFlashLoan to match AaveLoanManager's cleaned-up executeOperation:
-    //   - Use single repay call with max amount instead of two-pass repay
-    //   - Handle 1-wei rounding residual defensively (cap at <= 2 wei)
-    //   - Remove duplicated second swap block; keep single swap + defensive sweep
-    //   - Reduce redundant balanceOf calls
+    // NOTE: onFlashLoan deliberately keeps its verbose shape (two-pass repay, duplicated
+    // swap + defensive sweep, extra balanceOf reads) — this is the audited, PoC-verified
+    // path and refactoring it buys no behavior change. AaveLoanManager.executeOperation
+    // shows the streamlined equivalent (single max-amount repay, capped 1-wei residual)
+    // if this is ever revisited in a future audited release.
 
     /// @notice ERC3156 flashloan callback for position unwinding
     /// @dev Called during unwindPosition when available debt can't cover the debt.
