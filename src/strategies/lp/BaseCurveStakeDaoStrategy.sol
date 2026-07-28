@@ -110,7 +110,7 @@ abstract contract BaseCurveStakeDaoStrategy is BaseLPStrategy {
     ///      is reflected in the reported balance. VP alone overstates when the pool is skewed
     ///      because it measures fee accumulation, not single-sided crvUSD exit value. The min() is
     ///      always conservative — it can only understate, never inflate.
-    function balanceOf() public view override returns (uint256) {
+    function balanceOf() public view virtual override returns (uint256) {
         uint256 lpTokens = _stakedLpBalance();
         if (lpTokens < 1) return 0;
         uint256 vpBased = (lpTokens * _getSafeUnitValue()) / PRECISION;
@@ -122,6 +122,7 @@ abstract contract BaseCurveStakeDaoStrategy is BaseLPStrategy {
     /// @notice Single-sided crvUSD exit.
     function _removeLiquidity(uint256 lpAmount, uint256 slippage)
         internal
+        virtual
         override
         returns (uint256 crvUsdReceived)
     {
