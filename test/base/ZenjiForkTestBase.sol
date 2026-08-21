@@ -876,13 +876,17 @@ abstract contract ZenjiForkTestBase is Test {
 
     // ============ F. Boundary & Revert Tests ============
 
+    /// @dev Derives the boundary from the deployed vault's own MIN_DEPOSIT() rather than the
+    ///      base default (1e4). Production implementations override it — e.g. the XAUT vaults use
+    ///      2000 — so a hardcoded literal silently tests a valid deposit for those suites.
     function test_deposit_belowMinimum_reverts() public {
         _deployVault();
 
+        uint256 belowMin = vault.MIN_DEPOSIT() - 1;
         vm.startPrank(user1);
-        collateralToken.approve(address(vault), 1e4 - 1);
+        collateralToken.approve(address(vault), belowMin);
         vm.expectRevert(Zenji.AmountTooSmall.selector);
-        vault.deposit(1e4 - 1, user1);
+        vault.deposit(belowMin, user1);
         vm.stopPrank();
     }
 
