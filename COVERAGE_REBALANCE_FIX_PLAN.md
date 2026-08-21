@@ -106,9 +106,24 @@ The two managers are **not** symmetric, which changes the cost of this work subs
 `unrepaidDebt * 10300 / 10000`. `executeOperation` already handles the partial case
 (`abi.decode(data, (uint256 collateralNeeded, bool fullyClose))`).
 
-**Hypothesis (must be verified by spike)**: on Aave, calling `unwindPosition(collateralNeeded)`
-with **zero** funding already performs the convergent collateral-funded repay. If so the XAUT/Aave
-"gold" vault needs **no loan-manager change** — only the `ZenjiCoreLib` arm-3 rewrite.
+**CONFIRMED by spike (XAUT/Aave fork, 5 XAUT position, 6% induced strategy loss).** Calling
+`unwindPosition(collateralNeeded)` with **zero** funding already performs the convergent
+collateral-funded repay:
+
+| | before | after |
+|---|---|---|
+| coverage | 9395 bps | **10019 bps** (in band) |
+| strategy S | 12,813,333,711 | **12,813,333,711** (untouched) |
+| debt D | 13,637,186,958 | 12,788,616,111 |
+| collateral | 5.000000 XAUT | 4.697938 XAUT |
+| NAV cost | — | **1 bp** |
+
+Converged in ONE call. Repaid 848.6 against a deficit of 823.9 — the overshoot is the existing 3%
+flash buffer, and landing slightly above parity is inside the band.
+
+=> **AaveLoanManager needs NO change.** The XAUT/Aave "gold" vault fix is purely the `ZenjiCoreLib`
+arm-3 rewrite: stop pre-funding from the strategy, size `collateralNeeded` from the deficit, call
+`unwindPosition`.
 
 ### LlamaLoanManager — needs the new case
 
@@ -138,8 +153,11 @@ partial-unwind contract (used by withdrawals) untouched — important, this is t
 - Return leftover debt token to the vault as the existing paths do.
 
 ### 5.3 `AaveLoanManager.repayFromCollateral`
-- Same signature. Pending the spike, likely a thin wrapper over the existing
-  `_unwindPosition(collateralNeeded, false)` path with no pre-funding.
+- Spike confirms the behaviour already exists. Implement as a thin wrapper over
+  `_unwindPosition(collateralNeeded, false)` with no pre-funding, purely to satisfy the shared
+  `ILoanManager` interface and keep `ZenjiCoreLib` venue-agnostic. No new flash logic.
+- Open detail: verify no debt tokens are left stranded at the loan manager after the call when
+  invoked from inside `rebalance()` (the spike called it directly, pranked as the vault).
 
 ### 5.4 `ZenjiCoreLib.rebalanceCoverageUp`
 Replace steps 1-3 with:
@@ -219,7 +237,7 @@ donation/dust griefing of `deficit`.
 
 ## 10. Sequencing
 
-1. **Spike** the Aave hypothesis (S 4.1) — one throwaway fork test. Decides whether Aave needs code.
+1. ~~**Spike** the Aave hypothesis (S 4.1)~~ — **DONE, confirmed.** Aave needs no new flash logic.
 2. Implement `ILoanManager` + `LlamaLoanManager.repayFromCollateral`.
 3. Implement `AaveLoanManager.repayFromCollateral` (or confirm not needed).
 4. Rewrite `ZenjiCoreLib.rebalanceCoverageUp`; update the `Zenji.sol` call site.
@@ -231,7 +249,10 @@ donation/dust griefing of `deficit`.
 
 ## 11. Open questions
 
-- Does the Aave partial-unwind path already converge unfunded? (blocks step 1)
+- ~~Does the Aave partial-unwind path already converge unfunded?~~ **Yes — confirmed by spike, 1 bp,
+  one call.**
+- Sizing overshoots parity slightly via the 3% flash buffer. Acceptable (lands in band), but confirm
+  it cannot overshoot past the +3% upper bound and immediately trigger arm 4.
 - Should arm 3 refuse to run when `deficit` exceeds some fraction of debt (a real insolvency
   signal) and instead surface it for manual handling rather than auto-selling collateral?
 - Should coverage drift emit an event so the keeper/monitor can alert before the deadband trips?
