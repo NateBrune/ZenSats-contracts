@@ -3,7 +3,7 @@ pragma solidity ^0.8.33;
 
 import { console } from "forge-std/Test.sol";
 import { ZenjiForkTestBase } from "./base/ZenjiForkTestBase.sol";
-import { ZenjiWbtcLlamaStakeDao } from "../src/implementations/stakedao/ZenjiWbtcLlamaStakeDao.sol";
+import { ZenjiWbtcLlamaUsdtStakeDao } from "../src/implementations/stakedao/ZenjiWbtcLlamaUsdtStakeDao.sol";
 import { LlamaLoanManager } from "../src/lenders/LlamaLoanManager.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UniswapMixedCurveSwapper } from "../src/swappers/base/UniswapMixedCurveSwapper.sol";
@@ -52,7 +52,7 @@ contract POC_Batch2_HYP02_09_06_11 is ZenjiForkTestBase {
     CrvToCrvUsdSwapper public crvSwapper;
     NgCrvUsdLpStakeDaoStrategy public strategy;
     LlamaLoanManager public llamaManager;
-    ZenjiWbtcLlamaStakeDao public llamaVault;
+    ZenjiWbtcLlamaUsdtStakeDao public llamaVault;
 
     // ─── ZenjiForkTestBase abstract method implementations ───────────────────
 
@@ -162,7 +162,7 @@ contract POC_Batch2_HYP02_09_06_11 is ZenjiForkTestBase {
             3600
         );
 
-        llamaVault = new ZenjiWbtcLlamaStakeDao(
+        llamaVault = new ZenjiWbtcLlamaUsdtStakeDao(
             address(llamaManager), address(strategy), address(swapper), owner, address(viewHelper)
         );
         require(address(llamaVault) == expectedVaultAddress, "Vault address mismatch");

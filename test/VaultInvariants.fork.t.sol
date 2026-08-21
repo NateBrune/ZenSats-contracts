@@ -3,7 +3,6 @@ pragma solidity ^0.8.33;
 
 import { Test, console } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
-import { ZenjiWbtcAaveStakeDao } from "../src/implementations/stakedao/ZenjiWbtcAaveStakeDao.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import {
@@ -201,8 +200,14 @@ contract VaultInvariants is Test {
             3600
         );
 
-        ZenjiWbtcAaveStakeDao v = new ZenjiWbtcAaveStakeDao(
-            address(lm), address(strat), address(swapper), owner, address(viewHelper)
+        Zenji v = new Zenji(
+            WBTC,
+            USDT,
+            address(lm),
+            address(strat),
+            address(swapper),
+            owner,
+            address(viewHelper)
         );
 
         lm.initializeVault(address(v));

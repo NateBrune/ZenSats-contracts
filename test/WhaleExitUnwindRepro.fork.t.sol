@@ -3,7 +3,7 @@ pragma solidity ^0.8.33;
 
 import { console } from "forge-std/Test.sol";
 import { ZenjiForkTestBase } from "./base/ZenjiForkTestBase.sol";
-import { ZenjiWbtcLlamaStakeDao } from "../src/implementations/stakedao/ZenjiWbtcLlamaStakeDao.sol";
+import { ZenjiWbtcLlamaUsdtStakeDao } from "../src/implementations/stakedao/ZenjiWbtcLlamaUsdtStakeDao.sol";
 import { LlamaLoanManager } from "../src/lenders/LlamaLoanManager.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UniswapMixedCurveSwapper } from "../src/swappers/base/UniswapMixedCurveSwapper.sol";
@@ -166,7 +166,7 @@ contract WhaleExitUnwindRepro is ZenjiForkTestBase {
             3600
         );
 
-        ZenjiWbtcLlamaStakeDao vault_ = new ZenjiWbtcLlamaStakeDao(
+        ZenjiWbtcLlamaUsdtStakeDao vault_ = new ZenjiWbtcLlamaUsdtStakeDao(
             address(llamaManager), address(strategy), address(swapper), owner, address(viewHelper)
         );
         require(address(vault_) == expectedVaultAddress, "Vault address mismatch");

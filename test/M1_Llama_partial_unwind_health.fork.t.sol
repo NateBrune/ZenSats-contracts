@@ -3,7 +3,7 @@ pragma solidity ^0.8.33;
 
 import { console } from "forge-std/Test.sol";
 import { ZenjiForkTestBase } from "./base/ZenjiForkTestBase.sol";
-import { ZenjiWbtcLlamaStakeDao } from "../src/implementations/stakedao/ZenjiWbtcLlamaStakeDao.sol";
+import { ZenjiWbtcLlamaUsdtStakeDao } from "../src/implementations/stakedao/ZenjiWbtcLlamaUsdtStakeDao.sol";
 import { LlamaLoanManager } from "../src/lenders/LlamaLoanManager.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UniswapMixedCurveSwapper } from "../src/swappers/base/UniswapMixedCurveSwapper.sol";
@@ -50,7 +50,7 @@ contract M1_Llama_partial_unwind_health is ZenjiForkTestBase {
     CrvToCrvUsdSwapper public crvSwapper;
     NgCrvUsdLpStakeDaoStrategy public strategy;
     LlamaLoanManager public llamaManager;
-    ZenjiWbtcLlamaStakeDao public llamaVault;
+    ZenjiWbtcLlamaUsdtStakeDao public llamaVault;
 
     function _collateral() internal pure override returns (address) {
         return WBTC;
@@ -160,7 +160,7 @@ contract M1_Llama_partial_unwind_health is ZenjiForkTestBase {
             3600
         );
 
-        llamaVault = new ZenjiWbtcLlamaStakeDao(
+        llamaVault = new ZenjiWbtcLlamaUsdtStakeDao(
             address(llamaManager), address(strategy), address(swapper), owner, address(viewHelper)
         );
         require(address(llamaVault) == expectedVaultAddress, "Vault address mismatch");

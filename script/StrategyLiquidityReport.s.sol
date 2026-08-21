@@ -17,22 +17,19 @@ import { Script, console } from "forge-std/Script.sol";
 ///          --fork-url $MAINNET_RPC_URL -vv
 ///
 ///      Liquidity here means tradeability, not just TVL:
-///        - V3 collateral legs (XAUT/USDT, WBTC/USDT): pool spot vs the asset's Chainlink oracle.
+///        - V3 collateral legs (XAUT/USDT): pool spot vs the asset's Chainlink oracle.
 ///          If spot sits below the oracle by more than the swapper's slippage budget, the
 ///          collateral->debt exit reverts at ANY size (V3TooLittleReceived).
-///        - Curve legs (pmUSD/crvUSD, crvUSD/USDT, collateral/crvUSD): per-side depth + imbalance.
+///        - Curve legs (crvUSD/USDT, collateral/crvUSD): per-side depth + imbalance.
 ///          A heavily one-sided pool is thin on the side the strategy actually withdraws.
 contract StrategyLiquidityReport is Script {
     // ── tokens ──
-    address constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
-    address constant WSTETH = 0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0;
     address constant XAUT = 0x68749665FF8D2d112Fa859AA293F07A622782F38;
     address constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
     address constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
 
     // ── Curve StableSwap / CryptoSwap pools ──
-    address constant PMUSD_CRVUSD = 0xEcb0F0d68C19BdAaDAEbE24f6752A4Db34e2c2cb; // shared strategy LP
-    address constant CRVUSD_USDT = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
+    address constant CRVUSD_USDT = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4; // shared strategy LP
     address constant WBTC_CRVUSD_CURVE = 0xD9FF8396554A0d18B2CFbeC53e1979b7ecCe8373; // WBTC Llama collateral (Curve)
 
     // ── LlamaLend LLAMMA AMM (doesn't implement balances() — use balanceOf fallback) ──
@@ -42,7 +39,6 @@ contract StrategyLiquidityReport is Script {
     address constant V3_FACTORY = 0x1F98431c8aD98523631AE4a59f267346ea31F984;
 
     // ── Chainlink oracles (8 decimals) ──
-    address constant BTC_USD = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
     address constant XAU_USD = 0x214eD9Da11D2fbe465a6fc601a91E62EbEc1a0D6;
 
     // The swapper's slippage budget (1%) is the line beyond which a V3 leg reverts on the exit side.
@@ -62,38 +58,17 @@ contract StrategyLiquidityReport is Script {
 
         console.log("");
         console.log("--- Shared venues ---");
-        bool pmusdThin = _curveStable("pmUSD/crvUSD (shared yield LP)", PMUSD_CRVUSD);
-        _curveStable("crvUSD/USDT", CRVUSD_USDT);
+        _curveStable("crvUSD/USDT (shared yield LP)", CRVUSD_USDT);
 
         console.log("");
         console.log("--- Aave debt=USDT strategies ---");
-        _strategyHeader("WBTC / Aave / pmUSD-crvUSD");
-        bool wbtcA = _v3VsOracle("  collateral exit WBTC->USDT (V3 0.3%)", WBTC, USDT, 3000, BTC_USD);
-        _line("  yield LP", pmusdThin ? "THIN (see pmUSD/crvUSD)" : "OK");
-        _verdict(wbtcA || pmusdThin);
-
-        _strategyHeader("wstETH / Aave / pmUSD-crvUSD");
-        _line("  collateral exit wstETH->WETH->USDT (V3 multi-hop)", "deep majors - not priced here");
-        _line("  yield LP", pmusdThin ? "THIN (see pmUSD/crvUSD)" : "OK");
-        _verdict(pmusdThin);
-
-        _strategyHeader("XAUT / Aave / pmUSD-crvUSD");
+        _strategyHeader("XAUT / Aave / crvUSD-USDT");
         bool xautBroken = _v3VsOracle("  collateral exit XAUT->USDT (V3 0.05%)", XAUT, USDT, 500, XAU_USD);
-        _line("  yield LP", pmusdThin ? "THIN (see pmUSD/crvUSD)" : "OK");
-        _verdict(xautBroken || pmusdThin);
+        _line("  yield LP crvUSD/USDT", "OK (deep)");
+        _verdict(xautBroken);
 
         console.log("");
         console.log("--- LlamaLend debt=crvUSD strategies ---");
-        _strategyHeader("WBTC / Llama / pmUSD-crvUSD");
-        _curveGeneric("  collateral exit WBTC/crvUSD (Curve)", WBTC_CRVUSD_CURVE);
-        _line("  yield LP", pmusdThin ? "THIN (see pmUSD/crvUSD)" : "OK");
-        _verdict(pmusdThin);
-
-        _strategyHeader("wstETH / Llama / pmUSD-crvUSD");
-        _llamaAmm("  collateral exit wstETH/crvUSD (LlamaLend LLAMMA)", WSTETH_CRVUSD_LLAMMA);
-        _line("  yield LP", pmusdThin ? "THIN (see pmUSD/crvUSD)" : "OK");
-        _verdict(pmusdThin);
-
         _strategyHeader("WBTC / Llama / crvUSD-USDT");
         _curveGeneric("  collateral exit WBTC/crvUSD (Curve)", WBTC_CRVUSD_CURVE);
         _line("  yield LP crvUSD/USDT", "OK (deep)");
@@ -133,7 +108,7 @@ contract StrategyLiquidityReport is Script {
         (uint160 sqrtP,,,,,,) = IV3Pool(pool).slot0();
         uint8 dA = IERC20(asset).decimals();
         uint8 dU = IERC20(usdt).decimals();
-        // asset is token0 for WBTC/WSTETH/XAUT vs USDT (lower address). spot = USDT per whole asset, 1e8.
+        // asset is token0 for XAUT vs USDT (lower address). spot = USDT per whole asset, 1e8.
         uint256 priceX192 = uint256(sqrtP) * uint256(sqrtP);
         uint256 mult = (10 ** dA * 1e8) / (10 ** dU);
         uint256 spot1e8 = (priceX192 * mult) >> 192;

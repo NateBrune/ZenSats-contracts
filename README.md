@@ -48,13 +48,13 @@ Every live strategy borrows a stablecoin and deploys it single-sided into a deep
 
 | Collateral | Lending Venue | Borrows | Yield Pool (Curve + Stake DAO) |
 |------------|---------------|---------|--------------------------------|
-| WBTC       | Aave V3       | USDT    | pmUSD/crvUSD |
-| WBTC       | LlamaLend     | crvUSD  | pmUSD/crvUSD |
-| WBTC       | LlamaLend     | crvUSD  | USDT/crvUSD |
-| wstETH     | Aave V3       | USDT    | pmUSD/crvUSD |
-| wstETH     | LlamaLend     | crvUSD  | pmUSD/crvUSD |
-| wstETH     | LlamaLend     | crvUSD  | USDT/crvUSD |
-| XAUT       | Aave V3       | USDT    | pmUSD/crvUSD |
+| WBTC       | LlamaLend     | crvUSD  | crvUSD/USDT |
+| wstETH     | LlamaLend     | crvUSD  | crvUSD/USDT |
+| XAUT       | Aave V3       | USDT    | crvUSD/USDT |
+
+Per-vault advised deposit caps — derived from live exit liquidity, not from vault capacity — are in
+[`deployments/DEPOSIT_CAPS.md`](deployments/DEPOSIT_CAPS.md). All three vaults share the same
+crvUSD/USDT yield pool, so caps divide that pool's exit budget three ways.
 
 **Two lending venues, one strategy engine.** Aave V3 vaults borrow USDT and use Aave `flashLoanSimple` for atomic unwinds; LlamaLend vaults borrow crvUSD natively and use ERC-3156 flash loans. In both cases the borrowed stablecoin lands in the same family of Curve + Stake DAO LP strategies, so the yield engine is shared across the whole fleet.
 
@@ -139,7 +139,7 @@ Zenji separates authority across three roles, all initialized to the deployer an
 
 ## Deployments
 
-Each vault is a standalone deployment produced by a script under [`script/`](script/). For example, the WBTC/LlamaLend USDT/crvUSD vault:
+Each vault is a standalone deployment produced by a script under [`script/`](script/). For example, the WBTC/LlamaLend crvUSD/USDT vault:
 
 ```bash
 export PRIVATE_KEY=0x...          # deployer (also default owner/gov)
