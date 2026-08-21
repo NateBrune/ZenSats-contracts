@@ -64,117 +64,142 @@ collateral (equity) or harvest yield. Harvest is not on demand, so: collateral.
 
 ---
 
-## 3. Approach — deficit-sized flash loan
+## 3. Chosen approach — Plan B: collateral-funded repay, one implementation
 
-A flash loan adds no value; it is the *mechanism* that lets collateral value reach the loan manager
-as debt tokens atomically.
+Value must come from outside the S/D pair, and the only available source is collateral. The
+convergent operation is therefore: **turn collateral into debt tokens and repay, without touching
+the strategy.**
+
+Two mechanisms can do that. Both were probed on mainnet forks:
+
+| | Uniform impl? | Fee | New lender code | Probed |
+|---|---|---|---|---|
+| **B — `removeCollateral` + swap + `repayDebt`** | **yes, one impl** | **none** | **none** | both venues OK |
+| A — deficit-sized flash loan | yes | 5 bps of deficit on Aave; 0 on Curve | LlamaLend trigger | Aave OK |
+| ~~C — per-venue split~~ | no | none | LlamaLend trigger | rejected |
+
+**Plan B is chosen.** Every primitive it needs already exists on `ILoanManager`
+(`removeCollateral`, `transferCollateral`, `repayDebt`) and `ISwapper`
+(`quoteCollateralForDebt`, `swapCollateralForDebt`), each already implemented per venue with
+venue-correct internals. So the fix is a **single venue-agnostic implementation in `ZenjiCoreLib`**
+— no loan-manager changes, no interface changes, no flash-loan fees, and it works for any venue
+added later. Divergence stays where it belongs: inside the adapters, behind `ILoanManager`.
+
+**Plan A is the documented fallback**, needed only if B's intermediate health dip proves too tight
+for a venue. A repays *before* removing collateral, so health strictly improves first.
+
+### 3.1 Algorithm
+
+`ZenjiCoreLib` external functions run under DELEGATECALL, so `address(this)` is the vault.
 
 ```
-1. flash-borrow  deficit (+ buffer)
-2. repay         deficit of debt        -> D -= deficit; position now over-collateralised
-3. remove        freed collateral        -> health check passes BECAUSE step 2 preceded it
-4. swap          collateral -> debt via swapper (oracle-floored)
-5. repay         flash loan
-net: D -= deficit, C -= ~deficit worth, S untouched
-     coverage = S / (D - deficit) = S / S = 1.0
+debt = loanManager.getCurrentDebt();          if (debt == 0)  return S;
+S    = yieldStrategy.balanceOf();             if (S >= debt)  return S;
+deficit = debt - S;
+
+// 1. Size the collateral, buffered for swap slippage.
+c = swapper.quoteCollateralForDebt(deficit);
+c = (c * precision) / (precision - maxSlippage);
+c = min(c, loanManager.getCurrentCollateral());
+
+// 2. Free the collateral. Health is enforced by the venue adapter:
+//    Aave reverts on MIN_HEALTH; LlamaLend reverts internally.
+loanManager.removeCollateral(c);
+loanManager.transferCollateral(address(this), c);
+
+// 3. Convert. The swapper applies its own Chainlink oracle floor.
+collateralAsset.safeTransfer(address(swapper), c);
+received = swapper.swapCollateralForDebt(c);
+
+// 4. Repay, capped at the deficit so coverage cannot overshoot the +spread bound.
+toRepay = min(received, deficit);
+debtAsset.safeTransfer(address(loanManager), toRepay);
+loanManager.repayDebt(toRepay);
+
+// 5. Redeploy any surplus into the strategy: raises S, strictly improving coverage.
+//    (Alternative: leave in vault. See S 11.)
+
+// 6. POSTCONDITION - the guard that makes the old bug class unrepresentable.
+newCoverage = yieldStrategy.balanceOf() * precision / loanManager.getCurrentDebt();
+if (newCoverage <= startCoverage) revert CoverageDidNotImprove();
+
+return yieldStrategy.balanceOf();
 ```
 
-Step ordering matters: repay **before** removing collateral, so LTV never spikes intra-transaction.
+Step 6 is the important one. The original defect was an operation that *looked* corrective while
+moving the ratio backwards. A monotonicity postcondition makes that state unreachable regardless of
+future refactors — a bleed becomes a revert.
 
-### Why the existing "no flashloan on partial" rule does not block this
+### 3.2 Signature change
 
-`LlamaLoanManager` documents:
-
-> "For partial: never flashloan — ... Flashing the entire remaining debt (other depositors' share)
-> causes unnecessarily large collateral swaps that routinely breach the oracle floor check."
-
-That objection is about **size**. Coverage-up needs only `deficit`, bounded at roughly the deadband
-(~3-5% of debt), not 100% of it. At the WBTC vault's advised 18 WBTC cap that is a few thousand
-dollars of collateral swap against pools doing millions. The oracle-floor risk that motivated the
-rule is absent at deficit scale. The fix is a **third case**, not a reversal of the rule.
+```solidity
+function rebalanceCoverageUp(
+    ILoanManager loanManager,
+    IYieldStrategy yieldStrategy,
+    IERC20 debtAsset,
+    IERC20 collateralAsset,   // new
+    ISwapper swapper,         // new
+    uint256 maxSlippage,
+    uint256 precision
+) external returns (uint256 newLastStrategyBalance);
+```
+`ZenjiCoreLib` already imports `ISwapper`. One call site in `Zenji.sol`. Dispatch order unchanged —
+with arm 3 convergent the deadlock cannot form (arm 3 restores parity, arm 1 re-levers, its
+`enforceCoverageAfterIncrease` guard passes). Convergence is two keeper ticks.
 
 ---
 
-## 4. Current state per loan manager (KEY FINDING)
+## 4. Evidence
 
-The two managers are **not** symmetric, which changes the cost of this work substantially.
-
-### AaveLoanManager — mechanism already exists
-
-`_unwindPosition` already computes `unrepaidDebt = debtToRepay - repayNow` and sets
-`needFlashloan = true` for a partial unwind whenever that is not dust, flashing
-`unrepaidDebt * 10300 / 10000`. `executeOperation` already handles the partial case
-(`abi.decode(data, (uint256 collateralNeeded, bool fullyClose))`).
-
-**CONFIRMED by spike (XAUT/Aave fork, 5 XAUT position, 6% induced strategy loss).** Calling
-`unwindPosition(collateralNeeded)` with **zero** funding already performs the convergent
-collateral-funded repay:
+### 4.1 Aave — the flash path already converges unfunded (Plan A viability)
+XAUT/Aave fork, 5 XAUT, 6% induced strategy loss. `unwindPosition(collateralNeeded)` with ZERO
+funding:
 
 | | before | after |
 |---|---|---|
 | coverage | 9395 bps | **10019 bps** (in band) |
-| strategy S | 12,813,333,711 | **12,813,333,711** (untouched) |
+| strategy S | 12,813,333,711 | **unchanged** |
 | debt D | 13,637,186,958 | 12,788,616,111 |
 | collateral | 5.000000 XAUT | 4.697938 XAUT |
 | NAV cost | — | **1 bp** |
 
-Converged in ONE call. Repaid 848.6 against a deficit of 823.9 — the overshoot is the existing 3%
-flash buffer, and landing slightly above parity is inside the band.
+Converged in one call. Confirms Plan A needs no Aave lender changes, and confirms the economics of
+collateral-funded repay generally.
 
-=> **AaveLoanManager needs NO change.** The XAUT/Aave "gold" vault fix is purely the `ZenjiCoreLib`
-arm-3 rewrite: stop pre-funding from the strategy, size `collateralNeeded` from the deficit, call
-`unwindPosition`.
+### 4.2 LlamaLend — small `removeCollateral` is safe (Plan B viability)
+WBTC/Llama fork, 1 WBTC, deadband-sized (3% of debt) removal:
 
-### LlamaLoanManager — needs the new case
+```
+debt 49,855 crvUSD | collateral 1.00000000 WBTC | LTV 6500 bps
+remove 0.01969697 WBTC (196 bps of collateral)  -> OK, LTV 6630 bps
+```
 
-`needFlashloan = fullyClose && (remainingDebt > 0)` — a partial unwind never flashes. The callback
-`onFlashLoan` already supports partial (`ctx.fullyClose ? collAvail : ctx.collateralNeeded`), so the
-missing piece is only the **trigger**, not the machinery.
+No band/dust assertion (`_calculate_debt_n1` / `y_effective > 0`). The 130 bps LTV dip is
+transient — step 4's repay returns LTV to roughly its starting value — and it stays inside the LTV
+deadband, so it cannot itself trigger arm 2.
+
+### 4.3 Venue mechanics behind `ILoanManager.removeCollateral`
+- **Aave**: `aavePool.withdraw(...)`, then explicit `health < MIN_HEALTH` revert.
+- **LlamaLend**: `llamaLend.remove_collateral(...)`, health enforced by LlamaLend.
+
+Both fail safe. Neither can silently produce an unsound position.
 
 ---
 
-## 5. Proposed changes
+## 5. Failure modes
 
-### 5.1 `ILoanManager` — new function
-```solidity
-/// @notice Repay `debtAmount` funded by collateral (flash-loan mediated), leaving any
-///         vault/strategy balances untouched. Used by coverage rebalancing.
-function repayFromCollateral(uint256 debtAmount) external;
-```
-Explicit and narrow, rather than overloading `unwindPosition`'s semantics. Keeps the existing
-partial-unwind contract (used by withdrawals) untouched — important, this is the path that broke in
-`256de80`.
-
-### 5.2 `LlamaLoanManager.repayFromCollateral`
-- `onlyVault`, `nonReentrant`, `_checkOracleFreshness()`.
-- Compute `collateralNeeded` from `debtAmount` pro-rata on `_getPositionValues()`.
-- Flash `debtAmount * 10300 / 10000` via the existing `DEBT_FLASH_LENDER`, reusing `onFlashLoan`
-  with `UnwindContext{ collateralNeeded, fullyClose: false }`.
-- Return leftover debt token to the vault as the existing paths do.
-
-### 5.3 `AaveLoanManager.repayFromCollateral`
-- Spike confirms the behaviour already exists. Implement as a thin wrapper over
-  `_unwindPosition(collateralNeeded, false)` with no pre-funding, purely to satisfy the shared
-  `ILoanManager` interface and keep `ZenjiCoreLib` venue-agnostic. No new flash logic.
-- Open detail: verify no debt tokens are left stranded at the loan manager after the call when
-  invoked from inside `rebalance()` (the spike called it directly, pranked as the vault).
-
-### 5.4 `ZenjiCoreLib.rebalanceCoverageUp`
-Replace steps 1-3 with:
-```
-deficit = debt - strategyBalance
-loanManager.repayFromCollateral(deficit)
-return yieldStrategy.balanceOf()
-```
-Strategy is never touched. Params `maxSlippage` / `precision` become unused — remove them and
-update the single caller in `Zenji.sol`.
-
-### 5.5 Dispatch order — DO NOT change
-Leave arm 1 (LTV) ahead of arm 3. With arm 3 convergent, the deadlock cannot form: arm 3 restores
-coverage to ~1.0, then arm 1 re-levers and its `enforceCoverageAfterIncrease` guard passes.
-Convergence is two keeper ticks. Re-ordering would be a larger semantic change for no benefit.
-
----
+| # | Risk | Guard |
+|---|---|---|
+| 1 | Intermediate health dip rejected by venue | Adapter reverts (Aave `MIN_HEALTH`, LlamaLend internal). Whole rebalance reverts; idle/unidle remains the escape. Deadband-sized dip measured at 130 bps against a ~1500 bps buffer. |
+| 2 | Collateral->debt swap breaches oracle floor | Swapper enforces its own Chainlink floor. Surface the revert; never widen the floor here. |
+| 3 | Swap returns less than the deficit | `toRepay = min(received, deficit)`; step 6 still requires strict improvement, so a partial repay is acceptable but a regression is not. |
+| 4 | Overshoot past the +spread bound triggers arm 4 | Repay capped at `deficit`; surplus redeployed to strategy rather than repaid. |
+| 5 | LlamaLend band/dust assertion on removal | Probed clean at deadband size (S 4.2). Do NOT auto-escalate to full close — revert. |
+| 6 | Deficit is dust | Floor it: skip below a dust threshold and let the deadband absorb it. |
+| 7 | Repeated no-op calls / oscillation | Step 6 postcondition reverts rather than bleeding. |
+| 8 | Keeper bounty paid for no progress | Bounty only on a call that satisfies step 6. |
+| 9 | Large deficit = real insolvency, not drift | See S 11 — open decision on a refusal threshold. |
+| 10 | `emergencyMode` interaction | Arm 3 unreachable; `rebalance()` already reverts. No change. |
 
 ## 6. Code size
 
@@ -183,13 +208,13 @@ this matters.
 
 | Component | Deployed as | Margin | Net effect |
 |---|---|---|---|
-| `ZenjiCoreLib` | separate library, delegatecalled | 13,667 B | **shrinks** (deletes steps 1-2) |
-| `LlamaLoanManager` | own contract | check before/after | small growth |
-| `AaveLoanManager` | own contract | check before/after | ~0 if spike confirms |
+| `ZenjiCoreLib` | separate library, delegatecalled | 13,667 B | roughly neutral: deletes steps 1-2, adds sizing + swap + postcondition |
+| `LlamaLoanManager` | own contract | — | **0 — unchanged under Plan B** |
+| `AaveLoanManager` | own contract | — | **0 — unchanged under Plan B** |
 | `Zenji` / vaults | 23.0-23.1 KB | ~1.5 KB | **0** — call-site arity only |
 
-The fix lands almost entirely in a delegatecalled library, so it costs the vaults nothing.
-`forge build --sizes` gate before/after; no vault may lose margin.
+Plan B touches exactly one delegatecalled library, so it costs the vaults nothing and leaves both
+loan managers untouched. `forge build --sizes` gate before/after; no vault may lose margin.
 
 ---
 
@@ -224,26 +249,29 @@ The fix lands almost entirely in a delegatecalled library, so it costs the vault
 
 ## 9. Audit scope
 
-Changed surface: `ZenjiCoreLib.rebalanceCoverageUp`, `LlamaLoanManager.repayFromCollateral`
-(+ `onFlashLoan` reuse), `AaveLoanManager.repayFromCollateral`, `ILoanManager`, one `Zenji.sol`
-call site.
+Changed surface under Plan B is deliberately small: `ZenjiCoreLib.rebalanceCoverageUp` and one
+`Zenji.sol` call site. No loan manager, no interface, no flash-loan callback.
 
-Focus areas: flash-loan callback reentrancy and initiator/token validation on the new entry point;
-oracle-floor sizing on the collateral swap; health-check ordering; interaction with the withdrawal
-partial-unwind path (must be provably untouched); keeper-bounty accounting on the new path;
-donation/dust griefing of `deficit`.
+Focus areas: collateral sizing and the slippage buffer (over-removal risk); oracle-floor behaviour
+on the collateral->debt swap; the intermediate health dip across both venues and at the top of the
+LTV deadband; the step-6 postcondition (can it be satisfied while value leaks?); surplus handling in
+step 5; keeper-bounty accounting; donation/dust griefing of `deficit`; and confirmation that the
+withdrawal partial-unwind path is provably untouched.
 
 ---
 
 ## 10. Sequencing
 
-1. ~~**Spike** the Aave hypothesis (S 4.1)~~ — **DONE, confirmed.** Aave needs no new flash logic.
-2. Implement `ILoanManager` + `LlamaLoanManager.repayFromCollateral`.
-3. Implement `AaveLoanManager.repayFromCollateral` (or confirm not needed).
-4. Rewrite `ZenjiCoreLib.rebalanceCoverageUp`; update the `Zenji.sol` call site.
-5. Tests (S 8), then size gate.
+1. ~~Probe Aave unfunded partial unwind~~ — **DONE** (S 4.1). Plan A viable, no Aave changes.
+2. ~~Probe LlamaLend small `removeCollateral`~~ — **DONE** (S 4.2). **Plan B viable on both venues.**
+3. Add `CoverageDidNotImprove` error; rewrite `ZenjiCoreLib.rebalanceCoverageUp` per S 3.1.
+4. Update the single `Zenji.sol` call site for the new signature (S 3.2).
+5. Tests (S 8), then `forge build --sizes` gate.
 6. Audit (S 9).
 7. Ship. Production runs on idle/unidle until then.
+
+No loan-manager or interface work is required. Plan A stays documented as the fallback if a future
+venue cannot tolerate the intermediate health dip.
 
 ---
 
@@ -251,8 +279,11 @@ donation/dust griefing of `deficit`.
 
 - ~~Does the Aave partial-unwind path already converge unfunded?~~ **Yes — confirmed by spike, 1 bp,
   one call.**
-- Sizing overshoots parity slightly via the 3% flash buffer. Acceptable (lands in band), but confirm
-  it cannot overshoot past the +3% upper bound and immediately trigger arm 4.
+- Step 5 surplus: redeploy into the strategy (raises S, strictly improves coverage) or leave in the
+  vault for `_swapRemainingDebtToCollateral` to handle on withdrawal? Redeploy is preferred; confirm
+  it cannot fight the fee-accrual baseline (`lastStrategyBalance`).
+- Should the slippage buffer on `c` be `maxSlippage` or the swapper's own `slippage()`? Over-removing
+  collateral is the main waste vector under Plan B.
 - Should arm 3 refuse to run when `deficit` exceeds some fraction of debt (a real insolvency
   signal) and instead surface it for manual handling rather than auto-selling collateral?
 - Should coverage drift emit an event so the keeper/monitor can alert before the deadband trips?
