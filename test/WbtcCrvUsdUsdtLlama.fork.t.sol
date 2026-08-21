@@ -3,7 +3,7 @@ pragma solidity ^0.8.33;
 
 import { console } from "forge-std/Test.sol";
 import { CrvUsdLpStrategyTestBase } from "./base/CrvUsdLpStrategyTestBase.sol";
-import { ZenjiWbtcLlamaStakeDao } from "../src/implementations/stakedao/ZenjiWbtcLlamaStakeDao.sol";
+import { ZenjiWbtcLlamaUsdtStakeDao } from "../src/implementations/stakedao/ZenjiWbtcLlamaUsdtStakeDao.sol";
 import { LlamaLoanManager } from "../src/lenders/LlamaLoanManager.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UniswapMixedCurveSwapper } from "../src/swappers/base/UniswapMixedCurveSwapper.sol";
@@ -236,7 +236,7 @@ contract WbtcCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
             3600
         );
 
-        ZenjiWbtcLlamaStakeDao vault_ = new ZenjiWbtcLlamaStakeDao(
+        ZenjiWbtcLlamaUsdtStakeDao vault_ = new ZenjiWbtcLlamaUsdtStakeDao(
             address(llamaManager), address(strategy), address(swapper), owner, address(viewHelper)
         );
         require(address(vault_) == expectedVaultAddress, "Vault address mismatch");
@@ -468,5 +468,110 @@ contract WbtcCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
             return;
         }
         assertGt(navAfter, navBefore, "LP harvest must increase NAV per share");
+    }
+
+    // ============ Strategy/debt coverage rebalance ============
+
+    /// @notice Drives the strategy balance below debt (ratio < 97%) and repeatedly calls
+    ///         rebalance() to check whether the coverage-up branch actually clears the
+    ///         condition, or whether it walks the ratio further out of band on each pass.
+    /// @dev LTV is untouched by the induced loss (collateral and debt are unchanged), so
+    ///      rebalance() takes the `ratioTooLow` arm rather than an LTV arm. Loss is induced
+    ///      by moving Stake DAO reward-vault shares out of the strategy, which is the closest
+    ///      fork-safe analogue of an LP value loss.
+    function test_coverageUp_clearsRatioCondition() public {
+        _deployVault();
+        _depositAs(user1, _baseDeposit());
+        _refreshOracles();
+
+        IERC20 sdShares = IERC20(address(strategy.stakingVault()));
+        uint256 shares = sdShares.balanceOf(address(strategy));
+        assertGt(shares, 0, "strategy must hold staked shares");
+
+        vm.prank(address(strategy));
+        sdShares.transfer(makeAddr("lossSink"), (shares * 4) / 100); // -4% => ratio ~96%
+
+        _refreshOracles();
+        uint256 ratio0 = vault.strategyToDebtRatio();
+        console.log("start ratio(bps)=%d", ratio0 / 1e14);
+        assertTrue(vault.strategyDebtRebalanceNeeded(), "setup must put ratio out of band");
+
+        uint256 prevRatio = ratio0;
+        for (uint256 i = 0; i < 5; i++) {
+            _refreshOracles();
+            try vault.rebalance() { }
+            catch (bytes memory err) {
+                console.log("pass %d: rebalance reverted", i + 1);
+                _skipOnEnvironmentalRevert(err);
+                break;
+            }
+            uint256 r = vault.strategyToDebtRatio();
+            console.log(
+                "pass %d: ratio(bps)=%d strat=%d", i + 1, r / 1e14, strategy.balanceOf()
+            );
+            if (!vault.strategyDebtRebalanceNeeded()) {
+                console.log("cleared after %d pass(es)", i + 1);
+                break;
+            }
+            assertLe(prevRatio, r + 1, "coverage-up must not push the ratio further from parity");
+            prevRatio = r;
+        }
+
+        assertFalse(
+            vault.strategyDebtRebalanceNeeded(),
+            "coverage rebalance must clear strategyDebtRebalanceNeeded()"
+        );
+    }
+
+    /// @notice Checks whether the strategist idle/unidle cycle is a viable manual escape from the
+    ///         coverage/LTV deadlock that test_coverageUp_clearsRatioCondition reproduces.
+    /// @dev setIdle(true) fully unwinds (withdrawAll + unwindPosition(max)), driving debt to 0 so
+    ///      strategyToDebtRatio() returns type(uint256).max, which both deadband guards exclude.
+    ///      setIdle(false) re-levers via _deployCapital(). Measures the NAV cost of the round trip.
+    function test_idleUnidle_recoversFromCoverageDeadlock() public {
+        _deployVault();
+        _depositAs(user1, _baseDeposit());
+        _refreshOracles();
+
+        IERC20 sdShares = IERC20(address(strategy.stakingVault()));
+        uint256 shares = sdShares.balanceOf(address(strategy));
+        vm.prank(address(strategy));
+        sdShares.transfer(makeAddr("lossSink2"), (shares * 4) / 100);
+
+        // Drive into the deadlock: repeat until rebalance() starts reverting.
+        for (uint256 i = 0; i < 4; i++) {
+            _refreshOracles();
+            try vault.rebalance() { } catch { break; }
+        }
+        _refreshOracles();
+        console.log("deadlocked ratio(bps)=%d", vault.strategyToDebtRatio() / 1e14);
+        uint256 navBefore = vault.totalAssets();
+
+        // Manual escape.
+        _refreshOracles();
+        vm.prank(owner);
+        try vault.setIdle(true) { } catch (bytes memory err) {
+            console.log("setIdle(true) REVERTED - escape unavailable");
+            _skipOnEnvironmentalRevert(err);
+            revert("setIdle(true) reverted");
+        }
+        assertTrue(vault.idle(), "should be idle");
+
+        _refreshOracles();
+        vm.prank(owner);
+        vault.setIdle(false);
+
+        _refreshOracles();
+        uint256 ratioAfter = vault.strategyToDebtRatio();
+        uint256 navAfter = vault.totalAssets();
+        console.log("after unidle ratio(bps)=%d", ratioAfter / 1e14);
+        console.log("NAV before=%d after=%d", navBefore, navAfter);
+        if (navBefore > navAfter) {
+            console.log("round-trip NAV cost (bps)=%d", ((navBefore - navAfter) * 10000) / navBefore);
+        }
+
+        assertFalse(
+            vault.strategyDebtRebalanceNeeded(), "idle/unidle must clear the coverage condition"
+        );
     }
 }

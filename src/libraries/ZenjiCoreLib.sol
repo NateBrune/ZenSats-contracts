@@ -231,10 +231,36 @@ library ZenjiCoreLib {
         newLastStrategyBalance = yieldStrategy.balanceOf();
     }
 
-    /// @notice Increase strategy/debt coverage when strategy assets fall below debt.
+    /// @notice Increase strategy/debt coverage when strategy assets fall below debt (S < D).
     /// @dev Withdraws from strategy, repays debt, then does a simplified partial unwind
-    ///      (triggering the loan manager flashloan path) if a deficit still remains.
+    ///      if a deficit still remains.
     ///      NOTE: _accrueYieldFees is intentionally skipped — rebalance() already called it.
+    ///
+    ///      WHY STEPS 1-2 EXIST (do not remove): they are the FUNDING mechanism, not merely a
+    ///      deleverage. LoanManager._unwindPosition repays only
+    ///      `min(debtToRepay, currentDebt, debtToken.balanceOf(loanManager))` — it cannot source
+    ///      debt tokens on its own for a partial unwind. During normal operation every debt token
+    ///      is deployed in the strategy, so without the step-1 withdrawal + step-2 transfer the
+    ///      loan manager holds nothing, `repayNow` is 0, and step 3 degrades into a bare
+    ///      collateral removal that RAISES LTV without repaying anything (LlamaLoanManager
+    ///      explicitly treats a zero-repay unwind as a deliberate collateral removal gated only by
+    ///      the health check). Deleting steps 1-2 makes this function actively harmful.
+    ///
+    ///      KNOWN DEFECT (tracked by test_coverageUp_clearsRatioCondition in
+    ///      WbtcCrvUsdUsdtLlama.fork.t.sol): this function does not converge. Steps 1-2 move S and
+    ///      D by the same amount `w`, so the deficit `D - S` is INVARIANT and the ratio S/D moves
+    ///      further from parity whenever S < D. Step 3 — the only convergent direction, since it
+    ///      reduces D while holding S constant — runs on `remainingDeficit`, which is zero for any
+    ///      shortfall where the strategy could fund the full repay, i.e. nearly always.
+    ///
+    ///      WHY THE OBVIOUS FIX FAILS: skipping steps 1-2 and unwinding collateral for the whole
+    ///      deficit leaves the loan manager unfunded (see above) and, for a partial unwind, it
+    ///      will not flash-loan the shortfall by design — flashing the full remaining debt causes
+    ///      oversized collateral swaps that routinely breach the swapper's oracle floor. A real
+    ///      fix needs a funded collateral->debt path (remove collateral, swap to debt asset, fund
+    ///      the loan manager, repay) that also keeps the intermediate position health-check-safe,
+    ///      which is a change to the withdrawal-critical path and is deliberately not attempted
+    ///      here. Operational mitigation: setIdle(true)/setIdle(false).
     /// @return newLastStrategyBalance Updated strategy balance for vault to store.
     function rebalanceCoverageUp(
         ILoanManager loanManager,

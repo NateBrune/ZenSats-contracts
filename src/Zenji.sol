@@ -589,7 +589,42 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
         emit CapitalDeployed(idleCollateral, borrowAmount);
     }
 
-    /// @notice Rebalance LTV and/or strategy-debt coverage
+    /// @notice Rebalance LTV and/or strategy-debt coverage.
+    /// @dev Four mutually exclusive corrective arms, evaluated in this priority order. Exactly ONE
+    ///      runs per call; the keeper re-evaluates each tick, so multi-step corrections converge
+    ///      across successive calls rather than atomically. Reverts RebalanceNotNeeded when both
+    ///      bands are satisfied.
+    ///
+    ///      Two independent deadbands, both +/- DEADBAND_SPREAD:
+    ///        - LTV band:      targetLtv +/- spread
+    ///        - Coverage band: 1.0 +/- spread, where coverage = strategyBalance / debt
+    ///
+    ///      | # | Trigger              | Action                | LTV effect | Coverage effect |
+    ///      |---|----------------------|-----------------------|------------|-----------------|
+    ///      | 1 | ltv < lowerBand      | _adjustLtv(up)        | -> target  | -> parity       |
+    ///      | 2 | ltv > upperBand      | _adjustLtv(down)      | -> target  | away from parity|
+    ///      | 3 | coverage < 1-spread  | rebalanceCoverageUp   | falls      | see WARNING     |
+    ///      | 4 | coverage > 1+spread  | rebalanceCoverageDown | rises      | -> parity       |
+    ///
+    ///      Arm 1 borrows and deploys the proceeds, moving numerator and denominator together, so
+    ///      it pulls coverage toward parity. It is additionally guarded by
+    ///      enforceCoverageAfterIncrease, which reverts StrategyDebtCoverageTooLow rather than
+    ///      lever up on top of an uncovered position.
+    ///
+    ///      Arm 2 withdraws from the strategy and repays symmetrically, which pushes coverage AWAY
+    ///      from parity whenever coverage < 1. LTV correction must therefore never be relied on to
+    ///      repair coverage — that is why arms 3 and 4 exist as separate triggers.
+    ///
+    ///      WARNING (known defect, tracked by test_coverageUp_clearsRatioCondition in
+    ///      WbtcCrvUsdUsdtLlama.fork.t.sol): arm 3 does not currently converge. It funds the repay
+    ///      by withdrawing from the strategy, which moves S and D by the same amount and leaves
+    ///      the deficit D - S invariant, so coverage drifts further out of band on each call while
+    ///      paying slippage and a keeper bounty. Because it also lowers LTV, LTV eventually leaves
+    ///      its band, arm 1 takes priority, and arm 1 reverts on StrategyDebtCoverageTooLow --
+    ///      deadlocking rebalance() entirely. Operational recovery is setIdle(true)/setIdle(false),
+    ///      which drives debt to 0 (coverage becomes type(uint256).max, excluded from both guards)
+    ///      and re-levers at parity; measured cost ~1 bp at 1 WBTC. See rebalanceCoverageUp for
+    ///      why the obvious fix does not work.
     function rebalance() external nonReentrant {
         if (emergencyMode) revert EmergencyModeActive();
         if (!loanManager.loanExists()) revert RebalanceNotNeeded();
