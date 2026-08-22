@@ -107,9 +107,13 @@ c = min(c, loanManager.getCurrentCollateral());
 loanManager.removeCollateral(c);
 loanManager.transferCollateral(address(this), c);
 
-// 3. Convert. The swapper applies its own Chainlink oracle floor.
+// 3. Convert. NOTE: the swappers do NOT carry an end-to-end oracle floor -- they document the
+//    loan manager's SwapperUnderperformed check as the hard floor. A direct ISwapper call from
+//    the vault bypasses it, so it MUST be re-applied here (audit C-01).
+expectedDebt = loanManager.getCollateralValue(c) * MIN_SWAP_OUT_BPS / 10000;
 collateralAsset.safeTransfer(address(swapper), c);
 received = swapper.swapCollateralForDebt(c);
+if (received < expectedDebt) revert SwapperUnderperformed(expectedDebt, received);
 
 // 4. Repay, capped at the deficit so coverage cannot overshoot the +spread bound.
 toRepay = min(received, deficit);
