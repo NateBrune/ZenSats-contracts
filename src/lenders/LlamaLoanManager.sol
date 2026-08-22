@@ -274,10 +274,18 @@ contract LlamaLoanManager is ILoanManager, IERC3156FlashBorrower {
     }
 
     /// @inheritdoc ILoanManager
+    /// @dev M-01: enforce the vault's own MIN_HEALTH after removal, matching createLoan/borrowMore
+    ///      and AaveLoanManager.removeCollateral. LlamaLend only enforces its own liquidation
+    ///      bounds, which are looser than this policy. Previously unreachable (no callers); it is
+    ///      now the primitive behind coverage rebalancing, so the gap is live.
     function removeCollateral(uint256 amount) external onlyVault {
         if (amount == 0) revert ZeroAmount();
         _checkOracleFreshness();
         llamaLend.remove_collateral(amount);
+        if (llamaLend.debt(address(this)) > 0) {
+            int256 health = this.getHealth();
+            if (health < MIN_HEALTH) revert HealthTooLow();
+        }
         emit CollateralRemoved(amount);
     }
 

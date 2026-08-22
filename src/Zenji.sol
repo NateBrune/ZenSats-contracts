@@ -603,7 +603,7 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
     ///      |---|----------------------|-----------------------|------------|-----------------|
     ///      | 1 | ltv < lowerBand      | _adjustLtv(up)        | -> target  | -> parity       |
     ///      | 2 | ltv > upperBand      | _adjustLtv(down)      | -> target  | away from parity|
-    ///      | 3 | coverage < 1-spread  | rebalanceCoverageUp   | falls      | see WARNING     |
+    ///      | 3 | coverage < 1-spread  | rebalanceCoverageUp   | rises      | -> parity       |
     ///      | 4 | coverage > 1+spread  | rebalanceCoverageDown | rises      | -> parity       |
     ///
     ///      Arm 1 borrows and deploys the proceeds, moving numerator and denominator together, so
@@ -615,16 +615,15 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
     ///      from parity whenever coverage < 1. LTV correction must therefore never be relied on to
     ///      repair coverage — that is why arms 3 and 4 exist as separate triggers.
     ///
-    ///      WARNING (known defect, tracked by test_coverageUp_clearsRatioCondition in
-    ///      WbtcCrvUsdUsdtLlama.fork.t.sol): arm 3 does not currently converge. It funds the repay
-    ///      by withdrawing from the strategy, which moves S and D by the same amount and leaves
-    ///      the deficit D - S invariant, so coverage drifts further out of band on each call while
-    ///      paying slippage and a keeper bounty. Because it also lowers LTV, LTV eventually leaves
-    ///      its band, arm 1 takes priority, and arm 1 reverts on StrategyDebtCoverageTooLow --
-    ///      deadlocking rebalance() entirely. Operational recovery is setIdle(true)/setIdle(false),
-    ///      which drives debt to 0 (coverage becomes type(uint256).max, excluded from both guards)
-    ///      and re-levers at parity; measured cost ~1 bp at 1 WBTC. See rebalanceCoverageUp for
-    ///      why the obvious fix does not work.
+    ///      Arm 3 funds its repay from COLLATERAL, not the strategy (Plan B — see
+    ///      rebalanceCoverageUp NatSpec for why: D - S is conserved under any strategy-funded
+    ///      repay, so only a collateral-funded repay can actually shrink the deficit). It converges
+    ///      in a single call and is guarded by a strict-improvement postcondition
+    ///      (CoverageDidNotImprove) that makes a repeat of the old non-convergent behavior
+    ///      unrepresentable. Operational recovery for a degenerate case (e.g. no swapper
+    ///      configured) remains setIdle(true)/setIdle(false), which drives debt to 0 (coverage
+    ///      becomes type(uint256).max, excluded from both guards) and re-levers at parity; measured
+    ///      cost ~1 bp at 1 WBTC.
     function rebalance() external nonReentrant {
         if (emergencyMode) revert EmergencyModeActive();
         if (!loanManager.loanExists()) revert RebalanceNotNeeded();
@@ -686,7 +685,7 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
         } else if (ratioTooLow) {
             increased = false;
             lastStrategyBalance = ZenjiCoreLib.rebalanceCoverageUp(
-                loanManager, yieldStrategy, debtAsset, maxSlippage, PRECISION
+                loanManager, yieldStrategy, debtAsset, collateralAsset, swapper, maxSlippage, PRECISION
             );
             newLtv = loanManager.getCurrentLTV();
         } else if (ratioTooHigh) {

@@ -14,10 +14,21 @@ import { SafeTransferLib } from "./SafeTransferLib.sol";
 library ZenjiCoreLib {
     using SafeTransferLib for IERC20;
 
+    /// @notice Minimum acceptable collateral->debt swap output vs the oracle quote (bps).
+    /// @dev MUST match LlamaLoanManager/AaveLoanManager.MIN_SWAP_OUT_BPS. The swappers deliberately
+    ///      do NOT carry their own end-to-end floor (UniswapMixedCurveSwapper leaves the V3 hop at
+    ///      amountOutMin = 0 for non-wstETH collateral and floors the Curve hop with a same-tx
+    ///      get_dy), and document the loan manager's check as the hard floor. Any call site that
+    ///      invokes ISwapper.swapCollateralForDebt directly MUST re-apply this bound.
+    uint256 internal constant MIN_SWAP_OUT_BPS = 9500;
+
     error InvalidAddress();
     error InsufficientWithdrawal();
     error InsufficientDeposit();
     error StrategyDebtCoverageTooLow(uint256 actual, uint256 minimum);
+    error CoverageDidNotImprove();
+    error SwapperUnderperformed(uint256 expected, uint256 actual);
+    error DeficitExceedsCollateral(uint256 needed, uint256 available);
 
     event EmergencyYieldRedeemed(uint256 debtAssetReceived);
     event EmergencyLoanUnwound(uint256 collateralRecovered, uint256 debtRecovered);
@@ -232,40 +243,69 @@ library ZenjiCoreLib {
     }
 
     /// @notice Increase strategy/debt coverage when strategy assets fall below debt (S < D).
-    /// @dev Withdraws from strategy, repays debt, then does a simplified partial unwind
-    ///      if a deficit still remains.
-    ///      NOTE: _accrueYieldFees is intentionally skipped — rebalance() already called it.
+    /// @dev Plan B: collateral-funded repay. NOTE: _accrueYieldFees is intentionally skipped —
+    ///      rebalance() already called it.
     ///
-    ///      WHY STEPS 1-2 EXIST (do not remove): they are the FUNDING mechanism, not merely a
-    ///      deleverage. LoanManager._unwindPosition repays only
-    ///      `min(debtToRepay, currentDebt, debtToken.balanceOf(loanManager))` — it cannot source
-    ///      debt tokens on its own for a partial unwind. During normal operation every debt token
-    ///      is deployed in the strategy, so without the step-1 withdrawal + step-2 transfer the
-    ///      loan manager holds nothing, `repayNow` is 0, and step 3 degrades into a bare
-    ///      collateral removal that RAISES LTV without repaying anything (LlamaLoanManager
-    ///      explicitly treats a zero-repay unwind as a deliberate collateral removal gated only by
-    ///      the health check). Deleting steps 1-2 makes this function actively harmful.
+    ///      WHY THIS MUST FUND FROM COLLATERAL (do not "fix" this by funding from the strategy
+    ///      again): `D - S` is CONSERVED under any operation that moves the strategy and the debt
+    ///      by the same amount — withdraw `w` from strategy + repay `w` of debt leaves S-w, D-w,
+    ///      delta(D-S) = 0; borrow `b` + deposit `b` into strategy leaves S+b, D+b, delta(D-S) = 0.
+    ///      A strategy-funded repay (the old implementation) therefore leaves the deficit
+    ///      identical before and after — only the ratio S/D degrades, since S shrinks while D-S is
+    ///      unchanged. Closing the deficit needs value from OUTSIDE the S/D pair. Harvest yield is
+    ///      not available on demand, so the only source is collateral (equity). This function
+    ///      removes collateral, swaps it to the debt asset, and repays — never touching the
+    ///      strategy — which is the one operation that actually shrinks `D - S`.
     ///
-    ///      KNOWN DEFECT (tracked by test_coverageUp_clearsRatioCondition in
-    ///      WbtcCrvUsdUsdtLlama.fork.t.sol): this function does not converge. Steps 1-2 move S and
-    ///      D by the same amount `w`, so the deficit `D - S` is INVARIANT and the ratio S/D moves
-    ///      further from parity whenever S < D. Step 3 — the only convergent direction, since it
-    ///      reduces D while holding S constant — runs on `remainingDeficit`, which is zero for any
-    ///      shortfall where the strategy could fund the full repay, i.e. nearly always.
+    ///      Steps: size collateral for the deficit via quoteCollateralForDebt (which ALREADY
+    ///      grosses up by the swapper's own slippage -- do not buffer again; reverts
+    ///      DeficitExceedsCollateral rather than capping) -> removeCollateral +
+    ///      transferCollateral to pull it to the vault (health is
+    ///      enforced by the venue adapter: Aave reverts on MIN_HEALTH, LlamaLend enforces
+    ///      internally) -> swap collateral -> debt asset via the configured swapper (floored HERE against
+    ///      the oracle at MIN_SWAP_OUT_BPS -- the swappers carry no end-to-end floor of their own)
+    ///      -> repay, capped at the deficit so coverage cannot overshoot the
+    ///      +spread bound (any surplus debt asset is left at the vault, see below) -> postcondition:
+    ///      coverage must have STRICTLY increased, or the call reverts.
     ///
-    ///      WHY THE OBVIOUS FIX FAILS: skipping steps 1-2 and unwinding collateral for the whole
-    ///      deficit leaves the loan manager unfunded (see above) and, for a partial unwind, it
-    ///      will not flash-loan the shortfall by design — flashing the full remaining debt causes
-    ///      oversized collateral swaps that routinely breach the swapper's oracle floor. A real
-    ///      fix needs a funded collateral->debt path (remove collateral, swap to debt asset, fund
-    ///      the loan manager, repay) that also keeps the intermediate position health-check-safe,
-    ///      which is a change to the withdrawal-critical path and is deliberately not attempted
-    ///      here. Operational mitigation: setIdle(true)/setIdle(false).
+    ///      ACCEPTED RISK (H-01): `deficit` is spot-manipulable. balanceOf() is
+    ///      min(vpBased, exitBased); the VP leg is clamped to +/-0.5% but exitBased
+    ///      (calc_withdraw_one_coin) is raw spot, and rebalance() has NO same-block cooldown. Any
+    ///      caller can manufacture a coverage breach and force a collateral sale. Accepted because
+    ///      the collateral swap uses a different venue than the LP pool AND is floored at
+    ///      MIN_SWAP_OUT_BPS, the bounty is not farmable, and the skew cost exceeds the gain by
+    ///      orders of magnitude. See "Accepted Risk — H-01" in AUDIT_CoverageRebalance_v2.md for
+    ///      the full analysis and the four conditions that require it to be revisited.
+    ///
+    ///      Read that last guard precisely: it bounds the RATIO, not value. Arm 3 never touches S,
+    ///      so `newCoverage > startCoverage` reduces to `toRepay > 0` and the collateral spent
+    ///      never enters the expression. It prevents the old bug class (an operation that looks
+    ///      corrective while moving the ratio backwards); it does NOT bound value loss. The value
+    ///      bound is the MIN_SWAP_OUT_BPS floor on the swap.
+    ///
+    ///      SURPLUS HANDLING: any debt-asset surplus after the capped repay stays at the vault
+    ///      rather than being redeployed into the strategy. Redeploying would interact with the
+    ///      `lastStrategyBalance` fee-accrual baseline (out of scope for this fix); the surplus is
+    ///      swept up on the next `_swapRemainingDebtToCollateral`-style flow or a subsequent
+    ///      deposit/rebalance cycle.
+    ///
+    ///      DUST FLOOR: if the deficit is at or below one whole unit of the debt asset (same
+    ///      dust convention `_swapRemainingDebtToCollateral` already uses, and comparable in
+    ///      magnitude to each loan manager's own `DUST_THRESHOLD`, i.e. ~$1 for the stablecoin
+    ///      debt assets this vault uses), this function returns without mutating state — the
+    ///      deadband absorbs it rather than paying slippage + a keeper bounty for a no-op-sized
+    ///      correction.
+    ///
+    ///      If no swapper is configured, this function returns the current strategy balance
+    ///      without reverting (some deployments may not have a swapper set) — the deficit is left
+    ///      for the operational idle/unidle mitigation.
     /// @return newLastStrategyBalance Updated strategy balance for vault to store.
     function rebalanceCoverageUp(
         ILoanManager loanManager,
         IYieldStrategy yieldStrategy,
         IERC20 debtAsset,
+        IERC20 collateralAsset,
+        ISwapper swapper,
         uint256 maxSlippage,
         uint256 precision
     ) external returns (uint256 newLastStrategyBalance) {
@@ -275,43 +315,65 @@ library ZenjiCoreLib {
         uint256 strategyBalance = yieldStrategy.balanceOf();
         if (strategyBalance >= debt) return strategyBalance;
 
+        if (address(swapper) == address(0)) return strategyBalance;
+
         uint256 deficit = debt - strategyBalance;
 
-        // Step 1: withdraw from strategy toward the deficit
-        if (strategyBalance > 0) {
-            uint256 toWithdraw = deficit > strategyBalance ? strategyBalance : deficit;
-            uint256 minReceived = (toWithdraw * (precision - maxSlippage)) / precision;
-            uint256 received = yieldStrategy.withdraw(toWithdraw);
-            if (received < minReceived) revert InsufficientWithdrawal();
+        // Dust floor: not worth paying slippage + a keeper bounty to close a sub-$1 deficit.
+        // Same convention as _swapRemainingDebtToCollateral's dust check below.
+        if (deficit <= 10 ** debtAsset.decimals()) return strategyBalance;
+
+        uint256 startCoverage = (strategyBalance * precision) / debt;
+
+        // 1. Size the collateral. quoteCollateralForDebt ALREADY grosses up by the swapper's own
+        //    slippage (`collateralOut * P / (P - slippage) + 1`), so do NOT buffer again here --
+        //    doing so over-removes collateral on every call.
+        uint256 c = swapper.quoteCollateralForDebt(deficit);
+        if (c == 0) return strategyBalance;
+        //    Do not silently cap at total collateral: that hands the venue an unsatisfiable
+        //    removal and reverts opaquely. Surface it instead -- a deficit this large is an
+        //    insolvency signal, not drift, and wants manual handling (setIdle/unIdle).
+        uint256 currentCollateral = loanManager.getCurrentCollateral();
+        if (c > currentCollateral) revert DeficitExceedsCollateral(c, currentCollateral);
+
+        // 2. Free the collateral to the vault. Health is enforced by the venue adapter (Aave
+        //    reverts on MIN_HEALTH; LlamaLend enforces internally).
+        loanManager.removeCollateral(c);
+        loanManager.transferCollateral(address(this), c);
+
+        // 3. Convert collateral -> debt asset.
+        //    C-01: this is a DIRECT ISwapper call from the vault, so it bypasses
+        //    LlamaLoanManager/AaveLoanManager._swapCollateralForDebt and their SwapperUnderperformed
+        //    check. The swappers rely on that check as their hard end-to-end floor, so it is
+        //    re-applied here against the oracle-implied value of the collateral we are spending.
+        //    This is also the value bound on the whole operation: collateral leaves, debt tokens
+        //    arrive, and the gap between them is capped at (100 - MIN_SWAP_OUT_BPS/100)%.
+        uint256 expectedDebt = (loanManager.getCollateralValue(c) * MIN_SWAP_OUT_BPS) / 10000;
+        collateralAsset.safeTransfer(address(swapper), c);
+        uint256 received = swapper.swapCollateralForDebt(c);
+        if (received < expectedDebt) revert SwapperUnderperformed(expectedDebt, received);
+
+        // 4. Repay, capped at the deficit so coverage cannot overshoot the +spread bound. Any
+        //    surplus stays at the vault — see SURPLUS HANDLING above.
+        uint256 toRepay = received < deficit ? received : deficit;
+        if (toRepay > 0) {
+            debtAsset.safeTransfer(address(loanManager), toRepay);
+            loanManager.repayDebt(toRepay);
         }
 
-        // Step 2: repay as much debt as possible
-        uint256 debtBalance = debtAsset.balanceOf(address(this));
-        uint256 repayAmount = debtBalance < deficit ? debtBalance : deficit;
-        if (repayAmount > 0) {
-            debtAsset.safeTransfer(address(loanManager), repayAmount);
-            loanManager.repayDebt(repayAmount);
-        }
+        // 5. Postcondition: coverage must have strictly improved, or revert. This bounds the
+        //    RATIO only -- it prevents the old bug class (an operation that looks corrective while
+        //    moving the ratio backwards) but it CANNOT bound value loss: arm 3 never touches S, so
+        //    `newCoverage > startCoverage` reduces to `toRepay > 0` and the collateral spent does
+        //    not appear in it at all. The value bound is the MIN_SWAP_OUT_BPS floor in step 3 --
+        //    do not mistake this check for one.
+        uint256 newStrategyBalance = yieldStrategy.balanceOf();
+        uint256 newDebt = loanManager.getCurrentDebt();
+        uint256 newCoverage =
+            newDebt == 0 ? type(uint256).max : (newStrategyBalance * precision) / newDebt;
+        if (newCoverage <= startCoverage) revert CoverageDidNotImprove();
 
-        // Step 3: simplified partial unwind if deficit remains
-        uint256 remainingDeficit = deficit > repayAmount ? deficit - repayAmount : 0;
-        if (remainingDeficit > 0 && loanManager.loanExists()) {
-            (uint256 positionCollateral, uint256 positionDebt) = loanManager.getPositionValues();
-            if (positionCollateral > 0 && positionDebt > 0) {
-                uint256 collateralNeeded =
-                    (positionCollateral * remainingDeficit + positionDebt - 1) / positionDebt;
-                if (collateralNeeded > positionCollateral) collateralNeeded = positionCollateral;
-
-                debtBalance = debtAsset.balanceOf(address(this));
-                if (debtBalance > 0) debtAsset.safeTransfer(address(loanManager), debtBalance);
-                loanManager.unwindPosition(collateralNeeded);
-
-                uint256 lmDebt = loanManager.getDebtBalance();
-                if (lmDebt > 0) loanManager.transferDebt(address(this), lmDebt);
-            }
-        }
-
-        return yieldStrategy.balanceOf();
+        return newStrategyBalance;
     }
 
     /// @notice Decrease strategy/debt coverage when strategy assets are too far above debt.
