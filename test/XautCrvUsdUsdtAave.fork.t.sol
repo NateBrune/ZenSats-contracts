@@ -610,4 +610,59 @@ contract XautCrvUsdUsdtAave is AaveSecurityTestMixin {
         vm.expectRevert(BaseSwapper.InvalidSlippage.selector);
         swapper.setSlippage(5e16 + 1);
     }
+
+    // ============ Strategy/debt coverage rebalance (Plan B, gold vault) ============
+
+    /// @notice Ports test_coverageUp_clearsRatioCondition (WbtcCrvUsdUsdtLlama) to the XAUT/Aave
+    ///         "gold" vault. This vault uses a DIFFERENT loan manager (AaveLoanManager, not
+    ///         LlamaLoanManager) and a DIFFERENT swapper (UniversalRouterV3SingleHopSwapper, not
+    ///         UniswapMixedCurveSwapper) — the Plan B fix in ZenjiCoreLib.rebalanceCoverageUp must
+    ///         be proven venue-agnostic directly here, not inferred from the WBTC/Llama result.
+    /// @dev Same technique as the WBTC test: drain Stake DAO reward-vault shares out of the
+    ///      strategy to induce a strategy-balance loss without touching collateral/debt, so
+    ///      rebalance() takes the ratioTooLow arm (not an LTV arm).
+    function test_coverageUp_clearsRatioCondition() public {
+        _deployVault();
+        uint256 depositAmount = _unit() * 5; // 5 XAUT (~$4490/oz => ~$22.4k)
+        _depositAs(user1, depositAmount);
+        _refreshOracles();
+
+        IERC20 sdShares = IERC20(address(strategy.stakingVault()));
+        uint256 shares = sdShares.balanceOf(address(strategy));
+        assertGt(shares, 0, "strategy must hold staked shares");
+
+        vm.prank(address(strategy));
+        sdShares.transfer(makeAddr("lossSinkXaut"), (shares * 4) / 100); // -4% => ratio ~96%
+
+        _refreshOracles();
+        uint256 ratio0 = vault.strategyToDebtRatio();
+        console.log("XAUT start ratio(bps)=%d", ratio0 / 1e14);
+        assertTrue(vault.strategyDebtRebalanceNeeded(), "setup must put ratio out of band");
+
+        uint256 prevRatio = ratio0;
+        for (uint256 i = 0; i < 5; i++) {
+            _refreshOracles();
+            try vault.rebalance() { }
+            catch (bytes memory err) {
+                console.log("XAUT pass %d: rebalance reverted", i + 1);
+                _skipOnEnvironmentalRevert(err);
+                break;
+            }
+            uint256 r = vault.strategyToDebtRatio();
+            console.log(
+                "XAUT pass %d: ratio(bps)=%d strat=%d", i + 1, r / 1e14, strategy.balanceOf()
+            );
+            if (!vault.strategyDebtRebalanceNeeded()) {
+                console.log("XAUT cleared after %d pass(es)", i + 1);
+                break;
+            }
+            assertLe(prevRatio, r + 1, "coverage-up must not push the ratio further from parity");
+            prevRatio = r;
+        }
+
+        assertFalse(
+            vault.strategyDebtRebalanceNeeded(),
+            "coverage rebalance must clear strategyDebtRebalanceNeeded() on the gold vault"
+        );
+    }
 }
