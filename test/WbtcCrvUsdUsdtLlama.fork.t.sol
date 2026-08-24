@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import { console } from "forge-std/Test.sol";
+import { console, stdStorage, StdStorage } from "forge-std/Test.sol";
 import { CrvUsdLpStrategyTestBase } from "./base/CrvUsdLpStrategyTestBase.sol";
 import { ZenjiWbtcLlamaUsdtStakeDao } from "../src/implementations/stakedao/ZenjiWbtcLlamaUsdtStakeDao.sol";
 import { LlamaLoanManager } from "../src/lenders/LlamaLoanManager.sol";
@@ -81,6 +81,8 @@ contract InflatedQuoteSwapper is ISwapper {
 ///         Swap route: WBTC → WETH via Uniswap V3 (0.05%) → crvUSD via Curve TriCRV.
 ///         Strategy: CrvUsdLpStakeDaoStrategy — single-sided crvUSD → USDT/crvUSD pool → Stake DAO.
 contract WbtcCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
+    using stdStorage for StdStorage;
+
     address constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
     address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
 
@@ -1091,5 +1093,129 @@ contract WbtcCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
             stratBefore,
             "arm-3 coverage-up rebalance must never decrease the strategy balance (Plan B: fund from collateral, not strategy)"
         );
+    }
+
+    // ============ NEW-02: idle debt asset is spent before collateral ============
+
+    /// @notice Arm 3 must repay from debt tokens the vault already holds BEFORE selling collateral.
+    /// @dev Repaying from idle reduces D without touching S: convergent, NAV-neutral, zero slippage.
+    ///      Verified by comparing collateral consumed with and without an idle balance present.
+    function test_coverageUp_spendsIdleDebtBeforeCollateral() public {
+        _deployVault();
+        _depositAs(user1, _baseDeposit());
+        _refreshOracles();
+
+        IERC20 sdShares = IERC20(address(strategy.stakingVault()));
+        uint256 shares = sdShares.balanceOf(address(strategy));
+
+        // Baseline: no idle balance -> measure collateral consumed.
+        uint256 snap = vm.snapshot();
+        vm.prank(address(strategy));
+        sdShares.transfer(makeAddr("idleSinkA"), (shares * 4) / 100);
+        _refreshOracles();
+        uint256 collBefore = loanManager.getCurrentCollateral();
+        vault.rebalance();
+        uint256 baselineCollUsed = collBefore - loanManager.getCurrentCollateral();
+        vm.revertTo(snap);
+
+        // Same loss, but the vault is holding idle crvUSD covering part of the deficit.
+        vm.prank(address(strategy));
+        sdShares.transfer(makeAddr("idleSinkB"), (shares * 4) / 100);
+        _refreshOracles();
+        uint256 debt = loanManager.getCurrentDebt();
+        uint256 deficit = debt - strategy.balanceOf();
+        deal(CRVUSD, address(vault), deficit / 2); // cover half
+        collBefore = loanManager.getCurrentCollateral();
+        vault.rebalance();
+        uint256 withIdleCollUsed = collBefore - loanManager.getCurrentCollateral();
+
+        console.log("collateral used  baseline=%d  withIdle=%d", baselineCollUsed, withIdleCollUsed);
+        assertLt(withIdleCollUsed, baselineCollUsed, "idle debt must reduce the collateral sold");
+        assertFalse(vault.strategyDebtRebalanceNeeded(), "coverage must still reach the band");
+    }
+
+    /// @notice When idle debt asset covers the WHOLE deficit, no collateral is sold at all
+    ///         (the early-exit path) and coverage still improves.
+    function test_coverageUp_idleCoversDeficit_sellsNoCollateral() public {
+        _deployVault();
+        _depositAs(user1, _baseDeposit());
+        _refreshOracles();
+
+        IERC20 sdShares = IERC20(address(strategy.stakingVault()));
+        uint256 shares = sdShares.balanceOf(address(strategy));
+        vm.prank(address(strategy));
+        sdShares.transfer(makeAddr("idleSinkC"), (shares * 4) / 100);
+        _refreshOracles();
+
+        uint256 deficit = loanManager.getCurrentDebt() - strategy.balanceOf();
+        deal(CRVUSD, address(vault), deficit * 2); // more than enough
+
+        uint256 collBefore = loanManager.getCurrentCollateral();
+        uint256 stratBefore = strategy.balanceOf();
+        uint256 ratioBefore = vault.strategyToDebtRatio();
+        vault.rebalance();
+
+        console.log("idle-only: ratio %d -> %d", ratioBefore / 1e14, vault.strategyToDebtRatio() / 1e14);
+        // Tolerance of 2 base units: LlamaLend's band accounting reports collateral off by ~1
+        // across a repay even when nothing was removed. A real sale here would be ~2.6e6 sat
+        // (measured in test_coverageUp_spendsIdleDebtBeforeCollateral), six orders of magnitude up.
+        assertApproxEqAbs(
+            loanManager.getCurrentCollateral(), collBefore, 2, "no collateral may be sold"
+        );
+        assertEq(strategy.balanceOf(), stratBefore, "strategy must be untouched");
+        assertGt(vault.strategyToDebtRatio(), ratioBefore, "coverage must improve");
+        assertFalse(vault.strategyDebtRebalanceNeeded(), "coverage must reach the band");
+    }
+
+    /// @notice Idle balance up to `accumulatedFees` is RESERVED, not spent. processWithdrawFees
+    ///         pays from (idle + a strategy withdrawal capped at strategyBalance) and zeroes
+    ///         accumulatedFees before checking the transfer covered them, so consuming the
+    ///         strategist's claim here could silently forfeit it.
+    function test_coverageUp_reservesAccumulatedFees() public {
+        _deployVault();
+        _depositAs(user1, _baseDeposit());
+        _refreshOracles();
+
+        // Force accumulatedFees directly. Organic accrual is not reachable in a fork: CRV
+        // emissions alone are below borrow cost and the Curve trading fees that close the gap
+        // do not accrue in a snapshot (same reason test_harvestIncreasesNavPerShare skips).
+        // Writing the slot is the only way to actually EXERCISE the reserve rather than ship a
+        // test that silently no-ops and looks green.
+        // Zero the keeper bounty first. rebalance() pays
+        // (accumulatedFees - feesAtLastRebalance) * rebalanceBountyRate BEFORE arm 3 runs, so with
+        // a forced fee balance the bounty is the dominant consumer of the vault's debt tokens and
+        // would be mistaken for arm-3 consumption (measured: 500e18 -> 417.13e18, i.e. ~82.87e18
+        // paid as bounty). Zeroing it isolates the reserve as the only thing under test.
+        _setBountyRate(0);
+
+        uint256 fees = 500e18;
+        stdstore.target(address(vault)).sig("accumulatedFees()").checked_write(fees);
+        assertEq(vault.accumulatedFees(), fees, "fee state must be set for this test to mean anything");
+        console.log("forced accumulatedFees for reserve test: %d", fees);
+
+        IERC20 sdShares = IERC20(address(strategy.stakingVault()));
+        uint256 shares = sdShares.balanceOf(address(strategy));
+        vm.prank(address(strategy));
+        sdShares.transfer(makeAddr("idleSinkD"), (shares * 4) / 100);
+        _refreshOracles();
+
+        // Idle balance exactly equal to the fee claim: none of it may be spent, so arm 3 must
+        // fall through to selling collateral for the FULL deficit.
+        deal(CRVUSD, address(vault), fees);
+        uint256 collBefore = loanManager.getCurrentCollateral();
+        uint256 idleBefore = IERC20(CRVUSD).balanceOf(address(vault));
+        vault.rebalance();
+
+        assertGe(
+            IERC20(CRVUSD).balanceOf(address(vault)),
+            idleBefore,
+            "reserved fee balance must not be spent on the repay"
+        );
+        assertLt(
+            loanManager.getCurrentCollateral(),
+            collBefore,
+            "with only reserved idle available, collateral must still be sold"
+        );
+        console.log("fee reserve respected: idle %d -> %d", idleBefore, IERC20(CRVUSD).balanceOf(address(vault)));
     }
 }

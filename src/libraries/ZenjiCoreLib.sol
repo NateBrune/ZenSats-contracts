@@ -371,6 +371,7 @@ library ZenjiCoreLib {
         IERC20 debtAsset,
         IERC20 collateralAsset,
         ISwapper swapper,
+        uint256 accumulatedFees,
         uint256 precision
     ) external returns (uint256 newLastStrategyBalance) {
         uint256 debt = loanManager.getCurrentDebt();
@@ -389,7 +390,41 @@ library ZenjiCoreLib {
 
         uint256 startCoverage = (strategyBalance * precision) / debt;
 
-        // 1. Size the collateral for the FULL deficit. quoteCollateralForDebt ALREADY grosses up
+        // 0. Spend idle debt asset FIRST. Repaying from tokens the vault already holds reduces D
+        //    without touching S, so it is convergent, NAV-neutral and costs ZERO slippage --
+        //    strictly better than selling collateral for the same amount. Sources: surplus left by
+        //    a previous arm-3 call (the repay is capped at `deficit`), residual transferDebt from
+        //    unwind paths, and donations.
+        //
+        //    RESERVE accumulatedFees. processWithdrawFees pays fees from
+        //    (idle balance + a strategy withdrawal capped at strategyBalance) and zeroes
+        //    accumulatedFees BEFORE it knows whether the transfer covered them, so a shortfall is
+        //    silently forfeited. Arm 3 runs exactly when the strategy is under-covered, so do not
+        //    consume the strategist's claim to buy a slightly smaller collateral sale.
+        {
+            uint256 idle = debtAsset.balanceOf(address(this));
+            uint256 usable = idle > accumulatedFees ? idle - accumulatedFees : 0;
+            if (usable > 0) {
+                uint256 fromIdle = usable < deficit ? usable : deficit;
+                debtAsset.safeTransfer(address(loanManager), fromIdle);
+                loanManager.repayDebt(fromIdle);
+                deficit -= fromIdle;
+            }
+        }
+
+        //    Idle balance covered it (or all that is left is dust): D fell, S is untouched, so
+        //    coverage strictly improved. Skip the collateral sale entirely and settle up.
+        if (deficit <= 10 ** debtAsset.decimals()) {
+            uint256 idleOnlyStrategyBalance = yieldStrategy.balanceOf();
+            uint256 idleOnlyDebt = loanManager.getCurrentDebt();
+            uint256 idleOnlyCoverage = idleOnlyDebt == 0
+                ? type(uint256).max
+                : (idleOnlyStrategyBalance * precision) / idleOnlyDebt;
+            if (idleOnlyCoverage <= startCoverage) revert CoverageDidNotImprove();
+            return idleOnlyStrategyBalance;
+        }
+
+        // 1. Size the collateral for the REMAINING deficit. quoteCollateralForDebt ALREADY grosses up
         //    by the swapper's own slippage (`collateralOut * P / (P - slippage) + 1`), so do NOT
         //    buffer again here -- doing so over-removes collateral on every call.
         uint256 cDesired = swapper.quoteCollateralForDebt(deficit);
