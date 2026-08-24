@@ -622,24 +622,26 @@ manufactured one unattractive.
 ## Residual risk (explicitly retained)
 - **Griefing has no cost floor for a motivated adversary.** The economics deter profit-seekers, not
   a competitor or someone already positioned in the pool who partially recoups the skew.
-- ~~M-01 introduced a transient interaction: a large manufactured deficit now trips `MIN_HEALTH`
-  inside `removeCollateral`, so `rebalance()` reverts instead of transacting.~~
-  **SUPERSEDED by the M-02 partial-progress change** (`COVERAGE_PARTIAL_PROGRESS_PLAN.md`,
-  `AUDIT_PartialProgress.md`). A large manufactured deficit no longer reverts — it now takes a
-  BOUNDED PARTIAL collateral sale, capped by a safe-removal search against
-  `MIN_HEALTH * 105 / 100`. Do not credit that revert as an incidental guard against H-01; it is
-  gone. Re-audited and the acceptance still holds — per-call damage is strictly TIGHTER than
-  before (health floor `1.05 * MIN_HEALTH` vs `MIN_HEALTH`), total volume stays repay-capped at
-  `deficit`, and the bounty is not farmable per tick. The change removed the attacker's need to
-  size the deficit precisely (convenience), not their reach (capability).
+- **A deficit past the venue's health threshold reverts.** On XAUT/Aave that is roughly >20% of debt
+  at target LTV and >12% at the top of the LTV band; LlamaLend tolerates more. Arm 3 is
+  ALL-OR-NOTHING: it takes the full required collateral removal or reverts
+  `CoverageDeficitTooLarge(deficit, collateralRequired)`, and the operator runs setIdle/unIdle.
+  (History, so this is not re-derived: a partial-progress version was implemented and REJECTED —
+  it reintroduced the deadlock by dragging LTV past lowerBand into arm 1's territory, and cost more
+  than the escape it replaced. See `COVERAGE_PARTIAL_PROGRESS_PLAN.md`. An earlier revision of this
+  section marked the revert "SUPERSEDED by partial progress" — that is WRONG; partial progress was
+  removed in 699b78a and the revert is live.)
 
 ## Monitoring
 - Alert on arm-3 rebalances (`RebalancePerformed` with coverage as the trigger) — especially any
   occurring while the LP pool is materially imbalanced.
-- **Alert on repeated SUCCEEDING partial arm-3 rebalances** — since the partial-progress change
-  that, not a reverting call, is the signature of a large deficit being worked down over several
-  ticks. Repeated reverts now indicate `CoverageDeficitTooLarge` (below the 10% progress floor —
-  needs `setIdle`/`unIdle`) or a transient `SwapperUnderperformed` (retryable).
+- **Alert on `CoverageDeficitTooLarge`** — arm 3 cannot self-heal from here and the vault needs an
+  operator `setIdle`/`unIdle`. This is the actionable page.
+- **Treat `SwapperUnderperformed` as retryable**, not as a page — it is transient (market conditions
+  or a front-run) and the keeper should back off and retry.
+- Arm 3 produces no partial rebalances, so there is no "repeated partial success" signature to watch
+  for. Repeated arm-3 SUCCESS simply means coverage keeps drifting — investigate the strategy, not
+  the rebalancer.
 
 ## Revisit if ANY of these change
 1. **TVL grows** such that a plausible bounty approaches the skew cost.

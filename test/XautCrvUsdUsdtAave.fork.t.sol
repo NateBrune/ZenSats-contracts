@@ -770,4 +770,275 @@ contract XautCrvUsdUsdtAave is AaveSecurityTestMixin {
             "setIdle/unIdle must recover a vault that arm 3 refused"
         );
     }
+
+    // ============ Arm 4 (coverage > 1+spread): rebalanceCoverageDown ============
+    // Never fork-tested before this file. See ARM4_VERIFICATION_PLAN.md.
+    // NOTE: WBTC/Llama's sibling file (WbtcCrvUsdUsdtLlama.fork.t.sol) found and documented a
+    // genuine non-convergence bug in `rebalanceCoverageDown` -- it deploys the borrowed debt back
+    // into the SAME strategy balance the "target debt" formula assumed was fixed, so a single call
+    // only partially corrects. These tests reuse the same bounded-loop technique to characterize
+    // the identical arithmetic on this venue (crvUSD lpAsset, USDT debt, Aave loan manager).
+
+    /// @notice Induces a genuine, fully-backed GAIN in the strategy's staked position -- the
+    ///         mirror of the arm-3 tests' loss technique (`sdShares.transfer(strategy, out)`),
+    ///         but via a REAL deposit rather than `deal()`. See the WBTC/Llama sibling file for
+    ///         the full rationale.
+    function _induceGain(uint256 crvUsdAmount) internal returns (uint256 sharesReceived) {
+        address gainSource = makeAddr("arm4GainSource");
+        deal(CRVUSD, gainSource, crvUsdAmount);
+
+        vm.startPrank(gainSource);
+        ICurveStableSwapTwoLP pool = ICurveStableSwapTwoLP(address(strategy.lpPool()));
+        IERC20(CRVUSD).approve(address(pool), crvUsdAmount);
+        uint256[2] memory amounts;
+        amounts[uint256(uint128(strategy.lpCrvUsdIndex()))] = crvUsdAmount;
+        uint256 lpReceived = pool.add_liquidity(amounts, 0);
+
+        strategy.lpToken().approve(address(strategy.stakingVault()), lpReceived);
+        sharesReceived = strategy.stakingVault().deposit(lpReceived, gainSource);
+
+        IERC20(address(strategy.stakingVault())).transfer(address(strategy), sharesReceived);
+        vm.stopPrank();
+    }
+
+    /// @notice Repeatedly calls `_induceGain` with an exponentially growing chunk size until
+    ///         `strategyToDebtRatio()` clears `targetRatio` (or `maxIters` is exhausted).
+    function _induceGainUntilRatio(uint256 targetRatio, uint256 maxIters)
+        internal
+        returns (uint256 totalInduced, bool reached)
+    {
+        uint256 chunk = 1_000e18; // 1,000 crvUSD notional
+        for (uint256 i = 0; i < maxIters; i++) {
+            _refreshOracles();
+            uint256 r = vault.strategyToDebtRatio();
+            if (r != type(uint256).max && r >= targetRatio) return (totalInduced, true);
+            _induceGain(chunk);
+            totalInduced += chunk;
+            chunk *= 2;
+        }
+        _refreshOracles();
+        uint256 rFinal = vault.strategyToDebtRatio();
+        return (totalInduced, rFinal != type(uint256).max && rFinal >= targetRatio);
+    }
+
+    /// @notice Arm-4 convergence per ARM4_VERIFICATION_PLAN.md S4 item 1: coverage pushed above
+    ///         103% must clear back into band via rebalance() calls.
+    /// @dev See WbtcCrvUsdUsdtLlama.fork.t.sol's identical test for the root-cause writeup of the
+    ///      non-convergence bug this test is expected to reproduce on this venue too.
+    function test_coverageDown_clearsRatioCondition() public {
+        _deployVault();
+        _depositAs(user1, _baseDeposit());
+        _refreshOracles();
+
+        uint256 targetRatio = vault.PRECISION() + vault.DEADBAND_SPREAD() + 2e15; // ~105%+
+        (uint256 induced, bool reached) = _induceGainUntilRatio(targetRatio, 20);
+        console.log("induced crvUSD=%d reached=%d", induced, reached ? 1 : 0);
+        assertTrue(reached, "setup must be able to push coverage above the deadband");
+        assertTrue(vault.strategyDebtRebalanceNeeded(), "setup must put ratio out of band (high)");
+
+        uint256 ratio0 = vault.strategyToDebtRatio();
+        console.log("arm4 start ratio(bps)=%d", ratio0 / 1e14);
+
+        uint256 passes = 60;
+        for (uint256 i = 0; i < passes; i++) {
+            _refreshOracles();
+            try vault.rebalance() { }
+            catch (bytes memory err) {
+                console.log("pass %d: rebalance reverted", i + 1);
+                _skipOnEnvironmentalRevert(err);
+                break;
+            }
+            uint256 r = vault.strategyToDebtRatio();
+            console.log("pass %d: ratio(bps)=%d", i + 1, r / 1e14);
+            if (!vault.strategyDebtRebalanceNeeded()) {
+                console.log("cleared after %d pass(es)", i + 1);
+                break;
+            }
+            assertLe(
+                r,
+                ratio0 + ratio0 / 100,
+                "coverage-down must not grossly diverge away from parity across passes"
+            );
+        }
+
+        assertFalse(
+            vault.strategyDebtRebalanceNeeded(),
+            "arm-4 must eventually clear strategyDebtRebalanceNeeded() -- if this fails after 60 passes, arm 4 does not converge in a practical number of calls"
+        );
+    }
+
+    /// @notice Arm-4 must never lever the position past the LTV upper band, and health must stay
+    ///         above the venue's MIN_HEALTH (plan S4 item 2).
+    function test_coverageDown_noOverLeverage() public {
+        _deployVault();
+        _depositAs(user1, _baseDeposit());
+        _refreshOracles();
+
+        uint256 targetRatio = vault.PRECISION() + vault.DEADBAND_SPREAD() + 2e15;
+        (, bool reached) = _induceGainUntilRatio(targetRatio, 20);
+        assertTrue(reached, "setup must be able to push coverage above the deadband");
+
+        _refreshOracles();
+        try vault.rebalance() { }
+        catch (bytes memory err) {
+            _skipOnEnvironmentalRevert(err);
+            revert("arm-4 rebalance() reverted");
+        }
+
+        uint256 upperBand = vault.targetLtv() + vault.DEADBAND_SPREAD();
+        uint256 ltvAfter = loanManager.getCurrentLTV();
+        int256 healthAfter = loanManager.getHealth();
+        console.log("arm4 LTV after(bps)=%d upperBand(bps)=%d", ltvAfter / 1e14, upperBand / 1e14);
+        assertLe(
+            ltvAfter,
+            upperBand + 1e12,
+            "arm-4 must not lever LTV past the upper deadband"
+        );
+        assertGe(
+            healthAfter, loanManager.MIN_HEALTH(), "arm-4 must not push health below MIN_HEALTH"
+        );
+    }
+
+    /// @notice Arm-4 LTV-bounded case per plan S4 item 3: when the coverage requirement would
+    ///         require borrowing past the LTV ceiling, arm 4 must borrow only the capped amount,
+    ///         not revert, and must not deadlock on a follow-up call.
+    function test_coverageDown_ltvBoundedCase() public {
+        _deployVault();
+        _depositAs(user1, _baseDeposit());
+        _refreshOracles();
+
+        uint256 targetRatio = vault.PRECISION() * 3; // ~300%
+        (, bool reached) = _induceGainUntilRatio(targetRatio, 25);
+        console.log(
+            "ltv-bounded setup reached=%d ratio(bps)=%d",
+            reached ? 1 : 0,
+            vault.strategyToDebtRatio() / 1e14
+        );
+        if (!reached) {
+            console.log("could not reach 300% coverage within iteration cap -- skipping (pool too deep at this block)");
+            vm.skip(true);
+            return;
+        }
+
+        uint256 debtBefore = loanManager.getCurrentDebt();
+        uint256 ltvBefore = loanManager.getCurrentLTV();
+        uint256 upperBand = vault.targetLtv() + vault.DEADBAND_SPREAD();
+
+        _refreshOracles();
+        try vault.rebalance() { }
+        catch (bytes memory err) {
+            _skipOnEnvironmentalRevert(err);
+            revert("arm-4 rebalance() reverted on the LTV-bounded case");
+        }
+
+        uint256 debtAfter = loanManager.getCurrentDebt();
+        uint256 ltvAfter = loanManager.getCurrentLTV();
+        console.log("ltv-bounded: debt %d -> %d", debtBefore, debtAfter);
+        console.log("ltv-bounded: LTV(bps) %d -> %d", ltvBefore / 1e14, ltvAfter / 1e14);
+
+        assertGt(debtAfter, debtBefore, "arm-4 must still borrow something even when LTV-capped");
+        assertLe(
+            ltvAfter, upperBand + 1e12, "capped borrow must not push LTV past the upper band"
+        );
+        assertTrue(
+            vault.strategyDebtRebalanceNeeded(),
+            "an LTV-capped partial borrow must leave coverage still out of band (by design)"
+        );
+
+        _refreshOracles();
+        try vault.rebalance() { }
+        catch (bytes memory err) {
+            _skipOnEnvironmentalRevert(err);
+            revert("arm-4 follow-up rebalance() reverted -- possible deadlock");
+        }
+        uint256 ltvAfter2 = loanManager.getCurrentLTV();
+        console.log("ltv-bounded follow-up LTV(bps)=%d", ltvAfter2 / 1e14);
+        assertLe(
+            ltvAfter2,
+            upperBand + 1e12,
+            "follow-up capped borrow must also respect the upper band"
+        );
+    }
+
+    /// @notice Arm-4 has NO coverage postcondition analogous to arm 3's CoverageDidNotImprove --
+    ///         plan S4 item 4 exists specifically to catch an arm-3-class non-convergence bug here.
+    ///         Asserts the ratio strictly decreases (moves toward parity) across the call.
+    function test_coverageDown_ratioStrictlyDecreases() public {
+        _deployVault();
+        _depositAs(user1, _baseDeposit());
+        _refreshOracles();
+
+        uint256 targetRatio = vault.PRECISION() + vault.DEADBAND_SPREAD() + 2e15;
+        (, bool reached) = _induceGainUntilRatio(targetRatio, 20);
+        assertTrue(reached, "setup must be able to push coverage above the deadband");
+
+        uint256 ratioBefore = vault.strategyToDebtRatio();
+
+        _refreshOracles();
+        try vault.rebalance() { }
+        catch (bytes memory err) {
+            _skipOnEnvironmentalRevert(err);
+            revert("arm-4 rebalance() reverted");
+        }
+
+        uint256 ratioAfter = vault.strategyToDebtRatio();
+        console.log(
+            "ratio-direction: before(bps)=%d after(bps)=%d", ratioBefore / 1e14, ratioAfter / 1e14
+        );
+        assertLt(
+            ratioAfter, ratioBefore, "arm-4 must strictly move coverage toward parity (ratio must decrease)"
+        );
+    }
+
+    /// @notice Interaction with arm 3 per plan S4 item 6: after arm 4 converges, arm 3 must not
+    ///         immediately fire on the very next rebalance() call (no arm3<->arm4 oscillation).
+    /// @dev Drives to convergence via a bounded loop; skips the oscillation check explicitly if
+    ///      convergence is not reached within the bound (see test_coverageDown_clearsRatioCondition).
+    function test_coverageDown_noOscillationWithArm3() public {
+        _deployVault();
+        _depositAs(user1, _baseDeposit());
+        _refreshOracles();
+
+        uint256 targetRatio = vault.PRECISION() + vault.DEADBAND_SPREAD() + 2e15;
+        (, bool reached) = _induceGainUntilRatio(targetRatio, 20);
+        assertTrue(reached, "setup must be able to push coverage above the deadband");
+
+        bool converged = false;
+        for (uint256 i = 0; i < 60; i++) {
+            _refreshOracles();
+            try vault.rebalance() { }
+            catch (bytes memory err) {
+                _skipOnEnvironmentalRevert(err);
+                revert("arm-4 rebalance() reverted");
+            }
+            if (!vault.strategyDebtRebalanceNeeded()) {
+                converged = true;
+                console.log("arm-4 converged after %d pass(es)", i + 1);
+                break;
+            }
+        }
+        if (!converged) {
+            console.log(
+                "arm-4 did not converge within 60 passes (see test_coverageDown_clearsRatioCondition) -- oscillation check not reachable, skipping"
+            );
+            vm.skip(true);
+            return;
+        }
+
+        uint256 ratioAfterArm4 = vault.strategyToDebtRatio();
+        console.log("post-arm4 ratio(bps)=%d", ratioAfterArm4 / 1e14);
+
+        _refreshOracles();
+        try vault.rebalance() {
+            uint256 ratioAfterFollowUp = vault.strategyToDebtRatio();
+            console.log("follow-up rebalance succeeded; ratio(bps)=%d", ratioAfterFollowUp / 1e14);
+            assertFalse(
+                vault.strategyDebtRebalanceNeeded(),
+                "a follow-up rebalance right after arm-4 convergence must not leave coverage out of band again"
+            );
+        } catch (bytes memory err) {
+            _skipOnEnvironmentalRevert(err);
+            console.log("follow-up rebalance() reverted (expected: RebalanceNotNeeded, no oscillation)");
+        }
+    }
 }
