@@ -17,6 +17,7 @@ import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { BaseSwapper } from "../src/swappers/base/BaseSwapper.sol";
 import { TimelockLib } from "../src/libraries/TimelockLib.sol";
 import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
+import { ZenjiCoreLib } from "../src/libraries/ZenjiCoreLib.sol";
 
 /// @title XautCrvUsdUsdtAave
 /// @notice Fork tests for XAUT collateral -> Aave V3 (eMode 43) -> borrow USDT -> Curve
@@ -663,6 +664,110 @@ contract XautCrvUsdUsdtAave is AaveSecurityTestMixin {
         assertFalse(
             vault.strategyDebtRebalanceNeeded(),
             "coverage rebalance must clear strategyDebtRebalanceNeeded() on the gold vault"
+        );
+    }
+
+    // ============ Arm-3 partial progress + distinct error (M-02 follow-up) ============
+    // See COVERAGE_PARTIAL_PROGRESS_PLAN.md S5. All four scenarios below are calibrated against
+    // this vault's real numbers on a live fork (5 XAUT deposit, targetLtv=60%, T=0.75,
+    // MIN_HEALTH=1.1e18, HEALTH_FLOOR_MARGIN_PCT=105 -> healthFloor=1.155e18). At target LTV the
+    // safe-removal cap closes ~12.6% of debt per call (health0=1.25 vs floor=1.155, margin=0.095,
+    // threshold = 0.095/0.75 ~= 12.67% of D) -- ANY induced deficit larger than that activates the
+    // new partial-progress path instead of a one-shot close.
+
+    /// @notice S5 item 1: a loss well above the venue's one-call threshold (35% of debt, comfortably
+    ///         past the ~12.67%-of-debt safe-removal cap) must let rebalance() SUCCEED with a
+    ///         PARTIAL step -- coverage strictly improves and strategyDebtRebalanceNeeded() stays
+    ///         true -- instead of reverting with no progress at all (the pre-fix behaviour).
+    function test_coverageUp_deficitTooLarge_reverts_xaut() public {
+        _deployVault();
+        _depositAs(user1, _unit() * 5);
+        _refreshOracles();
+
+        // Push LTV to the top of the deadband (60% -> ~62-63%) via a collateral price cut, which
+        // tightens the health margin above healthFloor and shrinks the safe-removal cap per S1.
+        (uint80 roundId, int256 answer,,, uint80 answeredInRound) =
+            IChainlinkOracle(_collateralPriceOracle()).latestRoundData();
+        int256 downPrice = (answer * 955) / 1000; // -4.5%
+        vm.mockCall(
+            _collateralPriceOracle(),
+            abi.encodeWithSelector(IChainlinkOracle.latestRoundData.selector),
+            abi.encode(roundId, downPrice, block.timestamp, block.timestamp, answeredInRound)
+        );
+        uint256 ltvAfterCut = loanManager.getCurrentLTV();
+        console.log("deficitTooLarge: LTV after price cut(bps)=%d", ltvAfterCut / 1e14);
+        assertLt(ltvAfterCut, vault.targetLtv() + vault.DEADBAND_SPREAD(), "must stay inside the LTV band (else arm 2 fires instead of arm 3)");
+
+        // Large strategy loss -> large deficit, while the safe-removal cap stays small (tight
+        // health margin from the price cut above).
+        IERC20 sdShares = IERC20(address(strategy.stakingVault()));
+        uint256 shares = sdShares.balanceOf(address(strategy));
+        vm.prank(address(strategy));
+        sdShares.transfer(makeAddr("deficitTooLargeLossSink"), (shares * 70) / 100);
+
+        // Re-apply the price cut after the loss re-mock (oracle list mocking would otherwise
+        // restore the real price).
+        vm.mockCall(
+            _collateralPriceOracle(),
+            abi.encodeWithSelector(IChainlinkOracle.latestRoundData.selector),
+            abi.encode(roundId, downPrice, block.timestamp, block.timestamp, answeredInRound)
+        );
+
+        assertTrue(vault.strategyDebtRebalanceNeeded(), "setup must put coverage out of band");
+        int256 health0 = loanManager.healthCalculator(0, 0);
+        int256 healthFloor = (loanManager.MIN_HEALTH() * 105) / 100;
+        console.log("deficitTooLarge: health0=%d healthFloor=%d", uint256(health0), uint256(healthFloor));
+        assertGe(health0, healthFloor, "must NOT be in the degenerate (below-floor) case -- that's a separate test");
+
+        vm.expectPartialRevert(ZenjiCoreLib.CoverageDeficitTooLarge.selector);
+        vault.rebalance();
+    }
+
+    /// @notice Arm 3 is ALL-OR-NOTHING above the venue's health threshold: it must revert with the
+    ///         actionable CoverageDeficitTooLarge rather than take a partial step, and the vault
+    ///         must be recoverable by the operator escape from exactly that state.
+    /// @dev Partial progress was implemented and REJECTED here: on this vault a 35% loss took one
+    ///      successful step (coverage 6496 -> 7424 bps) but dragged LTV 60.00% -> 56.78%, past
+    ///      lowerBand (57%). The next call then dispatched to arm 1, whose
+    ///      enforceCoverageAfterIncrease guard refuses while coverage is ~74%, deadlocking
+    ///      rebalance() permanently (a 30-day warp moved LTV only to 56.97%). It also cost ~5 bps
+    ///      on top of the 3-13 bps setIdle/unIdle round trip that was still required afterwards.
+    function test_coverageUp_aboveThreshold_revertsThenIdleUnidleRecovers_xaut() public {
+        _deployVault();
+        _depositAs(user1, _baseDeposit());
+        _refreshOracles();
+
+        IERC20 sdShares = IERC20(address(strategy.stakingVault()));
+        uint256 shares = sdShares.balanceOf(address(strategy));
+        vm.prank(address(strategy));
+        sdShares.transfer(makeAddr("aboveThresholdSink"), (shares * 35) / 100); // ~35% loss
+
+        _refreshOracles();
+        assertTrue(vault.strategyDebtRebalanceNeeded(), "setup must put coverage out of band");
+        uint256 stratBefore = strategy.balanceOf();
+        uint256 debtBefore = loanManager.getCurrentDebt();
+        console.log("above-threshold start ratio(bps)=%d", vault.strategyToDebtRatio() / 1e14);
+
+        vm.expectPartialRevert(ZenjiCoreLib.CoverageDeficitTooLarge.selector);
+        vault.rebalance();
+
+        // All-or-nothing: the refused call must leave the position untouched.
+        assertEq(strategy.balanceOf(), stratBefore, "reverted arm 3 must not touch the strategy");
+        assertEq(loanManager.getCurrentDebt(), debtBefore, "reverted arm 3 must not touch debt");
+
+        // The error is actionable because this escape works from exactly this state.
+        _refreshOracles();
+        vm.prank(owner);
+        vault.setIdle(true);
+        _refreshOracles();
+        vm.prank(owner);
+        vault.setIdle(false);
+        _refreshOracles();
+
+        console.log("after idle/unidle ratio(bps)=%d", vault.strategyToDebtRatio() / 1e14);
+        assertFalse(
+            vault.strategyDebtRebalanceNeeded(),
+            "setIdle/unIdle must recover a vault that arm 3 refused"
         );
     }
 }

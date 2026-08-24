@@ -11,6 +11,15 @@ import { SafeTransferLib } from "./SafeTransferLib.sol";
 /// @notice External library for Zenji admin and emergency operations
 /// @dev Functions are `external` so they deploy separately and reduce Zenji bytecode.
 ///      Called via DELEGATECALL, so `address(this)` is the vault and token transfers work correctly.
+/// @notice Minimal accessor for the venue-specific health floor. AaveLoanManager and
+///         LlamaLoanManager both already declare `int256 public constant MIN_HEALTH`, which
+///         Solidity auto-implements as an external view getter with this exact selector -- this
+///         lets rebalanceCoverageUp read it without adding MIN_HEALTH() to ILoanManager (which
+///         would force every ILoanManager mock in the test suite to implement it).
+interface IMinHealth {
+    function MIN_HEALTH() external view returns (int256);
+}
+
 library ZenjiCoreLib {
     using SafeTransferLib for IERC20;
 
@@ -22,6 +31,13 @@ library ZenjiCoreLib {
     ///      invokes ISwapper.swapCollateralForDebt directly MUST re-apply this bound.
     uint256 internal constant MIN_SWAP_OUT_BPS = 9500;
 
+    /// @notice Safety margin (percent, /100) applied on top of the venue's own MIN_HEALTH when
+    ///         gating the feasibility probe in rebalanceCoverageUp. LlamaLend's remove_collateral
+    ///         can revert on its own band bound BEFORE our MIN_HEALTH check fires, so a projection
+    ///         that only just clears MIN_HEALTH is not proof the venue will accept it; the margin
+    ///         also absorbs oracle drift between the projection and execution.
+    uint256 internal constant HEALTH_FLOOR_MARGIN_PCT = 105; // MIN_HEALTH * 105 / 100
+
     error InvalidAddress();
     error InsufficientWithdrawal();
     error InsufficientDeposit();
@@ -29,6 +45,14 @@ library ZenjiCoreLib {
     error CoverageDidNotImprove();
     error SwapperUnderperformed(uint256 expected, uint256 actual);
     error DeficitExceedsCollateral(uint256 needed, uint256 available);
+    /// @notice Closing the coverage deficit needs a collateral removal the lending venue will not
+    ///         accept at current health. `collateralRequired` is the removal that was refused.
+    ///         ACTIONABLE: the vault cannot self-heal from here -- an operator should run
+    ///         setIdle(true)/setIdle(false), which drives debt to 0 (coverage becomes
+    ///         type(uint256).max, excluded from both deadbands) and re-levers at parity for ~1 bp.
+    ///         Distinguishable from SwapperUnderperformed (transient, retry) and the venue's own
+    ///         HealthTooLow (opaque).
+    error CoverageDeficitTooLarge(uint256 deficit, uint256 collateralRequired);
 
     event EmergencyYieldRedeemed(uint256 debtAssetReceived);
     event EmergencyLoanUnwound(uint256 collateralRecovered, uint256 debtRecovered);
@@ -257,16 +281,54 @@ library ZenjiCoreLib {
     ///      removes collateral, swaps it to the debt asset, and repays — never touching the
     ///      strategy — which is the one operation that actually shrinks `D - S`.
     ///
-    ///      Steps: size collateral for the deficit via quoteCollateralForDebt (which ALREADY
+    ///      Steps: size collateral for the FULL deficit via quoteCollateralForDebt (which ALREADY
     ///      grosses up by the swapper's own slippage -- do not buffer again; reverts
-    ///      DeficitExceedsCollateral rather than capping) -> removeCollateral +
-    ///      transferCollateral to pull it to the vault (health is
-    ///      enforced by the venue adapter: Aave reverts on MIN_HEALTH, LlamaLend enforces
-    ///      internally) -> swap collateral -> debt asset via the configured swapper (floored HERE against
-    ///      the oracle at MIN_SWAP_OUT_BPS -- the swappers carry no end-to-end floor of their own)
-    ///      -> repay, capped at the deficit so coverage cannot overshoot the
-    ///      +spread bound (any surplus debt asset is left at the vault, see below) -> postcondition:
-    ///      coverage must have STRICTLY increased, or the call reverts.
+    ///      DeficitExceedsCollateral if the desired amount exceeds total collateral) -> cap the
+    ///      removal to what current health allows via a binary-searched safe-removal cap (below;
+    ///      M-02 partial-progress fix) -> if the safe cap can't close a meaningful fraction of the
+    ///      deficit, revert CoverageDeficitTooLarge instead of grinding or reverting opaquely ->
+    ///      removeCollateral + transferCollateral to pull it to the vault (health is ALSO enforced
+    ///      by the venue adapter as a backstop: Aave reverts on MIN_HEALTH, LlamaLend enforces
+    ///      internally -- the safe-removal cap should keep us clear of it with margin to spare) ->
+    ///      swap collateral -> debt asset via the configured swapper (floored HERE against the
+    ///      oracle at MIN_SWAP_OUT_BPS -- the swappers carry no end-to-end floor of their own) ->
+    ///      repay, capped at the deficit so coverage cannot overshoot the +spread bound (any
+    ///      surplus debt asset is left at the vault, see below) -> postcondition: coverage must
+    ///      have STRICTLY increased, or the call reverts.
+    ///
+    ///      PARTIAL PROGRESS + MULTI-TICK CONVERGENCE (M-02 follow-up): when the full deficit
+    ///      cannot be closed in one call without breaching health, this function now closes as
+    ///      much as is SAFE (bounded by the health floor below) rather than reverting with no
+    ///      progress at all. A partial step repays `r < deficit`; coverage strictly rises (the
+    ///      postcondition still enforces this), LTV falls, and the health headroom for the NEXT
+    ///      call grows because debt is lower -- so successive keeper ticks take larger bites and
+    ///      convergence is monotone and accelerating. The keeper re-evaluates every tick and
+    ///      `strategyDebtRebalanceNeeded()` stays true until the band is reached, so no new
+    ///      triggering mechanism is required. See COVERAGE_PARTIAL_PROGRESS_PLAN.md S 3.
+    ///
+    ///      SAFE-REMOVAL CAP: `ILoanManager.healthCalculator(int256 dCollateral, int256 dDebt)` is
+    ///      used to project health AFTER removing `c` collateral but BEFORE the repay
+    ///      (`dDebt = 0` deliberately -- the venue's own check runs in that exact order, so the
+    ///      projection must model that exact intermediate state, not the post-repay state). Health
+    ///      is monotonically non-increasing in removed collateral, so the largest safe `c` is found
+    ///      by a fixed 8-iteration "largest c such that predicate(c) holds" binary search over
+    ///      `[0, cDesired]` -- bounded gas, no unbounded loop, 1/256 precision on cDesired.
+    ///      `healthFloor = MIN_HEALTH * HEALTH_FLOOR_MARGIN_PCT / 100` carries a margin above the
+    ///      venue's own MIN_HEALTH because LlamaLend's `remove_collateral` can revert on its own
+    ///      band bound BEFORE our MIN_HEALTH check ever fires (observed in
+    ///      `test_llamaRemoveCollateral_healthTooLow_reverts`) -- a projection that only just
+    ///      clears MIN_HEALTH is not proof the venue will accept it. The margin also absorbs oracle
+    ///      drift between this projection and execution. `MIN_HEALTH` differs per venue (Aave
+    ///      1.1e18, LlamaLend 1e17) and is read from the loan manager rather than hardcoded.
+    ///
+    ///      ALL-OR-NOTHING: arm 3 removes the full required collateral or reverts. Partial steps
+    ///      were implemented, measured, and rejected -- they reintroduced the deadlock this arm
+    ///      exists to fix (a partial repay drags LTV past lowerBand, handing priority to arm 1,
+    ///      whose coverage guard then refuses) and cost more than the operator escape they were
+    ///      meant to replace. See the detailed note at the feasibility probe in the body.
+    ///      `CoverageDeficitTooLarge(deficit, collateralRequired)` is the actionable signal M-02
+    ///      asked for -- distinguishable from `SwapperUnderperformed` (transient, retry) and
+    ///      `HealthTooLow` (opaque, venue-level) -- and tells the operator to run setIdle/unIdle.
     ///
     ///      ACCEPTED RISK (H-01): `deficit` is spot-manipulable. balanceOf() is
     ///      min(vpBased, exitBased); the VP leg is clamped to +/-0.5% but exitBased
@@ -275,13 +337,16 @@ library ZenjiCoreLib {
     ///      the collateral swap uses a different venue than the LP pool AND is floored at
     ///      MIN_SWAP_OUT_BPS, the bounty is not farmable, and the skew cost exceeds the gain by
     ///      orders of magnitude. See "Accepted Risk — H-01" in AUDIT_CoverageRebalance_v2.md for
-    ///      the full analysis and the four conditions that require it to be revisited.
+    ///      the full analysis and the four conditions that require it to be revisited. The
+    ///      safe-removal cap does not change this analysis: a manufactured deficit now yields a
+    ///      bounded partial sale (still floored at MIN_SWAP_OUT_BPS) rather than a revert.
     ///
     ///      Read that last guard precisely: it bounds the RATIO, not value. Arm 3 never touches S,
     ///      so `newCoverage > startCoverage` reduces to `toRepay > 0` and the collateral spent
     ///      never enters the expression. It prevents the old bug class (an operation that looks
     ///      corrective while moving the ratio backwards); it does NOT bound value loss. The value
-    ///      bound is the MIN_SWAP_OUT_BPS floor on the swap.
+    ///      bound is the MIN_SWAP_OUT_BPS floor on the swap. This holds unchanged on the partial
+    ///      path: a partial step that does not improve coverage still reverts.
     ///
     ///      SURPLUS HANDLING: any debt-asset surplus after the capped repay stays at the vault
     ///      rather than being redeployed into the strategy. Redeploying would interact with the
@@ -306,7 +371,6 @@ library ZenjiCoreLib {
         IERC20 debtAsset,
         IERC20 collateralAsset,
         ISwapper swapper,
-        uint256 maxSlippage,
         uint256 precision
     ) external returns (uint256 newLastStrategyBalance) {
         uint256 debt = loanManager.getCurrentDebt();
@@ -325,19 +389,60 @@ library ZenjiCoreLib {
 
         uint256 startCoverage = (strategyBalance * precision) / debt;
 
-        // 1. Size the collateral. quoteCollateralForDebt ALREADY grosses up by the swapper's own
-        //    slippage (`collateralOut * P / (P - slippage) + 1`), so do NOT buffer again here --
-        //    doing so over-removes collateral on every call.
-        uint256 c = swapper.quoteCollateralForDebt(deficit);
-        if (c == 0) return strategyBalance;
+        // 1. Size the collateral for the FULL deficit. quoteCollateralForDebt ALREADY grosses up
+        //    by the swapper's own slippage (`collateralOut * P / (P - slippage) + 1`), so do NOT
+        //    buffer again here -- doing so over-removes collateral on every call.
+        uint256 cDesired = swapper.quoteCollateralForDebt(deficit);
+        if (cDesired == 0) return strategyBalance;
         //    Do not silently cap at total collateral: that hands the venue an unsatisfiable
         //    removal and reverts opaquely. Surface it instead -- a deficit this large is an
         //    insolvency signal, not drift, and wants manual handling (setIdle/unIdle).
         uint256 currentCollateral = loanManager.getCurrentCollateral();
-        if (c > currentCollateral) revert DeficitExceedsCollateral(c, currentCollateral);
+        if (cDesired > currentCollateral) {
+            revert DeficitExceedsCollateral(cDesired, currentCollateral);
+        }
 
-        // 2. Free the collateral to the vault. Health is enforced by the venue adapter (Aave
-        //    reverts on MIN_HEALTH; LlamaLend enforces internally).
+        // 1b. Feasibility probe. Arm 3 removes the FULL cDesired or nothing at all.
+        //
+        //     PARTIAL PROGRESS WAS TRIED AND REJECTED (measured, not theorised). A safe-removal
+        //     binary search that took a bounded partial step REINTRODUCED the very deadlock this
+        //     arm exists to fix: on XAUT/Aave a 35% loss took one successful step (coverage
+        //     6496 -> 7424 bps) but dragged LTV 60.00% -> 56.78%, past lowerBand (57%). The next
+        //     call therefore dispatched to arm 1, whose enforceCoverageAfterIncrease guard refuses
+        //     while coverage is still 74%, and rebalance() reverted permanently -- a 30-day warp
+        //     moved LTV only to 56.97%, so interest never rescues it. It also cost MORE than the
+        //     escape it was meant to replace: ~5 bps for the partial tick, and setIdle/unIdle
+        //     (3-13 bps) still required afterwards. The premise it broke is stated in
+        //     rebalance()'s NatSpec: arm 3 must reach parity in ONE call, or arm 1 takes priority
+        //     with coverage still out of band. Do not reintroduce partial steps without also
+        //     addressing dispatch order.
+        //
+        //     What remains is the useful half: a single projection probe so an infeasible removal
+        //     surfaces an ACTIONABLE error naming the operator's next move, instead of an opaque
+        //     venue-level HealthTooLow.
+        //
+        //     VENUE ASYMMETRY (measured): this probe is meaningful on Aave, whose healthCalculator
+        //     is a true projection over oracle values. On LlamaLend the projection is
+        //     near-insensitive to d_collateral -- removing 1% vs 5% of collateral moved health by
+        //     ~1e-11 relative -- so it effectively always passes there and the real bound stays the
+        //     venue's own band check plus the MIN_HEALTH guard in removeCollateral. That is exactly
+        //     the pre-existing LlamaLend behaviour, which already absorbs a 25% loss in one call.
+        //
+        //     NOTE: probe with healthCalculator, never healthCalculator(0, 0) as a current-health
+        //     proxy. Curve's health_calculator is built for CHANGES and returns -1e18 on a
+        //     zero-delta call while health(user, true) reports +0.449e18 on the same position.
+        int256 healthFloor =
+            (IMinHealth(address(loanManager)).MIN_HEALTH() * int256(HEALTH_FLOOR_MARGIN_PCT)) / 100;
+        // Safe cast: cDesired <= currentCollateral, a real token balance many orders of magnitude
+        // below type(int256).max.
+        if (loanManager.healthCalculator(-int256(cDesired), 0) < healthFloor) {
+            revert CoverageDeficitTooLarge(deficit, cDesired);
+        }
+        uint256 c = cDesired;
+
+        // 2. Free the collateral to the vault. Health is ALSO enforced by the venue adapter as a
+        //    backstop (Aave reverts on MIN_HEALTH; LlamaLend enforces internally) -- the
+        //    safe-removal cap above should keep us clear of it with margin to spare.
         loanManager.removeCollateral(c);
         loanManager.transferCollateral(address(this), c);
 

@@ -622,15 +622,24 @@ manufactured one unattractive.
 ## Residual risk (explicitly retained)
 - **Griefing has no cost floor for a motivated adversary.** The economics deter profit-seekers, not
   a competitor or someone already positioned in the pool who partially recoups the skew.
-- M-01 introduced a transient interaction: a large manufactured deficit now trips `MIN_HEALTH`
-  inside `removeCollateral`, so `rebalance()` reverts instead of transacting. Contained to the
-  attacker's own transaction (they unskew within it), so no lasting DoS — arguably the guard working.
+- ~~M-01 introduced a transient interaction: a large manufactured deficit now trips `MIN_HEALTH`
+  inside `removeCollateral`, so `rebalance()` reverts instead of transacting.~~
+  **SUPERSEDED by the M-02 partial-progress change** (`COVERAGE_PARTIAL_PROGRESS_PLAN.md`,
+  `AUDIT_PartialProgress.md`). A large manufactured deficit no longer reverts — it now takes a
+  BOUNDED PARTIAL collateral sale, capped by a safe-removal search against
+  `MIN_HEALTH * 105 / 100`. Do not credit that revert as an incidental guard against H-01; it is
+  gone. Re-audited and the acceptance still holds — per-call damage is strictly TIGHTER than
+  before (health floor `1.05 * MIN_HEALTH` vs `MIN_HEALTH`), total volume stays repay-capped at
+  `deficit`, and the bounty is not farmable per tick. The change removed the attacker's need to
+  size the deficit precisely (convenience), not their reach (capability).
 
 ## Monitoring
 - Alert on arm-3 rebalances (`RebalancePerformed` with coverage as the trigger) — especially any
   occurring while the LP pool is materially imbalanced.
-- Alert on repeated reverting `rebalance()` calls: that is the signature of both this and the
-  M-02 liveness gap.
+- **Alert on repeated SUCCEEDING partial arm-3 rebalances** — since the partial-progress change
+  that, not a reverting call, is the signature of a large deficit being worked down over several
+  ticks. Repeated reverts now indicate `CoverageDeficitTooLarge` (below the 10% progress floor —
+  needs `setIdle`/`unIdle`) or a transient `SwapperUnderperformed` (retryable).
 
 ## Revisit if ANY of these change
 1. **TVL grows** such that a plausible bounty approaches the skew cost.

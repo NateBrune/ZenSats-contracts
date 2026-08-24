@@ -685,7 +685,7 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
         } else if (ratioTooLow) {
             increased = false;
             lastStrategyBalance = ZenjiCoreLib.rebalanceCoverageUp(
-                loanManager, yieldStrategy, debtAsset, collateralAsset, swapper, maxSlippage, PRECISION
+                loanManager, yieldStrategy, debtAsset, collateralAsset, swapper, PRECISION
             );
             newLtv = loanManager.getCurrentLTV();
         } else if (ratioTooHigh) {
