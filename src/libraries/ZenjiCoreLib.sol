@@ -501,9 +501,16 @@ library ZenjiCoreLib {
         //    re-applied here against the oracle-implied value of the collateral we are spending.
         //    This is also the value bound on the whole operation: collateral leaves, debt tokens
         //    arrive, and the gap between them is capped at (100 - MIN_SWAP_OUT_BPS/100)%.
+        //    Measure the output as a VAULT-SIDE BALANCE DELTA, not the swapper's return value.
+        //    Same reasoning as arm 4 and Zenji._swapRemainingDebtToCollateral: the return value is
+        //    the swapper's own claim about a swap it just performed, and the swapper is
+        //    governance-rotatable behind a timelock. Arm 4 was fixed for this (audit L-01); arm 3
+        //    was left inconsistent until audit L-NEW-1 caught it.
         uint256 expectedDebt = (loanManager.getCollateralValue(c) * MIN_SWAP_OUT_BPS) / 10000;
+        uint256 debtBefore = debtAsset.balanceOf(address(this));
         collateralAsset.safeTransfer(address(swapper), c);
-        uint256 received = swapper.swapCollateralForDebt(c);
+        swapper.swapCollateralForDebt(c);
+        uint256 received = debtAsset.balanceOf(address(this)) - debtBefore;
         if (received < expectedDebt) revert SwapperUnderperformed(expectedDebt, received);
 
         // 4. Repay, capped at the deficit so coverage cannot overshoot the +spread bound. Any

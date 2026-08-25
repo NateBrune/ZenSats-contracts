@@ -128,6 +128,12 @@ contract DeployXautAaveUsdtStakeDao is Script {
         loanManager.initializeVault(address(vault));
         strategy.initializeVault(address(vault));
         swapper.setVault(address(vault));
+        // REQUIRED: CrvToCrvUsdSwapper.swap() reverts Unauthorized until this is set ("fully
+        // locked until setAuthorizedCaller is called"). BaseCurveStakeDaoStrategy wraps the
+        // harvest swap in try/catch, so omitting this does NOT revert -- CRV simply never
+        // compounds, CrvSwapDeferred fires on every harvest, and the vault silently
+        // underperforms. Both LlamaLend deploy scripts do this; this script did not.
+        crvSwapper.setAuthorizedCaller(address(strategy));
 
         vm.stopBroadcast();
 

@@ -67,8 +67,12 @@ received = yieldStrategy.withdraw(surplus);
 //    Slippage-check the withdrawal the way arm 3 checks its own legs.
 
 // 2. Convert debt -> collateral, ORACLE-FLOORED. See S 2.3.
+// Measure the output as a VAULT-SIDE BALANCE DELTA, not the swapper's return value: the
+// swapper is governance-rotatable, and this matches Zenji._swapRemainingDebtToCollateral.
+collateralBefore = collateralAsset.balanceOf(address(this));
 debtAsset.safeTransfer(address(swapper), received);
-collateralOut = swapper.swapDebtForCollateral(received);
+swapper.swapDebtForCollateral(received);
+collateralOut = collateralAsset.balanceOf(address(this)) - collateralBefore;
 if (collateralOut < floor) revert SwapperUnderperformed(floor, collateralOut);
 
 // 3. Post it as collateral.

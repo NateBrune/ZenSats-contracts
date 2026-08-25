@@ -272,7 +272,26 @@ cast send <SWAPPER> "setVault(address)" <VAULT> \
 
 ---
 
-### 9) (Optional) Configure Additional Parameters
+### 9) REQUIRED — apply the deposit cap
+
+The deploy script leaves `depositCap = 0`, which means **unlimited**. The advised cap is derived
+from live exit liquidity in [DEPOSIT_CAPS.md](DEPOSIT_CAPS.md) — leaving it unset lets the vault
+take deposits it cannot exit.
+
+```bash
+# 95 XAUT (XAUT has 6 decimals). Must be sent by GOV.
+cast send <VAULT> "setParam(uint8,uint256)" 2 95000000 \
+  --rpc-url $MAINNET_RPC_URL --private-key $GOV_PRIVATE_KEY
+
+cast call <VAULT> "depositCap()(uint256)" --rpc-url $MAINNET_RPC_URL   # -> 95000000
+```
+
+> **Timelock direction**: imposing or lowering a cap applies immediately; **raising or removing**
+> one is adverse and goes through the parameter timelock. Plan increases ahead of demand.
+
+---
+
+### 10) (Optional) Configure Additional Parameters
 The vault starts with `targetLtv = 60e16` and default slippage. Adjust if needed:
 
 ```bash
