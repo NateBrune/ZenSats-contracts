@@ -155,10 +155,35 @@ whether a manufactured surplus can now force a collateral swap — note the arm-
 **no upward manipulation vector** (`vpBased` tracks `get_virtual_price()`, which swaps do not move),
 so re-confirm that still holds once the arm has a swap in it.
 
+## 8b. RESOLVED — partial skims are safe here (unlike arm 3)
+
+Capping the skim (e.g. at Aave supply headroom) leaves coverage above band and LTV lower, which
+hands the next tick to arm 1. On the LOW side that is exactly what deadlocked arm-3 partial
+progress. On the HIGH side it does not, because **both arms move coverage the same way**:
+
+| Arm | Effect when coverage > 1 |
+|---|---|
+| arm 4 skim | `S` down, `D` same -> coverage DOWN |
+| arm 1 lever-up | `(S+b)/(D+b)` moves TOWARD 1 from above -> coverage DOWN |
+
+e.g. coverage 1.35 with arm 1 borrowing 0.5·D -> 1.2333. They cooperate rather than fight.
+
+The asymmetry is arm 1's `enforceCoverageAfterIncrease` guard: it refuses to lever up while
+coverage < 0.97, which is what blocked recovery on the low side. **There is no equivalent guard on
+the high side**, so arm 1 is always available to keep helping.
+
+Therefore: **cap the skim at supply headroom and accept partial progress.** Reverting instead would
+brick arm 4 exactly when the vault is most profitable. The postcondition (S 2.2 step 4) is what
+prevents a capped-to-zero skim from spinning as a silent no-op — the failure mode of the code being
+replaced.
+
+**Still verify on a fork** rather than trusting this argument: the arm-3 partial-progress reasoning
+also looked sound and was falsified by a live run.
+
 ## 9. Open decisions
 
 - Skim to parity (1.00) or to just inside the band? Parity maximises headroom; band-edge minimises
   the swapped amount. Spec says parity; revisit if S 6.7 shows the round trip is expensive.
-- Aave supply-cap behaviour: cap the skim, or revert with a distinct error?
-- Should the skimmed collateral be posted to the lender at all, or held in the vault as idle
-  collateral? Posting reduces LTV and invites the arm-1 handoff; holding does not.
+- ~~Aave supply-cap behaviour~~ — RESOLVED in S 8b: cap the skim, accept partial progress.
+- ~~Post to the lender or hold idle?~~ — RESOLVED: post to the lender (owner's call). The arm-1
+  handoff this creates is benign per S 8b.
