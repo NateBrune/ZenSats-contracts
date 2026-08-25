@@ -604,7 +604,7 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
     ///      | 1 | ltv < lowerBand      | _adjustLtv(up)        | -> target  | -> parity       |
     ///      | 2 | ltv > upperBand      | _adjustLtv(down)      | -> target  | away from parity|
     ///      | 3 | coverage < 1-spread  | rebalanceCoverageUp   | rises      | -> parity       |
-    ///      | 4 | coverage > 1+spread  | rebalanceCoverageDown | rises      | -> parity       |
+    ///      | 4 | coverage > 1+spread  | rebalanceCoverageDown | falls      | -> parity       |
     ///
     ///      Arm 1 borrows and deploys the proceeds, moving numerator and denominator together, so
     ///      it pulls coverage toward parity. It is additionally guarded by
@@ -624,6 +624,17 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
     ///      configured) remains setIdle(true)/setIdle(false), which drives debt to 0 (coverage
     ///      becomes type(uint256).max, excluded from both guards) and re-levers at parity; measured
     ///      cost ~1 bp at 1 WBTC.
+    ///
+    ///      Arm 4 skims the strategy SURPLUS into collateral (see rebalanceCoverageDown NatSpec).
+    ///      It used to borrow more debt and deposit it into the same strategy, raising S and D
+    ///      together — post-call coverage was `(S+X)/(D+X)`, not the intended `S/(D+X)`, so the
+    ///      recurrence `c' = 2.03 - 1.03/c` converged asymptotically TOWARD the band edge and never
+    ///      crossed it (measured on a live fork: 105.82% -> 103.28% over 60 calls, still out of
+    ///      band). This is the exact mirror of the arm-3 fix: arm 3 funds a repay FROM collateral;
+    ///      arm 4 skims TO collateral. Debt is never touched, so — unlike the replaced
+    ///      implementation — LTV falls rather than rises, handing the next tick to arm 1 to
+    ///      re-lever. Do not reintroduce a borrow-and-deposit design here; see
+    ///      rebalanceCoverageDown's NatSpec for the full derivation.
     function rebalance() external nonReentrant {
         if (emergencyMode) revert EmergencyModeActive();
         if (!loanManager.loanExists()) revert RebalanceNotNeeded();
@@ -689,15 +700,12 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
             );
             newLtv = loanManager.getCurrentLTV();
         } else if (ratioTooHigh) {
-            increased = true;
+            // Arm 4 skims strategy surplus into collateral without touching debt, so LTV falls
+            // (not rises, as the replaced borrow-and-deposit design did) — see rebalance()'s
+            // dispatch table NatSpec.
+            increased = false;
             lastStrategyBalance = ZenjiCoreLib.rebalanceCoverageDown(
-                loanManager,
-                yieldStrategy,
-                debtAsset,
-                maxStrategyRatio,
-                upperBand,
-                maxSlippage,
-                PRECISION
+                loanManager, yieldStrategy, debtAsset, collateralAsset, swapper, maxSlippage, PRECISION
             );
             newLtv = loanManager.getCurrentLTV();
         }

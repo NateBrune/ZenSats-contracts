@@ -20,6 +20,14 @@ interface IMinHealth {
     function MIN_HEALTH() external view returns (int256);
 }
 
+/// @notice Minimal accessor for a swapper's self-reported slippage tolerance. Mirrors the
+///         file-scope `ISwapperSlippageConfig` in Zenji.sol (same selector, `slippage()`), kept
+///         as a local minimal interface rather than imported to avoid a circular import between
+///         Zenji.sol and this library -- same rationale as `IMinHealth` above.
+interface ISwapperSlippage {
+    function slippage() external view returns (uint256);
+}
+
 library ZenjiCoreLib {
     using SafeTransferLib for IERC20;
 
@@ -63,6 +71,11 @@ library ZenjiCoreLib {
     event FeesWithdrawn(address indexed recipient, uint256 amount);
     event RebalanceBountyPaid(address indexed keeper, uint256 amount);
     event StrategyDeposit(address indexed strategy, uint256 debtAmount, uint256 depositedAmount);
+    /// @notice Arm-4 skim posted `posted` of `available` collateral to the lender. `posted <
+    ///         available` means the venue refused the full amount (supply cap / band bound) and the
+    ///         remainder is idle at the vault. Silent partial posting would otherwise be
+    ///         indistinguishable from a clean run (audit L-03).
+    event CoverageSkimPosted(uint256 available, uint256 posted);
 
     /// @notice Execute emergency step: 0=withdrawYield, 1=unwindLoan, 2=completeLiquidation
     /// @return newLastStrategyBalance Updated lastStrategyBalance value
@@ -516,16 +529,93 @@ library ZenjiCoreLib {
         return newStrategyBalance;
     }
 
-    /// @notice Decrease strategy/debt coverage when strategy assets are too far above debt.
-    /// @dev Borrows additional debt bounded by LTV upper deadband and deploys to strategy.
-    ///      NOTE: _accrueYieldFees is intentionally skipped — rebalance() already called it.
+    /// @notice Decrease strategy/debt coverage when strategy assets are too far above debt, by
+    ///         skimming the surplus out of the strategy and posting it as collateral.
+    /// @dev NOTE: _accrueYieldFees is intentionally skipped — rebalance() already called it.
+    ///
+    ///      WHY THIS MUST SKIM TO COLLATERAL (do not "fix" this by borrowing-and-depositing
+    ///      again): the old implementation borrowed `X` debt and deposited it into the SAME
+    ///      strategy, raising `S` by exactly what it raised `D`. Post-call coverage is
+    ///      `(S+X)/(D+X)`, not the intended `S/(D+X)` -- the recurrence `c' = 2.03 - 1.03/c` has
+    ///      fixed points 1.00 and 1.03, so repeated calls converge asymptotically TOWARD the band
+    ///      edge and never cross it. Measured on a live fork: WBTC/Llama coverage moved
+    ///      105.82% -> 103.28% over 60 consecutive `rebalance()` calls, still out of band; XAUT/Aave
+    ///      sawtoothed against arm 2 and never cleared either bound. Correct sizing does not rescue
+    ///      the borrow-and-deploy design either: closing the ratio purely by borrowing more implies
+    ///      levering 2.33x current debt at 110% coverage and 10.7x at 135%, so the LTV ceiling
+    ///      always binds first. A coverage surplus cannot be closed by levering up -- the amount
+    ///      that is actually wrong is the surplus itself, so that is what must move. This is the
+    ///      exact mirror of the shipped arm-3 fix (rebalanceCoverageUp): arm 3 funds a repay from
+    ///      collateral to shrink `D - S`; arm 4 skims strategy surplus into collateral to shrink
+    ///      `S - D`. Both move the smallest sufficient amount and target PARITY (1.00), never the
+    ///      band edge (1.03) -- at the moment of trigger the surplus above the edge is zero by
+    ///      definition, so targeting the edge would skim nothing and re-trigger immediately, the
+    ///      same degenerate class as the bug being fixed here.
+    ///
+    ///      Steps: size the skim as `S - debt` (lands at exactly 1.00 coverage in ONE call) ->
+    ///      dust floor (same convention as arm 3) -> withdraw the surplus from the strategy
+    ///      (slippage-checked the way adjustLtv's decrease path checks its own withdrawal) -> swap
+    ///      debt asset -> collateral asset via the configured swapper (floored HERE against the
+    ///      oracle -- see below, this is a DIRECT ISwapper call so it bypasses the loan managers'
+    ///      SwapperUnderperformed check) -> post the proceeds as collateral, capped defensively at
+    ///      whatever the lending venue will accept (see SUPPLY-CAP HANDLING below) -> postcondition:
+    ///      coverage must have STRICTLY decreased, or the call reverts.
+    ///
+    ///      ORACLE FLOOR (mirrors the C-01 fix on arm 3, and Zenji._swapRemainingDebtToCollateral):
+    ///      this is a direct ISwapper call from the vault, so it bypasses
+    ///      LlamaLoanManager/AaveLoanManager._swapCollateralForDebt and their SwapperUnderperformed
+    ///      check entirely -- the swappers carry no end-to-end floor of their own and document the
+    ///      loan manager's check as the hard floor. The floor here is
+    ///      `max(swapper.slippage(), maxSlippage * 2)` against `loanManager.getDebtValue(received)`,
+    ///      not a naive `maxSlippage`-only floor: `getDebtValue` reads a direct oracle while the
+    ///      swapper traverses a (possibly multi-hop) path, so the two prices can legitimately
+    ///      diverge by up to ~2x maxSlippage even on a fair swap -- a naive floor would reject good
+    ///      swaps. The swapper's self-reported slippage is clamped to 5% (matching
+    ///      BaseSwapper.MAX_SLIPPAGE / the clamp in Zenji._swapRemainingDebtToCollateral) so a
+    ///      malicious or misconfigured swapper cannot hollow out this floor.
+    ///
+    ///      POSTCONDITION BOUNDS THE RATIO, NOT VALUE (per arm-3 C-02, same lesson applies here):
+    ///      `newCoverage < startCoverage` catches an operation that looks corrective while actually
+    ///      moving the ratio the wrong way (or not at all -- e.g. a fully supply-cap-blocked skim,
+    ///      see below). It does NOT bound value loss; that bound is the oracle floor above. Do not
+    ///      mistake one check for the other.
+    ///
+    ///      SUPPLY-CAP HANDLING (failure modes #2 and #4 -- Aave supply cap / LlamaLend band
+    ///      assertion on addCollateral): `ILoanManager` has no view to project a supply cap or read
+    ///      remaining headroom (adding one would force every ILoanManager mock in the test suite to
+    ///      implement it, mirroring the reasoning for `IMinHealth` above), so this cannot be sized
+    ///      up front the way arm 3 sizes its collateral removal against `healthCalculator`. Instead
+    ///      `addCollateral` is attempted defensively: try the full amount; on revert, pull the
+    ///      un-supplied tokens back and retry at half, halving down for a bounded number of
+    ///      attempts. Whatever fraction succeeds is posted; any remainder is left at the vault as
+    ///      idle collateral (same convention as arm 3's SURPLUS HANDLING -- picked up by a
+    ///      subsequent deposit/rebalance cycle) rather than reverting the whole call. Reverting
+    ///      outright would brick arm 4 exactly when the vault is most profitable (a large,
+    ///      cap-constrained surplus), and a *capped-to-zero* skim is not a silent no-op the way the
+    ///      replaced implementation's non-convergent design was: the strategy withdrawal in step 1
+    ///      already happened regardless of how much collateral posting succeeds, so `S` has already
+    ///      fallen and the postcondition still enforces strict improvement. This is safe to leave
+    ///      partial (unlike arm 3, where partial progress was tried and reverted on principle -- see
+    ///      rebalanceCoverageUp's NatSpec): a capped skim leaves coverage above the band and LTV
+    ///      lower, which hands the next tick to arm 1 (LTV-low, levers up). Both arms move coverage
+    ///      the same direction when coverage > 1 (arm 4 skim: S down, D same -> coverage down; arm 1
+    ///      lever-up: `(S+b)/(D+b)` moves toward 1 from above -> coverage down), so they cooperate
+    ///      rather than deadlock -- unlike the low-coverage side, arm 1's
+    ///      `enforceCoverageAfterIncrease` guard has no equivalent block on the high side.
+    ///
+    ///      LTV EFFECT: unlike the replaced implementation (which borrowed, raising LTV), this
+    ///      skims strategy value into collateral without touching debt, so LTV FALLS. See the
+    ///      updated dispatch table in `rebalance()`'s NatSpec.
+    ///
+    ///      If no swapper is configured, this function returns the current strategy balance without
+    ///      reverting (some deployments may not have a swapper set) -- same convention as arm 3.
     /// @return newLastStrategyBalance Updated strategy balance for vault to store.
     function rebalanceCoverageDown(
         ILoanManager loanManager,
         IYieldStrategy yieldStrategy,
         IERC20 debtAsset,
-        uint256 maxStrategyToDebtRatioForBorrow,
-        uint256 maxLtvTarget,
+        IERC20 collateralAsset,
+        ISwapper swapper,
         uint256 maxSlippage,
         uint256 precision
     ) external returns (uint256 newLastStrategyBalance) {
@@ -535,37 +625,89 @@ library ZenjiCoreLib {
         uint256 strategyBalance = yieldStrategy.balanceOf();
         if (strategyBalance <= debt) return strategyBalance;
 
-        uint256 targetDebtAtMaxRatio =
-            (strategyBalance * precision) / maxStrategyToDebtRatioForBorrow;
-        if (targetDebtAtMaxRatio <= debt) return strategyBalance;
+        if (address(swapper) == address(0)) return strategyBalance;
 
-        (uint256 collateral,) = loanManager.getPositionValues();
-        uint256 collateralValue = loanManager.getCollateralValue(collateral);
-        uint256 maxDebtByLtv = (collateralValue * maxLtvTarget) / precision;
-        if (maxDebtByLtv <= debt) return strategyBalance;
+        uint256 surplus = strategyBalance - debt;
 
-        uint256 requiredBorrow = targetDebtAtMaxRatio - debt;
-        uint256 ltvRoom = maxDebtByLtv - debt;
-        uint256 borrowAmount = requiredBorrow < ltvRoom ? requiredBorrow : ltvRoom;
-        if (borrowAmount == 0) return strategyBalance;
+        // Dust floor: not worth paying slippage + a keeper bounty to skim a sub-$1 surplus.
+        // Same convention as rebalanceCoverageUp's deficit dust check.
+        if (surplus <= 10 ** debtAsset.decimals()) return strategyBalance;
 
-        loanManager.borrowMore(0, borrowAmount);
-        uint256 debtBalance = loanManager.getDebtBalance();
-        if (debtBalance == 0) return yieldStrategy.balanceOf();
+        uint256 startCoverage = (strategyBalance * precision) / debt;
 
-        loanManager.transferDebt(address(this), debtBalance);
+        // 1. Withdraw EXACTLY the surplus from the strategy -- deliberately unpadded.
+        //
+        //    Do NOT copy adjustLtv's `* 105 / 100` pad here. That path needs at least `toRepay` in
+        //    hand to complete a repay, so it over-requests on purpose. Arm 4 has no such
+        //    requirement: it skims, and whatever arrives is what gets swapped.
+        //
+        //    Padding is actively harmful here (audit M-01). BaseLPStrategy._withdraw redeems shares
+        //    proportional to the REQUEST, so a 1.05x request destroys 1.05x the strategy value while
+        //    minReceived is measured against the unpadded surplus. That would:
+        //      (a) widen the real exit tolerance to 1 - 0.99/1.05 = 5.71%, against a configured 1% --
+        //          making this leg the weakest link in the whole value bound;
+        //      (b) undershoot parity systematically: post-coverage = 1.05 - 0.05*c, which drops
+        //          below 0.97 once c > 1.60 and hands the next tick to ARM 3 -- the expensive arm,
+        //          and the one carrying accepted risk H-01; and
+        //      (c) waste 5% of every skim on a pointless debt->collateral->borrow round trip.
+        //
+        //    Unpadded, S falls by exactly `surplus`, so coverage lands on 1.0000 for any starting c.
+        uint256 received = yieldStrategy.withdraw(surplus);
+        uint256 minReceived = (surplus * (precision - maxSlippage)) / precision;
+        if (received < minReceived) revert InsufficientWithdrawal();
 
-        // Inline _deployDebtToYield without re-accruing fees
-        debtAsset.ensureApproval(address(yieldStrategy), debtBalance);
-        uint256 balBefore = yieldStrategy.balanceOf();
-        yieldStrategy.deposit(debtBalance);
-        uint256 balAfter = yieldStrategy.balanceOf();
-        uint256 deposited = balAfter > balBefore ? balAfter - balBefore : 0;
-        if (deposited < (debtBalance * (precision - maxSlippage)) / precision) {
-            revert InsufficientDeposit();
+        // 2. Convert debt asset -> collateral, ORACLE-FLOORED. C-01 on arm 3 applies identically
+        //    here: this is a DIRECT ISwapper call, bypassing the loan managers' own
+        //    SwapperUnderperformed check. See ORACLE FLOOR in the function NatSpec for why the
+        //    floor is max(swapper.slippage(), maxSlippage*2) rather than a naive maxSlippage floor.
+        uint256 oracleExpected = loanManager.getDebtValue(received);
+        uint256 swapperSlippage = ISwapperSlippage(address(swapper)).slippage();
+        if (swapperSlippage > 5e16) swapperSlippage = 5e16;
+        uint256 effectiveSlippage =
+            swapperSlippage > maxSlippage * 2 ? swapperSlippage : maxSlippage * 2;
+        uint256 floor = (oracleExpected * (precision - effectiveSlippage)) / precision;
+
+        //    Measure the output as a VAULT-SIDE BALANCE DELTA, not the swapper's return value
+        //    (audit L-01). Both existing precedents do this -- Zenji._swapRemainingDebtToCollateral
+        //    and LlamaLoanManager._swapCollateralForDebt -- because the return value is the
+        //    swapper's own claim about a swap it just performed, and the swapper is rotatable by
+        //    governance behind a timelock.
+        uint256 collateralBefore = collateralAsset.balanceOf(address(this));
+        debtAsset.safeTransfer(address(swapper), received);
+        swapper.swapDebtForCollateral(received);
+        uint256 collateralOut = collateralAsset.balanceOf(address(this)) - collateralBefore;
+        if (collateralOut < floor) revert SwapperUnderperformed(floor, collateralOut);
+
+        // 3. Post the proceeds as collateral. Defensive against a supply cap / venue-side band
+        //    assertion (failure modes #2, #4): try the full amount, then halve down and retry on
+        //    revert, bounded at 6 attempts (>=1/64 granularity of collateralOut). Whatever succeeds
+        //    is posted; any remainder is pulled back and left idle at the vault -- see SUPPLY-CAP
+        //    HANDLING in the function NatSpec for why partial progress is safe here.
+        uint256 candidate = collateralOut;
+        uint256 posted;
+        for (uint256 i = 0; i < 6 && candidate > 0; i++) {
+            collateralAsset.safeTransfer(address(loanManager), candidate);
+            try loanManager.addCollateral(candidate) {
+                posted = candidate;
+                break;
+            } catch {
+                loanManager.transferCollateral(address(this), candidate);
+                candidate = candidate / 2;
+            }
         }
+        emit CoverageSkimPosted(collateralOut, posted);
 
-        return balAfter;
+        // 4. Postcondition: coverage must have strictly decreased, or revert. Bounds the RATIO
+        //    only -- see POSTCONDITION BOUNDS THE RATIO, NOT VALUE in the function NatSpec. This is
+        //    the check arm 4 has never had; its absence is what let the borrow-and-deploy bug
+        //    survive three audits.
+        newLastStrategyBalance = yieldStrategy.balanceOf();
+        uint256 newDebt = loanManager.getCurrentDebt();
+        uint256 newCoverage =
+            newDebt == 0 ? type(uint256).max : (newLastStrategyBalance * precision) / newDebt;
+        if (newCoverage >= startCoverage) revert CoverageDidNotImprove();
+
+        return newLastStrategyBalance;
     }
 
     /// @notice Adjust LTV toward target by borrowing more or repaying debt.

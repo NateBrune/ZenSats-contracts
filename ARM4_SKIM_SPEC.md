@@ -155,30 +155,32 @@ whether a manufactured surplus can now force a collateral swap — note the arm-
 **no upward manipulation vector** (`vpBased` tracks `get_virtual_price()`, which swaps do not move),
 so re-confirm that still holds once the arm has a swap in it.
 
-## 8b. RESOLVED — partial skims are safe here (unlike arm 3)
+## 8b. RESOLVED — a capped POST cannot leave coverage uncorrected
 
-Capping the skim (e.g. at Aave supply headroom) leaves coverage above band and LTV lower, which
-hands the next tick to arm 1. On the LOW side that is exactly what deadlocked arm-3 partial
-progress. On the HIGH side it does not, because **both arms move coverage the same way**:
+An earlier revision of this section argued that a capped skim leaves coverage high and is safe
+because "both arms push coverage down". **That premise was wrong** (audit I-04) and is corrected
+here.
 
-| Arm | Effect when coverage > 1 |
-|---|---|
-| arm 4 skim | `S` down, `D` same -> coverage DOWN |
-| arm 1 lever-up | `(S+b)/(D+b)` moves TOWARD 1 from above -> coverage DOWN |
+The supply cap bounds how much collateral can be POSTED (step 3), not how much is WITHDRAWN from
+the strategy (step 1). The withdrawal always takes the full `surplus`, so `S` falls by the full
+amount regardless of what the lender accepts. **Coverage lands at parity either way**; posting only
+determines where the proceeds sit and therefore what happens to LTV.
 
-e.g. coverage 1.35 with arm 1 borrowing 0.5·D -> 1.2333. They cooperate rather than fight.
+| Case | Coverage after | LTV after | Next tick |
+|---|---|---|---|
+| Posting succeeds | ~1.0000, in band | falls | arm 1 re-levers; its `enforceCoverageAfterIncrease` needs >= 0.97 and we are at ~1.0, so it passes with margin. **No deadlock** — this is the failure that killed arm-3 partial progress and it does not occur here. |
+| Posting fails entirely | ~1.0000, in band | unchanged | `rebalance()` reverts `RebalanceNotNeeded`, which is correct — nothing left to correct. The idle collateral is deployed by the next `_deployCapital`. |
 
-The asymmetry is arm 1's `enforceCoverageAfterIncrease` guard: it refuses to lever up while
-coverage < 0.97, which is what blocked recovery on the low side. **There is no equivalent guard on
-the high side**, so arm 1 is always available to keep helping.
+Arm 2 (`ltv > upperBand`) cannot be induced by arm 4, which only ever LOWERS LTV. The arm-2/arm-4
+sawtooth measured on the old borrow-and-deploy design is structurally gone.
 
-Therefore: **cap the skim at supply headroom and accept partial progress.** Reverting instead would
-brick arm 4 exactly when the vault is most profitable. The postcondition (S 2.2 step 4) is what
-prevents a capped-to-zero skim from spinning as a silent no-op — the failure mode of the code being
-replaced.
+So: **cap the post and continue** rather than reverting — reverting would brick arm 4 exactly when
+the vault is most profitable — and emit `CoverageSkimPosted(available, posted)` so a partial post is
+distinguishable from a clean run (audit L-03).
 
-**Still verify on a fork** rather than trusting this argument: the arm-3 partial-progress reasoning
-also looked sound and was falsified by a live run.
+The one path back into arm-3 territory was the M-01 withdrawal pad, which made coverage undershoot
+to `1.05 - 0.05c` and drop below 0.97 above `c > 1.6`. The pad has been removed; coverage now lands
+on 1.0000 exactly for any starting `c`.
 
 ## 9. Open decisions
 

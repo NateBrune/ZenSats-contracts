@@ -643,6 +643,19 @@ manufactured one unattractive.
   for. Repeated arm-3 SUCCESS simply means coverage keeps drifting — investigate the strategy, not
   the rebalancer.
 
+## Addendum — arm 4 (added 2026-08-24, after the skim rewrite)
+
+Arm 4 now performs a permissionless, non-user-initiated LP exit and a debt->collateral swap. That
+creates **no new trigger vector** — the "no upward manipulation" result still holds, since `vpBased`
+tracks `get_virtual_price()` which swaps do not move, and nothing in the new arm feeds back into it
+before the trigger. It does create a modest new **exit-price steering** surface (audit
+`AUDIT_Arm4Skim.md` L-02, ~0.22% of debt, and ~5.7x smaller once the M-01 withdrawal pad was
+removed), bounded by the same economics as the rest of H-01.
+
+The four revisit conditions below are **unaffected**. The M-02 liveness class (a persistent revert
+blocking `rebalance()` while the other bands are satisfied) is now duplicated on arm 4 as well as
+arm 3 — same accepted framing: it fails in the safe direction and `setIdle`/`unIdle` recovers.
+
 ## Revisit if ANY of these change
 1. **TVL grows** such that a plausible bounty approaches the skew cost.
 2. **Yield-pool depth falls** — a thinner pool makes the skew cheap. This is a live concern: it is
