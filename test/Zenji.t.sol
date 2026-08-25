@@ -881,7 +881,12 @@ contract MockYieldStrategy is IYieldStrategy {
                 assertLt(debtAfter, debtBefore, "Ratio drift rebalance should reduce debt");
             }
 
-            function test_rebalance_ratioHigh_withinDeadband_borrowsMore() public {
+            /// @notice Arm 4 (coverage-down) now SKIMS the strategy surplus into collateral instead
+            ///         of borrowing more and redeploying it -- see ZenjiCoreLib.rebalanceCoverageDown
+            ///         and ARM4_SKIM_SPEC.md. Debt is left UNCHANGED and LTV FALLS (posting
+            ///         collateral without touching debt), which is the exact opposite of what this
+            ///         test asserted under the old borrow-and-deploy design.
+            function test_rebalance_ratioHigh_withinDeadband_skimsSurplus() public {
                 vm.prank(user1);
                 vault.deposit(1e8, user1);
 
@@ -893,6 +898,7 @@ contract MockYieldStrategy is IYieldStrategy {
 
                 uint256 ltvBefore = ILoanManager(address(vault.loanManager())).getCurrentLTV();
                 uint256 debtBefore = ILoanManager(address(vault.loanManager())).getCurrentDebt();
+                uint256 collBefore = ILoanManager(address(vault.loanManager())).getCurrentCollateral();
                 assertTrue(
                     vault.strategyDebtRebalanceNeeded(), "High ratio should trigger rebalance"
                 );
@@ -901,10 +907,16 @@ contract MockYieldStrategy is IYieldStrategy {
 
                 uint256 ltvAfter = ILoanManager(address(vault.loanManager())).getCurrentLTV();
                 uint256 debtAfter = ILoanManager(address(vault.loanManager())).getCurrentDebt();
-                assertGt(
-                    ltvAfter, ltvBefore, "High ratio rebalance should increase debt deployment"
+                uint256 collAfter = ILoanManager(address(vault.loanManager())).getCurrentCollateral();
+                assertLt(
+                    ltvAfter, ltvBefore, "Skim posts collateral without touching debt, so LTV must fall"
                 );
-                assertGt(debtAfter, debtBefore, "High ratio rebalance should increase debt");
+                assertEq(debtAfter, debtBefore, "Skim must never borrow -- debt stays unchanged");
+                assertGt(collAfter, collBefore, "Skim must post the surplus as collateral");
+                assertFalse(
+                    vault.strategyDebtRebalanceNeeded(),
+                    "Skim must converge coverage back into band in a single call"
+                );
             }
 
             function test_rebalance_increase_revertsWhenStrategyDebtCoverageLow() public {

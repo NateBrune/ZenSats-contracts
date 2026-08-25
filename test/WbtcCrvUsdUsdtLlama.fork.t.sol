@@ -55,6 +55,40 @@ contract UnderperformingSwapper is ISwapper {
 ///         (independent of the real deficit) so that the sized collateral `c` exceeds the position's
 ///         total collateral, exercising `DeficitExceedsCollateral` directly rather than relying on an
 ///         organic total-loss scenario (which is unreachable at normal LTV — see M-04 in the audit).
+/// @notice Mock ISwapper used only by the arm-4 oracle-floor guard test
+///         (`test_coverageDown_oracleFloor_reverts`). The arm-4 mirror of `UnderperformingSwapper`
+///         above: that mock underpays the collateral->debt leg arm 3 uses; this one underpays the
+///         debt->collateral leg arm 4 uses. `swapDebtForCollateral` pays out a deliberately tiny,
+///         pre-funded amount of collateral regardless of input, simulating a sandwiched/
+///         underperforming swap execution. Implements `slippage()` (matching `ISwapperSlippage`
+///         in ZenjiCoreLib) since arm 4 reads it to compute the oracle floor.
+contract UnderperformingDebtSwapper is ISwapper {
+    IERC20 public immutable collateralToken;
+    uint256 public payout;
+    uint256 public slippage = 1e16; // 1%
+
+    constructor(address _collateralToken) {
+        collateralToken = IERC20(_collateralToken);
+    }
+
+    function setPayout(uint256 amount) external {
+        payout = amount;
+    }
+
+    function quoteCollateralForDebt(uint256) external pure returns (uint256) {
+        return 0; // unused by arm 4
+    }
+
+    function swapCollateralForDebt(uint256) external pure returns (uint256) {
+        revert("unreachable: arm 4 does not call swapCollateralForDebt");
+    }
+
+    function swapDebtForCollateral(uint256) external returns (uint256) {
+        collateralToken.transfer(msg.sender, payout);
+        return payout;
+    }
+}
+
 contract InflatedQuoteSwapper is ISwapper {
     uint256 public inflatedQuote;
 
@@ -1273,17 +1307,12 @@ contract WbtcCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
         return (totalInduced, rFinal != type(uint256).max && rFinal >= targetRatio);
     }
 
-    /// @notice Arm-4 convergence per ARM4_VERIFICATION_PLAN.md S4 item 1: coverage pushed above
-    ///         103% must clear back into band via rebalance() calls.
-    /// @dev IMPORTANT (see final report): `rebalanceCoverageDown` computes
-    ///      `targetDebtAtMaxRatio = S/maxRatio` treating the strategy balance S as fixed, then
-    ///      DEPLOYS the borrowed debt into the strategy -- growing S by the same amount it grows
-    ///      D. The resulting post-call ratio is `(S+X)/(D+X)`, not the intended `S/(D+X)`, so a
-    ///      single call only partially corrects (empirically ~3% of the excess per call near the
-    ///      deadband, i.e. dozens of calls to converge) -- an arm-3-class non-convergence bug that
-    ///      arm 4 never received the Plan-B-style fix for. This loop (bounded, like arm 3's own
-    ///      `test_coverageUp_clearsRatioCondition`) measures the REAL number of calls needed rather
-    ///      than assuming one call suffices.
+    /// @notice Arm-4 convergence per ARM4_SKIM_SPEC.md S6 item 1: coverage pushed above 103% must
+    ///         clear back to ~parity (100%) in a SINGLE `rebalance()` call. This is the primary
+    ///         success criterion for the skim rewrite (see file header rationale) -- the OLD
+    ///         borrow-and-deploy design needed 60 calls and still did not clear the band (measured:
+    ///         105.82% -> 103.28%). The new design skims the surplus straight out of the strategy
+    ///         and posts it as collateral, targeting parity directly, so one call should suffice.
     function test_coverageDown_clearsRatioCondition() public {
         _deployVault();
         _depositAs(user1, _baseDeposit());
@@ -1298,144 +1327,68 @@ contract WbtcCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
         uint256 ratio0 = vault.strategyToDebtRatio();
         console.log("arm4 start ratio(bps)=%d", ratio0 / 1e14);
 
-        uint256 passes = 60;
-        for (uint256 i = 0; i < passes; i++) {
-            _refreshOracles();
-            try vault.rebalance() { }
-            catch (bytes memory err) {
-                console.log("pass %d: rebalance reverted", i + 1);
-                _skipOnEnvironmentalRevert(err);
-                break;
-            }
-            uint256 r = vault.strategyToDebtRatio();
-            console.log("pass %d: ratio(bps)=%d", i + 1, r / 1e14);
-            if (!vault.strategyDebtRebalanceNeeded()) {
-                console.log("cleared after %d pass(es)", i + 1);
-                break;
-            }
-            // Sanity bound only (not a strict per-call monotonicity requirement -- real VP/pool-fee
-            // noise can cause small reversals between calls): the ratio must not blow past its
-            // starting excess by more than 1%, i.e. no gross divergence away from parity.
-            assertLe(
-                r,
-                ratio0 + ratio0 / 100,
-                "coverage-down must not grossly diverge away from parity across passes"
-            );
-        }
-
-        assertFalse(
-            vault.strategyDebtRebalanceNeeded(),
-            "arm-4 must eventually clear strategyDebtRebalanceNeeded() -- if this fails after 60 passes, arm 4 does not converge in a practical number of calls"
-        );
-    }
-
-    /// @notice Arm-4 must never lever the position past the LTV upper band, and health must stay
-    ///         above the venue's MIN_HEALTH (plan S4 item 2).
-    function test_coverageDown_noOverLeverage() public {
-        _deployVault();
-        _depositAs(user1, _baseDeposit());
-        _refreshOracles();
-
-        uint256 targetRatio = vault.PRECISION() + vault.DEADBAND_SPREAD() + 2e15;
-        (, bool reached) = _induceGainUntilRatio(targetRatio, 20);
-        assertTrue(reached, "setup must be able to push coverage above the deadband");
-
         _refreshOracles();
         try vault.rebalance() { }
         catch (bytes memory err) {
             _skipOnEnvironmentalRevert(err);
-            revert("arm-4 rebalance() reverted");
+            revert("arm-4 rebalance() reverted on the one-call convergence case");
         }
 
-        uint256 upperBand = vault.targetLtv() + vault.DEADBAND_SPREAD();
-        uint256 ltvAfter = loanManager.getCurrentLTV();
-        int256 healthAfter = llamaManager.getHealth();
-        console.log("arm4 LTV after(bps)=%d upperBand(bps)=%d", ltvAfter / 1e14, upperBand / 1e14);
-        assertLe(
-            ltvAfter,
-            upperBand + 1e12,
-            "arm-4 must not lever LTV past the upper deadband"
+        uint256 ratio1 = vault.strategyToDebtRatio();
+        console.log("arm4 ratio(bps) after ONE call: %d (target parity ~10000)", ratio1 / 1e14);
+
+        assertFalse(
+            vault.strategyDebtRebalanceNeeded(),
+            "arm-4 (skim design) must clear strategyDebtRebalanceNeeded() in a SINGLE call -- if this fails, the skim rewrite did not fix the non-convergence bug"
         );
-        assertGe(
-            healthAfter, llamaManager.MIN_HEALTH(), "arm-4 must not push health below MIN_HEALTH"
+        // Parity target is 1.00 (S 2.1) -- allow a modest tolerance for swap/withdrawal slippage
+        // (the skim pays a real swap cost, so it will not land at EXACTLY 1.00).
+        assertApproxEqRel(
+            ratio1, vault.PRECISION(), 5e16, // 5% tolerance
+            "arm-4 must land close to parity (1.00), not merely inside the band"
         );
     }
 
-    /// @notice Arm-4 LTV-bounded case per plan S4 item 3: when the coverage requirement would
-    ///         require borrowing past the LTV ceiling, arm 4 must borrow only the capped amount,
-    ///         not revert, and must not deadlock on a follow-up call. Unlike arm 3 (which LOWERS
-    ///         LTV and can walk into arm 1's territory), arm 4 RAISES LTV -- so a follow-up call
-    ///         should simply repeat the (now smaller) capped borrow, not oscillate. Verified rather
-    ///         than assumed.
-    function test_coverageDown_ltvBoundedCase() public {
+    /// @notice ARM4_SKIM_SPEC.md S6 item 2: a LARGE surplus (~135% coverage) must also converge in
+    ///         ONE call, not just a marginal one. Confirms the fix generalizes -- S 2.1 notes the
+    ///         skim formula scales (135% -> skim 0.35*D) without needing multiple passes.
+    function test_coverageDown_largeSurplusConvergesInOneCall() public {
         _deployVault();
         _depositAs(user1, _baseDeposit());
         _refreshOracles();
 
-        // Push coverage far above the deadband so requiredBorrow dwarfs the ~3%-of-collateral
-        // ltvRoom available at target LTV -- this makes the LTV ceiling bind before the coverage
-        // ceiling, per rebalanceCoverageDown's `min(requiredBorrow, ltvRoom)`.
-        uint256 targetRatio = vault.PRECISION() * 3; // ~300%
-        (, bool reached) = _induceGainUntilRatio(targetRatio, 25);
-        console.log(
-            "ltv-bounded setup reached=%d ratio(bps)=%d",
-            reached ? 1 : 0,
-            vault.strategyToDebtRatio() / 1e14
-        );
+        uint256 targetRatio = vault.PRECISION() + vault.PRECISION() * 35 / 100; // ~135%
+        (uint256 induced, bool reached) = _induceGainUntilRatio(targetRatio, 25);
+        console.log("large-surplus: induced crvUSD=%d reached=%d", induced, reached ? 1 : 0);
         if (!reached) {
-            console.log("could not reach 300% coverage within iteration cap -- skipping (pool too deep at this block)");
+            console.log("could not reach 135%% coverage within iteration cap -- skipping (pool too deep at this block)");
             vm.skip(true);
             return;
         }
 
-        uint256 debtBefore = loanManager.getCurrentDebt();
-        uint256 ltvBefore = loanManager.getCurrentLTV();
-        uint256 upperBand = vault.targetLtv() + vault.DEADBAND_SPREAD();
+        uint256 ratio0 = vault.strategyToDebtRatio();
+        console.log("large-surplus: start ratio(bps)=%d", ratio0 / 1e14);
 
         _refreshOracles();
         try vault.rebalance() { }
         catch (bytes memory err) {
             _skipOnEnvironmentalRevert(err);
-            revert("arm-4 rebalance() reverted on the LTV-bounded case");
+            revert("arm-4 rebalance() reverted on the large-surplus case");
         }
 
-        uint256 debtAfter = loanManager.getCurrentDebt();
-        uint256 ltvAfter = loanManager.getCurrentLTV();
-        console.log("ltv-bounded: debt %d -> %d", debtBefore, debtAfter);
-        console.log("ltv-bounded: LTV(bps) %d -> %d", ltvBefore / 1e14, ltvAfter / 1e14);
-
-        assertGt(debtAfter, debtBefore, "arm-4 must still borrow something even when LTV-capped");
-        // 1e12 tolerance (~1e-6 relative) absorbs integer-division dust between the ltvRoom
-        // computation and the recomputed getCurrentLTV() -- not a real overshoot.
-        assertLe(
-            ltvAfter, upperBand + 1e12, "capped borrow must not push LTV past the upper band"
-        );
-        assertTrue(
+        uint256 ratio1 = vault.strategyToDebtRatio();
+        console.log("large-surplus: ratio(bps) after ONE call: %d", ratio1 / 1e14);
+        assertFalse(
             vault.strategyDebtRebalanceNeeded(),
-            "an LTV-capped partial borrow must leave coverage still out of band (by design)"
-        );
-
-        // Confirm arm 4's partial progress does not deadlock: a follow-up call must not revert
-        // and must not walk LTV backward out of band the way arm-3's old partial-progress bug did.
-        _refreshOracles();
-        try vault.rebalance() { }
-        catch (bytes memory err) {
-            _skipOnEnvironmentalRevert(err);
-            revert("arm-4 follow-up rebalance() reverted -- possible deadlock");
-        }
-        uint256 ltvAfter2 = loanManager.getCurrentLTV();
-        console.log("ltv-bounded follow-up LTV(bps)=%d", ltvAfter2 / 1e14);
-        assertLe(
-            ltvAfter2,
-            upperBand + 1e12,
-            "follow-up capped borrow must also respect the upper band"
+            "a 135% surplus must also clear the band in a single call"
         );
     }
 
-    /// @notice Arm-4 has NO coverage postcondition analogous to arm 3's CoverageDidNotImprove --
-    ///         plan S4 item 4 exists specifically to catch an arm-3-class non-convergence bug here.
-    ///         Asserts the ratio strictly decreases (moves toward parity) across the call.
-    function test_coverageDown_ratioStrictlyDecreases() public {
+    /// @notice ARM4_SKIM_SPEC.md S6 item 3: the defining signature that distinguishes the new skim
+    ///         design from the old borrow-and-deploy one -- strategy balance DECREASES, debt is
+    ///         UNCHANGED, and collateral INCREASES. The old design instead increased debt and grew
+    ///         the strategy balance by the same amount.
+    function test_coverageDown_signature() public {
         _deployVault();
         _depositAs(user1, _baseDeposit());
         _refreshOracles();
@@ -1444,22 +1397,173 @@ contract WbtcCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
         (, bool reached) = _induceGainUntilRatio(targetRatio, 20);
         assertTrue(reached, "setup must be able to push coverage above the deadband");
 
-        uint256 ratioBefore = vault.strategyToDebtRatio();
-
         _refreshOracles();
+        uint256 stratBefore = strategy.balanceOf();
+        uint256 debtBefore = loanManager.getCurrentDebt();
+        uint256 collBefore = loanManager.getCurrentCollateral();
+
         try vault.rebalance() { }
         catch (bytes memory err) {
             _skipOnEnvironmentalRevert(err);
-            revert("arm-4 rebalance() reverted");
+            revert("arm-4 rebalance() reverted on the signature case");
         }
 
-        uint256 ratioAfter = vault.strategyToDebtRatio();
-        console.log(
-            "ratio-direction: before(bps)=%d after(bps)=%d", ratioBefore / 1e14, ratioAfter / 1e14
-        );
-        assertLt(
-            ratioAfter, ratioBefore, "arm-4 must strictly move coverage toward parity (ratio must decrease)"
-        );
+        uint256 stratAfter = strategy.balanceOf();
+        uint256 debtAfter = loanManager.getCurrentDebt();
+        uint256 collAfter = loanManager.getCurrentCollateral();
+        console.log("signature: strategy %d -> %d", stratBefore, stratAfter);
+        console.log("signature: debt     %d -> %d", debtBefore, debtAfter);
+        console.log("signature: collateral %d -> %d", collBefore, collAfter);
+
+        assertLt(stratAfter, stratBefore, "skim must DECREASE the strategy balance");
+        assertEq(debtAfter, debtBefore, "skim must leave debt UNCHANGED (never borrows)");
+        assertGt(collAfter, collBefore, "skim must INCREASE posted collateral");
+    }
+
+    /// @notice ARM4_SKIM_SPEC.md S6 item 4 / S 3: after the skim, LTV falls (never rises, unlike
+    ///         the replaced design), handing the next tick to arm 1 (LTV-low) to re-lever. Arm 3's
+    ///         partial-progress attempt deadlocked exactly at this handoff (arm 1's
+    ///         enforceCoverageAfterIncrease refused while coverage was still < 0.97) -- verify on a
+    ///         fork rather than trusting S 8b's argument that the high side is safe.
+    function test_coverageDown_armOneHandoffDoesNotRevert() public {
+        _deployVault();
+        _depositAs(user1, _baseDeposit());
+        _refreshOracles();
+
+        uint256 targetRatio = vault.PRECISION() + vault.DEADBAND_SPREAD() + 2e15;
+        (, bool reached) = _induceGainUntilRatio(targetRatio, 20);
+        assertTrue(reached, "setup must be able to push coverage above the deadband");
+
+        _refreshOracles();
+        uint256 ltvBefore = loanManager.getCurrentLTV();
+
+        try vault.rebalance() { }
+        catch (bytes memory err) {
+            _skipOnEnvironmentalRevert(err);
+            revert("arm-4 rebalance() reverted on the handoff case");
+        }
+
+        uint256 ltvAfterSkim = loanManager.getCurrentLTV();
+        console.log("handoff: LTV(bps) before skim=%d after skim=%d target=%d", ltvBefore / 1e14, ltvAfterSkim / 1e14, vault.targetLtv() / 1e14);
+        assertLt(ltvAfterSkim, ltvBefore, "skim must lower LTV (posts collateral, debt unchanged)");
+
+        // The NEXT tick should either re-lever without reverting, or (if the skim alone already
+        // landed LTV back inside the target band -- observed on this venue: the skim's LTV drop
+        // was smaller than DEADBAND_SPREAD) revert RebalanceNotNeeded(), which is a legitimate
+        // "nothing left to do" outcome, not a deadlock. Any OTHER revert (e.g.
+        // StrategyDebtCoverageTooLow, the arm-3-class deadlock selector) is the failure mode this
+        // test exists to catch -- confirm explicitly rather than assume the S 8b argument.
+        _refreshOracles();
+        try vault.rebalance() {
+            uint256 ltvAfterRelever = loanManager.getCurrentLTV();
+            console.log("handoff: LTV(bps) after arm-1 re-lever=%d", ltvAfterRelever / 1e14);
+            assertGe(
+                ltvAfterRelever, ltvAfterSkim, "arm-1 re-lever must move LTV back UP toward target, not deadlock"
+            );
+        } catch (bytes memory err) {
+            bytes4 sel;
+            assembly {
+                sel := mload(add(err, 32))
+            }
+            if (sel == Zenji.RebalanceNotNeeded.selector) {
+                console.log("handoff: follow-up rebalance() reverted RebalanceNotNeeded -- skim alone already satisfied the LTV band, no deadlock");
+            } else {
+                _skipOnEnvironmentalRevert(err);
+                console.log("handoff: follow-up rebalance() reverted with an unexpected selector");
+                revert("arm-4 -> arm-1 handoff deadlocked on the follow-up call");
+            }
+        }
+    }
+
+    /// @notice ARM4_SKIM_SPEC.md S6 item 5 / S 2.3: the collateral->debt... erratum: debt->collateral
+    ///         swap inside arm 4 must be floored by `SwapperUnderperformed` against the
+    ///         oracle-implied value, re-imposing the same floor arm 3's C-01 guard test exercises
+    ///         for the opposite leg. Rotates in `UnderperformingDebtSwapper`, which pays out a
+    ///         deliberately tiny, pre-funded amount of collateral regardless of the debt sent in.
+    function test_coverageDown_oracleFloor_reverts() public {
+        _deployVault();
+        _depositAs(user1, _baseDeposit());
+        _refreshOracles();
+
+        UnderperformingDebtSwapper badSwapper = new UnderperformingDebtSwapper(WBTC);
+        // Pre-fund with plenty of WBTC so the payout transfer itself never fails.
+        deal(WBTC, address(badSwapper), 10e8);
+        badSwapper.setPayout(1); // 1 satoshi, regardless of how much debt asset is sent in.
+
+        vm.prank(vault.gov());
+        vault.proposeSwapper(address(badSwapper));
+        vm.warp(block.timestamp + 1 weeks + 1);
+        _refreshOracles();
+        vm.prank(vault.gov());
+        vault.executeSwapper();
+        assertEq(address(vault.swapper()), address(badSwapper), "swapper should be rotated to the underperformer");
+
+        uint256 targetRatio = vault.PRECISION() + vault.DEADBAND_SPREAD() + 2e15;
+        (, bool reached) = _induceGainUntilRatio(targetRatio, 20);
+        assertTrue(reached, "setup must be able to push coverage above the deadband");
+
+        _refreshOracles();
+        uint256 stratBefore = strategy.balanceOf();
+        uint256 debtBefore = loanManager.getCurrentDebt();
+        uint256 collBefore = loanManager.getCurrentCollateral();
+
+        vm.expectPartialRevert(ZenjiCoreLib.SwapperUnderperformed.selector);
+        vault.rebalance();
+
+        assertEq(strategy.balanceOf(), stratBefore, "reverted call must not mutate strategy balance");
+        assertEq(loanManager.getCurrentDebt(), debtBefore, "reverted call must not mutate debt");
+        assertEq(loanManager.getCurrentCollateral(), collBefore, "reverted call must not mutate collateral");
+        console.log("SwapperUnderperformed correctly blocked a sandwiched/underperforming arm-4 swap.");
+    }
+
+    /// @notice ARM4_SKIM_SPEC.md S6 item 7: measure the round-trip NAV cost of skim (arm 4) + the
+    ///         following re-lever (arm 1). Reported even if unflattering per the spec -- the arm-3
+    ///         partial-progress attempt was killed by exactly this kind of unmeasured cost.
+    function test_coverageDown_roundTripCost() public {
+        _deployVault();
+        _depositAs(user1, _baseDeposit());
+        _refreshOracles();
+
+        uint256 targetRatio = vault.PRECISION() + vault.DEADBAND_SPREAD() + 2e15;
+        (, bool reached) = _induceGainUntilRatio(targetRatio, 20);
+        assertTrue(reached, "setup must be able to push coverage above the deadband");
+
+        _refreshOracles();
+        uint256 navBefore = vault.totalAssets();
+
+        try vault.rebalance() { } // arm 4: skim
+        catch (bytes memory err) {
+            _skipOnEnvironmentalRevert(err);
+            revert("arm-4 rebalance() reverted on the round-trip cost case");
+        }
+        uint256 navAfterSkim = vault.totalAssets();
+
+        _refreshOracles();
+        try vault.rebalance() { } // arm 1: re-lever (best-effort -- may legitimately be RebalanceNotNeeded
+            // if the skim alone already satisfied both bands)
+        catch (bytes memory err) {
+            bytes4 sel;
+            assembly {
+                sel := mload(add(err, 32))
+            }
+            if (sel == Zenji.RebalanceNotNeeded.selector) {
+                console.log("round-trip: no re-lever leg -- skim alone already satisfied both bands");
+            } else {
+                _skipOnEnvironmentalRevert(err);
+                console.log("round-trip: follow-up rebalance() reverted (no re-lever leg to measure)");
+            }
+        }
+        uint256 navAfterRelever = vault.totalAssets();
+
+        console.log("round-trip NAV: before=%d afterSkim=%d afterRelever=%d", navBefore, navAfterSkim, navAfterRelever);
+        if (navAfterRelever >= navBefore) {
+            console.log("round-trip cost: %d wei GAIN (unexpected but reported as measured)", navAfterRelever - navBefore);
+        } else {
+            uint256 costWei = navBefore - navAfterRelever;
+            // costBps in 1e18 precision (bps * 1e14 == 1e18 * bps / 10000)
+            uint256 costBpsE18 = navBefore == 0 ? 0 : (costWei * 1e18) / navBefore;
+            console.log("round-trip cost: %d wei (%d bps*1e14, i.e. divide by 1e14 for bps)", costWei, costBpsE18);
+        }
     }
 
     /// @notice Upward-manipulation probe per plan S3/S4 item 5 (WBTC/Llama only, per plan): can
@@ -1534,14 +1638,11 @@ contract WbtcCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
         }
     }
 
-    /// @notice Interaction with arm 3 per plan S4 item 6: after arm 4 converges, arm 3 must not
-    ///         immediately fire on the very next rebalance() call (no arm3<->arm4 oscillation).
-    /// @dev Drives to convergence via a bounded loop rather than a single call --
-    ///      `test_coverageDown_clearsRatioCondition` documents that a single call does NOT
-    ///      converge (see that test's NatSpec for the root cause). If convergence is not reached
-    ///      within the same 60-pass bound used there, this test SKIPS the oscillation check
-    ///      explicitly (rather than silently passing or re-reporting the same root-cause failure
-    ///      a third time) since the precondition ("arm 4 has converged") cannot be met.
+    /// @notice ARM4_SKIM_SPEC.md S6 items 6 and 8: after arm 4 converges (now in ONE call, per
+    ///         `test_coverageDown_clearsRatioCondition`), neither arm 3 nor repeated arm4/arm1
+    ///         cycling should oscillate over several subsequent ticks. Drives several more
+    ///         `rebalance()` calls after the initial skim and asserts the ratio stays inside (or
+    ///         converges back inside) the coverage band at every tick, rather than sawtoothing.
     function test_coverageDown_noOscillationWithArm3() public {
         _deployVault();
         _depositAs(user1, _baseDeposit());
@@ -1551,46 +1652,59 @@ contract WbtcCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
         (, bool reached) = _induceGainUntilRatio(targetRatio, 20);
         assertTrue(reached, "setup must be able to push coverage above the deadband");
 
-        bool converged = false;
-        for (uint256 i = 0; i < 60; i++) {
-            _refreshOracles();
-            try vault.rebalance() { }
-            catch (bytes memory err) {
-                _skipOnEnvironmentalRevert(err);
-                revert("arm-4 rebalance() reverted");
-            }
-            if (!vault.strategyDebtRebalanceNeeded()) {
-                converged = true;
-                console.log("arm-4 converged after %d pass(es)", i + 1);
-                break;
-            }
-        }
-        if (!converged) {
-            console.log(
-                "arm-4 did not converge within 60 passes (see test_coverageDown_clearsRatioCondition) -- oscillation check not reachable, skipping"
-            );
-            vm.skip(true);
-            return;
+        _refreshOracles();
+        try vault.rebalance() { } // arm 4: skim to parity
+        catch (bytes memory err) {
+            _skipOnEnvironmentalRevert(err);
+            revert("arm-4 rebalance() reverted on the oscillation-check setup");
         }
 
+        assertFalse(
+            vault.strategyDebtRebalanceNeeded(),
+            "arm-4 (skim design) must converge in the single setup call for this test to be meaningful"
+        );
         uint256 ratioAfterArm4 = vault.strategyToDebtRatio();
         console.log("post-arm4 ratio(bps)=%d", ratioAfterArm4 / 1e14);
 
-        // Confirm the follow-up call does not immediately trigger arm 3 (ratio too low): if
-        // rebalance() reverts RebalanceNotNeeded(), no arm fired -- the desired outcome. If it
-        // succeeds, assert coverage is still in band (i.e. whichever arm fired did not walk
-        // coverage back out of band the opposite direction).
-        _refreshOracles();
-        try vault.rebalance() {
-            uint256 ratioAfterFollowUp = vault.strategyToDebtRatio();
-            console.log("follow-up rebalance succeeded; ratio(bps)=%d", ratioAfterFollowUp / 1e14);
-            assertFalse(
-                vault.strategyDebtRebalanceNeeded(),
-                "a follow-up rebalance right after arm-4 convergence must not leave coverage out of band again"
-            );
-        } catch (bytes memory err) {
-            _skipOnEnvironmentalRevert(err);
-            console.log("follow-up rebalance() reverted (expected: RebalanceNotNeeded, no oscillation)");
+        // Drive several more ticks (arm 1 re-lever, possibly arm 2/RebalanceNotNeeded) and confirm
+        // coverage never sawtooths back out of band by more than the deadband tolerance -- the
+        // XAUT/Aave symptom the old design exhibited against arm 2.
+        uint256 ticks = 6;
+        uint256 minStrategyRatio = vault.PRECISION() - vault.DEADBAND_SPREAD();
+        uint256 maxStrategyRatio = vault.PRECISION() + vault.DEADBAND_SPREAD();
+        for (uint256 i = 0; i < ticks; i++) {
+            _refreshOracles();
+            try vault.rebalance() {
+                uint256 r = vault.strategyToDebtRatio();
+                console.log("tick %d: ratio(bps)=%d", i + 1, r / 1e14);
+                if (r != type(uint256).max) {
+                    // Tolerant band check: allow a small overshoot (1% of PRECISION) beyond the
+                    // strict deadband for a single tick's worth of swap/withdrawal slippage, but
+                    // reject the kind of gross, persistent divergence the old design exhibited.
+                    assertGe(
+                        r,
+                        minStrategyRatio - vault.PRECISION() / 100,
+                        "coverage must not sawtooth far below the deadband across ticks"
+                    );
+                    assertLe(
+                        r,
+                        maxStrategyRatio + vault.PRECISION() / 100,
+                        "coverage must not sawtooth far above the deadband across ticks"
+                    );
+                }
+            } catch (bytes memory err) {
+                bytes4 sel;
+                assembly {
+                    sel := mload(add(err, 32))
+                }
+                if (sel == Zenji.RebalanceNotNeeded.selector) {
+                    console.log("tick %d: RebalanceNotNeeded -- both bands settled, nothing to do", i + 1);
+                } else {
+                    _skipOnEnvironmentalRevert(err);
+                    console.log("tick %d: rebalance() reverted with an unexpected selector", i + 1);
+                }
+            }
         }
+        console.log("no-oscillation: %d post-convergence ticks completed without gross divergence", ticks);
     }
 }
