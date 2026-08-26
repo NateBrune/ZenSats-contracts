@@ -3,8 +3,8 @@ pragma solidity ^0.8.33;
 
 import { Test } from "forge-std/Test.sol";
 import {
-    UsdtNgCrvUsdLpStakeDaoStrategy
-} from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
+    UsdtCrvUsdLpStakeDaoStrategy
+} from "../src/strategies/lp/UsdtCrvUsdLpStakeDaoStrategy.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { IAavePool } from "../src/interfaces/IAavePool.sol";
 import { IFlashLoanSimpleReceiver } from "../src/interfaces/IFlashLoanSimpleReceiver.sol";
@@ -51,18 +51,18 @@ contract MockOracleH4 {
 /// @notice Configurable virtual price — key for H4
 contract MockLpPoolH4 {
     MockERC20H4 public crvUSD;
-    MockERC20H4 public pmUSD;
+    MockERC20H4 public otherCoin;
     MockERC20H4 public lpToken;
     int128 public immutable crvUsdIdx;
-    uint256 public immutable pmUsdIdx;
+    uint256 public immutable otherCoinIdx;
     uint256 public virtualPrice; // mutable — set by test
 
-    constructor(address _crvUSD, address _pmUSD, address _lpToken, int128 _crvUsdIdx) {
+    constructor(address _crvUSD, address _otherCoin, address _lpToken, int128 _crvUsdIdx) {
         crvUSD = MockERC20H4(_crvUSD);
-        pmUSD = MockERC20H4(_pmUSD);
+        otherCoin = MockERC20H4(_otherCoin);
         lpToken = MockERC20H4(_lpToken);
         crvUsdIdx = _crvUsdIdx;
-        pmUsdIdx = _crvUsdIdx == int128(0) ? 1 : 0;
+        otherCoinIdx = _crvUsdIdx == int128(0) ? 1 : 0;
         virtualPrice = 1e18;
     }
 
@@ -74,11 +74,11 @@ contract MockLpPoolH4 {
         return virtualPrice;
     }
 
-    function add_liquidity(uint256[] calldata amounts, uint256) external returns (uint256) {
+    function add_liquidity(uint256[2] calldata amounts, uint256) external returns (uint256) {
         uint256 c = amounts[uint256(uint128(crvUsdIdx))];
-        uint256 p = amounts[pmUsdIdx];
+        uint256 p = amounts[otherCoinIdx];
         if (c > 0) crvUSD.transferFrom(msg.sender, address(this), c);
-        if (p > 0) pmUSD.transferFrom(msg.sender, address(this), p);
+        if (p > 0) otherCoin.transferFrom(msg.sender, address(this), p);
         uint256 minted = c + p;
         if (minted > 0) lpToken.mint(msg.sender, minted);
         return minted;
@@ -93,8 +93,8 @@ contract MockLpPoolH4 {
         return burn_amount;
     }
 
-    function calc_token_amount(uint256[] calldata amounts, bool) external view returns (uint256) {
-        return amounts[uint256(uint128(crvUsdIdx))] + amounts[pmUsdIdx];
+    function calc_token_amount(uint256[2] calldata amounts, bool) external view returns (uint256) {
+        return amounts[uint256(uint128(crvUsdIdx))] + amounts[otherCoinIdx];
     }
 
     function calc_withdraw_one_coin(uint256 burn_amount, int128) external view returns (uint256) {
@@ -108,7 +108,7 @@ contract MockLpPoolH4 {
     }
 
     function coins(uint256 i) external view returns (address) {
-        return i == uint256(uint128(crvUsdIdx)) ? address(crvUSD) : address(pmUSD);
+        return i == uint256(uint128(crvUsdIdx)) ? address(crvUSD) : address(otherCoin);
     }
 
     function balances(uint256) external pure returns (uint256) {
@@ -215,7 +215,7 @@ contract H4_VirtualPriceLagTest is Test {
     MockERC20H4 usdt;
     MockERC20H4 crvUSD;
     MockERC20H4 crv;
-    MockERC20H4 pmUSD;
+    MockERC20H4 otherCoin;
     MockERC20H4 lpToken;
 
     MockOracleH4 crvUsdOracle;
@@ -228,7 +228,7 @@ contract H4_VirtualPriceLagTest is Test {
     MockRewardVaultH4 rewardVault;
     MockCrvSwapperH4 crvSwapper;
 
-    UsdtNgCrvUsdLpStakeDaoStrategy strategy;
+    UsdtCrvUsdLpStakeDaoStrategy strategy;
 
     address vaultAddr;
 
@@ -236,27 +236,26 @@ contract H4_VirtualPriceLagTest is Test {
         usdt = new MockERC20H4("USDT", "USDT", 6);
         lpToken = new MockERC20H4("LP", "LP", 18);
 
-        // BaseNgCrvUsdLpStakeDaoStrategy declares crv, pmUSD, and CRVUSD as `public constant`
-        // singleton addresses rather than constructor parameters. The same three mainnet
-        // tokens are shared across all deployed strategy instances and are never expected
-        // to differ between deployments, so baking them in avoids 3 extra storage slots
+        // BaseCurveStakeDaoStrategy declares crv and CRVUSD as `public constant`
+        // singleton addresses rather than constructor parameters. Both mainnet tokens are
+        // shared across all deployed strategy instances and are never expected to differ
+        // between deployments, so baking them in avoids 2 extra storage slots
         // and eliminates misconfiguration risk. Unit tests that run without a mainnet fork
         // must etch mock ERC20 bytecode at those addresses so calls like crv.balanceOf()
-        // don't revert with "call to non-contract". See UsdtNgCrvUsdLpStakeDaoStrategy.t.sol.
+        // don't revert with "call to non-contract".
         bytes memory erc20Code = address(new MockERC20H4("x", "x", 18)).code;
         vm.etch(0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E, erc20Code); // CRVUSD
         vm.etch(0xD533a949740bb3306d119CC777fa900bA034cd52, erc20Code); // CRV
-        vm.etch(0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF, erc20Code); // pmUSD
         crvUSD = MockERC20H4(0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E);
         crv = MockERC20H4(0xD533a949740bb3306d119CC777fa900bA034cd52);
-        pmUSD = MockERC20H4(0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF);
+        otherCoin = new MockERC20H4("OTHER", "OTHER", 18);
 
         crvUsdOracle = new MockOracleH4(1e8); // $1.00
         usdtOracle = new MockOracleH4(1e8); // $1.00
         crvOracle = new MockOracleH4(0.5e8);
 
         usdtCrvUsdPool = new MockUsdtCrvUsdPoolH4(address(usdt), address(crvUSD));
-        lpPool = new MockLpPoolH4(address(crvUSD), address(pmUSD), address(lpToken), 1);
+        lpPool = new MockLpPoolH4(address(crvUSD), address(otherCoin), address(lpToken), 1);
         accountant = new MockAccountantH4();
         rewardVault = new MockRewardVaultH4(address(lpToken), address(accountant));
         crvSwapper = new MockCrvSwapperH4();
@@ -264,7 +263,7 @@ contract H4_VirtualPriceLagTest is Test {
         // Use address(this) as the vault for simplicity
         vaultAddr = address(this);
 
-        strategy = new UsdtNgCrvUsdLpStakeDaoStrategy(
+        strategy = new UsdtCrvUsdLpStakeDaoStrategy(
             address(usdt),
             vaultAddr,
             address(this),
@@ -278,7 +277,8 @@ contract H4_VirtualPriceLagTest is Test {
             1, // lpCrvUsdIndex (crvUSD at index 1)
             address(crvUsdOracle),
             address(usdtOracle),
-            address(crvOracle)
+            address(crvOracle),
+            "USDT -> USDT/crvUSD LP Strategy"
         );
 
         // Fund strategy with LP tokens already staked in reward vault

@@ -10,11 +10,8 @@ import {
 } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import {
-    UsdtNgCrvUsdLpStakeDaoStrategy
-} from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
-import {
-    BaseNgCrvUsdLpStakeDaoStrategy
-} from "../src/strategies/lp/BaseNgCrvUsdLpStakeDaoStrategy.sol";
+    UsdtCrvUsdLpStakeDaoStrategy
+} from "../src/strategies/lp/UsdtCrvUsdLpStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
@@ -31,7 +28,6 @@ contract M4_VP_cache_staleness is ZenjiForkTestBase {
     address constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
     address constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
     address constant CRV = 0xD533a949740bb3306d119CC777fa900bA034cd52;
-    address constant PMUSD = 0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF;
 
     address constant AAVE_POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
     address constant AAVE_A_WBTC = 0x5Ee5bf7ae06D1Be5997A1A72006FE6C607eC6DE8;
@@ -41,9 +37,8 @@ contract M4_VP_cache_staleness is ZenjiForkTestBase {
     uint24 constant WBTC_USDT_V3_FEE = 3000;
 
     address constant USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
-    address constant PMUSD_CRVUSD_POOL = 0xEcb0F0d68C19BdAaDAEbE24f6752A4Db34e2c2cb;
-    address constant PMUSD_CRVUSD_GAUGE = 0xF3c43E7D722963b9569d1E39873dF9E2dFE8C087;
-    address constant STAKE_DAO_REWARD_VAULT = 0x7d3CDe9cCf0109423E672c17bD36481CF8CE437D;
+    address constant USDT_CRVUSD_GAUGE = 0x4e6bB6B7447B7B2Aa268C16AB87F4Bb48BF57939;
+    address constant STAKE_DAO_REWARD_VAULT = 0xF980f195A93577DcCe48e91e98124D3B71C4a066;
     address constant CRV_CRVUSD_TRICRYPTO = 0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14;
 
     address constant BTC_USD_ORACLE = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
@@ -53,7 +48,7 @@ contract M4_VP_cache_staleness is ZenjiForkTestBase {
 
     UniversalRouterV3SingleHopSwapper public swapper;
     CrvToCrvUsdSwapper public crvSwapper;
-    UsdtNgCrvUsdLpStakeDaoStrategy public strategy;
+    UsdtCrvUsdLpStakeDaoStrategy public strategy;
 
     function _collateral() internal pure override returns (address) {
         return WBTC;
@@ -116,21 +111,22 @@ contract M4_VP_cache_staleness is ZenjiForkTestBase {
             3_600
         );
 
-        strategy = new UsdtNgCrvUsdLpStakeDaoStrategy(
+        strategy = new UsdtCrvUsdLpStakeDaoStrategy(
             USDT,
             expectedVaultAddress,
             owner,
             USDT_CRVUSD_POOL,
-            PMUSD_CRVUSD_POOL,
+            USDT_CRVUSD_POOL,
             STAKE_DAO_REWARD_VAULT,
             address(crvSwapper),
-            PMUSD_CRVUSD_GAUGE,
+            USDT_CRVUSD_GAUGE,
             0,
             1,
             lpCrvUsdIndex,
             CRVUSD_USD_ORACLE,
             USDT_USD_ORACLE,
-            CRV_USD_ORACLE
+            CRV_USD_ORACLE,
+            "USDT -> USDT/crvUSD LP Strategy"
         );
 
         loanManager = new AaveLoanManager(
@@ -167,8 +163,8 @@ contract M4_VP_cache_staleness is ZenjiForkTestBase {
     }
 
     function _getLpCrvUsdIndex() internal view returns (int128) {
-        address coin0 = ICurveStableSwapNG(PMUSD_CRVUSD_POOL).coins(0);
-        address coin1 = ICurveStableSwapNG(PMUSD_CRVUSD_POOL).coins(1);
+        address coin0 = ICurveStableSwapNG(USDT_CRVUSD_POOL).coins(0);
+        address coin1 = ICurveStableSwapNG(USDT_CRVUSD_POOL).coins(1);
         if (coin0 == CRVUSD) return int128(0);
         if (coin1 == CRVUSD) return int128(1);
         revert("crvUSD index not found");
@@ -252,8 +248,8 @@ contract M4_VP_cache_staleness is ZenjiForkTestBase {
         console.log("M4 PoC: deposit uses stale cached VP for oracle floor");
     }
 
-    /// @dev Helper to get the current on-chain VP from the pmUSD/crvUSD pool
+    /// @dev Helper to get the current on-chain VP from the USDT/crvUSD pool
     function _getOnChainVP() internal view returns (uint256) {
-        return ICurveStableSwapNG(PMUSD_CRVUSD_POOL).get_virtual_price();
+        return ICurveStableSwapNG(USDT_CRVUSD_POOL).get_virtual_price();
     }
 }

@@ -4,8 +4,8 @@ pragma solidity ^0.8.33;
 import { console } from "forge-std/Test.sol";
 import { CrvUsdLpStrategyTestBase } from "./base/CrvUsdLpStrategyTestBase.sol";
 import {
-    ZenjiWstEthLlamaStakeDao
-} from "../src/implementations/stakedao/ZenjiWstEthLlamaStakeDao.sol";
+    ZenjiWstEthLlamaUsdtStakeDao
+} from "../src/implementations/stakedao/ZenjiWstEthLlamaUsdtStakeDao.sol";
 import { LlamaLoanManager } from "../src/lenders/LlamaLoanManager.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { WstEthOracle } from "../src/WstEthOracle.sol";
@@ -260,7 +260,7 @@ contract WstEthCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
             90000
         );
 
-        ZenjiWstEthLlamaStakeDao vault_ = new ZenjiWstEthLlamaStakeDao(
+        ZenjiWstEthLlamaUsdtStakeDao vault_ = new ZenjiWstEthLlamaUsdtStakeDao(
             address(llamaManager), address(strategy), address(swapper), owner, address(viewHelper)
         );
         require(address(vault_) == expectedVaultAddress, "Vault address mismatch");

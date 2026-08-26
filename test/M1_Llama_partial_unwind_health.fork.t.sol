@@ -3,13 +3,13 @@ pragma solidity ^0.8.33;
 
 import { console } from "forge-std/Test.sol";
 import { ZenjiForkTestBase } from "./base/ZenjiForkTestBase.sol";
-import { ZenjiWbtcLlamaStakeDao } from "../src/implementations/stakedao/ZenjiWbtcLlamaStakeDao.sol";
+import { ZenjiWbtcLlamaUsdtStakeDao } from "../src/implementations/stakedao/ZenjiWbtcLlamaUsdtStakeDao.sol";
 import { LlamaLoanManager } from "../src/lenders/LlamaLoanManager.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import { UniswapMixedCurveSwapper } from "../src/swappers/base/UniswapMixedCurveSwapper.sol";
 import { ICurveTriCrypto } from "../src/interfaces/ICurveTriCrypto.sol";
 import { CrvToCrvUsdSwapper } from "../src/swappers/reward/CrvToCrvUsdSwapper.sol";
-import { NgCrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/NgCrvUsdLpStakeDaoStrategy.sol";
+import { CrvUsdLpStakeDaoStrategy } from "../src/strategies/lp/CrvUsdLpStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../src/interfaces/ICurveStableSwapNG.sol";
 import { IChainlinkOracle } from "../src/interfaces/IChainlinkOracle.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
@@ -36,10 +36,9 @@ contract M1_Llama_partial_unwind_health is ZenjiForkTestBase {
     address constant UNIVERSAL_ROUTER = 0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af;
     uint24 constant FEE_WBTC_WETH = 500;
     address constant TRICRYPTO_POOL = 0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14;
-    address constant PMUSD_CRVUSD_POOL = 0xEcb0F0d68C19BdAaDAEbE24f6752A4Db34e2c2cb;
-    address constant PMUSD = 0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF;
-    address constant PMUSD_CRVUSD_GAUGE = 0xF3c43E7D722963b9569d1E39873dF9E2dFE8C087;
-    address constant STAKE_DAO_REWARD_VAULT = 0x7d3CDe9cCf0109423E672c17bD36481CF8CE437D;
+    address constant USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
+    address constant USDT_CRVUSD_GAUGE = 0x4e6bB6B7447B7B2Aa268C16AB87F4Bb48BF57939;
+    address constant STAKE_DAO_REWARD_VAULT = 0xF980f195A93577DcCe48e91e98124D3B71C4a066;
     address constant CRV_CRVUSD_TRICRYPTO = 0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14;
 
     address constant BTC_USD_ORACLE = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
@@ -48,9 +47,9 @@ contract M1_Llama_partial_unwind_health is ZenjiForkTestBase {
 
     UniswapMixedCurveSwapper public swapper;
     CrvToCrvUsdSwapper public crvSwapper;
-    NgCrvUsdLpStakeDaoStrategy public strategy;
+    CrvUsdLpStakeDaoStrategy public strategy;
     LlamaLoanManager public llamaManager;
-    ZenjiWbtcLlamaStakeDao public llamaVault;
+    ZenjiWbtcLlamaUsdtStakeDao public llamaVault;
 
     function _collateral() internal pure override returns (address) {
         return WBTC;
@@ -89,11 +88,11 @@ contract M1_Llama_partial_unwind_health is ZenjiForkTestBase {
     }
 
     function _getLpCrvUsdIndex() internal view returns (int128) {
-        address coin0 = ICurveStableSwapNG(PMUSD_CRVUSD_POOL).coins(0);
-        address coin1 = ICurveStableSwapNG(PMUSD_CRVUSD_POOL).coins(1);
+        address coin0 = ICurveStableSwapNG(USDT_CRVUSD_POOL).coins(0);
+        address coin1 = ICurveStableSwapNG(USDT_CRVUSD_POOL).coins(1);
         if (coin0 == CRVUSD) return int128(0);
         if (coin1 == CRVUSD) return int128(1);
-        revert("crvUSD not found in pmUSD pool");
+        revert("crvUSD not found in USDT/crvUSD pool");
     }
 
     function _getWethCrvUsdIndices() internal view returns (uint256 wethIdx, uint256 crvUsdIdx) {
@@ -135,17 +134,18 @@ contract M1_Llama_partial_unwind_health is ZenjiForkTestBase {
             3600
         );
 
-        strategy = new NgCrvUsdLpStakeDaoStrategy(
+        strategy = new CrvUsdLpStakeDaoStrategy(
             CRVUSD,
             address(0),
             owner,
-            PMUSD_CRVUSD_POOL,
+            USDT_CRVUSD_POOL,
             STAKE_DAO_REWARD_VAULT,
             address(crvSwapper),
-            PMUSD_CRVUSD_GAUGE,
+            USDT_CRVUSD_GAUGE,
             lpCrvUsdIndex,
             CRVUSD_USD_ORACLE,
-            CRV_USD_ORACLE
+            CRV_USD_ORACLE,
+            "crvUSD -> USDT/crvUSD LP Strategy"
         );
 
         llamaManager = new LlamaLoanManager(
@@ -160,7 +160,7 @@ contract M1_Llama_partial_unwind_health is ZenjiForkTestBase {
             3600
         );
 
-        llamaVault = new ZenjiWbtcLlamaStakeDao(
+        llamaVault = new ZenjiWbtcLlamaUsdtStakeDao(
             address(llamaManager), address(strategy), address(swapper), owner, address(viewHelper)
         );
         require(address(llamaVault) == expectedVaultAddress, "Vault address mismatch");

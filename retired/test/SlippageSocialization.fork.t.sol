@@ -3,7 +3,6 @@ pragma solidity ^0.8.33;
 
 import { Test, console } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
-import { ZenjiWbtcAaveStakeDao } from "../src/implementations/stakedao/ZenjiWbtcAaveStakeDao.sol";
 import { IYieldStrategy } from "../src/interfaces/IYieldStrategy.sol";
 import { ILoanManager } from "../src/interfaces/ILoanManager.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
@@ -95,7 +94,7 @@ contract SlippageSocialization is Test {
         vm.stopPrank();
     }
 
-    /// @notice Deploy a fresh ZenjiWbtcAaveStakeDao with local (modified) code and etch its
+    /// @notice Deploy a fresh Zenji (generic base) with local (modified) code and etch its
     ///         runtime bytecode onto the deployed vault address.
     /// @dev The local code moved 5 config fields (collateral/debt/viewHelper/loanManager/yieldStrategy)
     ///      from immutables into storage, which shifts every vault slot from `swapper` (old slot 5)
@@ -115,9 +114,9 @@ contract SlippageSocialization is Test {
         // passes the "vault is bindable" check (stratVault == address(0)).
         vm.mockCall(_strat, abi.encodeWithSignature("vault()"), abi.encode(address(0)));
 
-        // Deploy modified ZenjiWbtcAaveStakeDao at a temporary address
-        ZenjiWbtcAaveStakeDao patched =
-            new ZenjiWbtcAaveStakeDao(_lm, _strat, _swapper, _owner, _viewHelper);
+        // Deploy modified Zenji (generic base) at a temporary address
+        Zenji patched =
+            new Zenji(_collateral, _debt, _lm, _strat, _swapper, _owner, _viewHelper);
 
         // Clear the mock so the real strategy.vault() works again
         vm.clearMockedCalls();

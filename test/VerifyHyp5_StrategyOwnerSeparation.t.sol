@@ -98,13 +98,12 @@ contract VerifyHyp5StrategyOwnerSeparation is Test {
         //       if (token == address(debtAsset)   // USDT blocked
         //        || token == address(lpToken)     // LP token blocked
         //        || token == address(crvUSD)      // crvUSD blocked
-        //        || token == address(pmUSD)       // pmUSD blocked
         //        || token == address(crv))        // CRV blocked
         //           revert InvalidAddress();
         //       IERC20(token).safeTransfer(to, amount);
         //   }
         //
-        // Blocked: USDT, LP token, crvUSD, pmUSD, CRV.
+        // Blocked: USDT, LP token, crvUSD, CRV.
         // NOT blocked: rewardVault shares (the Stake DAO ERC4626 token held by strategy).
         //
         // The strategy holds Stake DAO rewardVault shares (not LP tokens directly).

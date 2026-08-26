@@ -3,12 +3,11 @@ pragma solidity ^0.8.33;
 
 import { Test, console } from "forge-std/Test.sol";
 import { Zenji } from "../src/Zenji.sol";
-import { ZenjiWbtcAaveStakeDao } from "../src/implementations/stakedao/ZenjiWbtcAaveStakeDao.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import {
-    UsdtNgCrvUsdLpStakeDaoStrategy
-} from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
+    UsdtCrvUsdLpStakeDaoStrategy
+} from "../src/strategies/lp/UsdtCrvUsdLpStakeDaoStrategy.sol";
 import {
     UniversalRouterV3SingleHopSwapper
 } from "../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
@@ -51,14 +50,12 @@ contract VaultInvariants is Test {
     address constant UNIVERSAL_ROUTER = 0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af;
     uint24 constant WBTC_USDT_V3_FEE = 3000;
 
-    // pmUSD/crvUSD Stake DAO strategy
+    // USDT/crvUSD Stake DAO strategy
     address constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
     address constant CRV = 0xD533a949740bb3306d119CC777fa900bA034cd52;
-    address constant PMUSD = 0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF;
     address constant USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
-    address constant PMUSD_CRVUSD_POOL = 0xEcb0F0d68C19BdAaDAEbE24f6752A4Db34e2c2cb;
-    address constant PMUSD_CRVUSD_GAUGE = 0xF3c43E7D722963b9569d1E39873dF9E2dFE8C087;
-    address constant STAKE_DAO_VAULT = 0x7d3CDe9cCf0109423E672c17bD36481CF8CE437D;
+    address constant USDT_CRVUSD_GAUGE = 0x4e6bB6B7447B7B2Aa268C16AB87F4Bb48BF57939;
+    address constant STAKE_DAO_VAULT = 0xF980f195A93577DcCe48e91e98124D3B71C4a066;
     address constant CRV_CRVUSD_TRI = 0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14;
     int128 constant USDT_INDEX = 0;
     int128 constant CRVUSD_INDEX = 1;
@@ -164,25 +161,26 @@ contract VaultInvariants is Test {
         // Derive crvUSD LP index from the pool at fork time
         int128 lpCrvUsdIndex;
         {
-            address coin0 = ICurveStableSwapNG(PMUSD_CRVUSD_POOL).coins(0);
+            address coin0 = ICurveStableSwapNG(USDT_CRVUSD_POOL).coins(0);
             lpCrvUsdIndex = (coin0 == CRVUSD) ? int128(0) : int128(1);
         }
 
-        UsdtNgCrvUsdLpStakeDaoStrategy strat = new UsdtNgCrvUsdLpStakeDaoStrategy(
+        UsdtCrvUsdLpStakeDaoStrategy strat = new UsdtCrvUsdLpStakeDaoStrategy(
             address(IERC20(USDT)),
             address(0),
             owner,
             USDT_CRVUSD_POOL,
-            PMUSD_CRVUSD_POOL,
+            USDT_CRVUSD_POOL,
             STAKE_DAO_VAULT,
             address(crvSwapper),
-            PMUSD_CRVUSD_GAUGE,
+            USDT_CRVUSD_GAUGE,
             USDT_INDEX,
             CRVUSD_INDEX,
             lpCrvUsdIndex,
             CRVUSD_USD_ORACLE,
             USDT_USD_ORACLE,
-            CRV_USD_ORACLE
+            CRV_USD_ORACLE,
+            "USDT -> USDT/crvUSD LP Strategy"
         );
 
         AaveLoanManager lm = new AaveLoanManager(
@@ -201,8 +199,14 @@ contract VaultInvariants is Test {
             3600
         );
 
-        ZenjiWbtcAaveStakeDao v = new ZenjiWbtcAaveStakeDao(
-            address(lm), address(strat), address(swapper), owner, address(viewHelper)
+        Zenji v = new Zenji(
+            WBTC,
+            USDT,
+            address(lm),
+            address(strat),
+            address(swapper),
+            owner,
+            address(viewHelper)
         );
 
         lm.initializeVault(address(v));
@@ -385,7 +389,7 @@ contract VaultInvariants is Test {
         public
     {
         // Lower bound at 0.5 WBTC — sub-0.5 WBTC deposits fall below the economic minimum
-        // for the pmUSD/crvUSD strategy and trigger retryable slippage reverts.
+        // for the USDT/crvUSD strategy and trigger retryable slippage reverts.
         uint256 dA = bound(rawA, 5e7, 5e8);
         uint256 dB = bound(rawB, 5e7, 5e8);
         uint256 dC = bound(rawC, 5e7, 5e8);

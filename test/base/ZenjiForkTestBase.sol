@@ -174,26 +174,6 @@ abstract contract ZenjiForkTestBase is Test {
         );
     }
 
-    /// @notice Skip the calling test if the pmUSD/crvUSD Curve pool is severely imbalanced
-    ///         (e.g. pmUSD depeg). A >4x coin ratio means single-sided crvUSD exits would
-    ///         fail the vault's slippage check — the market condition, not the code, is broken.
-    function _skipIfPmUsdPoolImbalanced() internal {
-        address pool = 0xEcb0F0d68C19BdAaDAEbE24f6752A4Db34e2c2cb;
-        try IERC20(pool).totalSupply() returns (uint256) {
-            // pool exists — check coin balance ratio
-            (bool ok0, bytes memory d0) =
-                pool.staticcall(abi.encodeWithSignature("balances(uint256)", uint256(0)));
-            (bool ok1, bytes memory d1) =
-                pool.staticcall(abi.encodeWithSignature("balances(uint256)", uint256(1)));
-            if (!ok0 || !ok1 || d0.length < 32 || d1.length < 32) return;
-            uint256 b0 = abi.decode(d0, (uint256));
-            uint256 b1 = abi.decode(d1, (uint256));
-            if (b0 == 0 || b1 == 0 || b0 > b1 * 4 || b1 > b0 * 4) {
-                vm.skip(true);
-            }
-        } catch { }
-    }
-
     function _deployVault() internal {
         _deployVaultContracts();
         _postDeploySetup();
@@ -876,13 +856,17 @@ abstract contract ZenjiForkTestBase is Test {
 
     // ============ F. Boundary & Revert Tests ============
 
+    /// @dev Derives the boundary from the deployed vault's own MIN_DEPOSIT() rather than the
+    ///      base default (1e4). Production implementations override it — e.g. the XAUT vaults use
+    ///      2000 — so a hardcoded literal silently tests a valid deposit for those suites.
     function test_deposit_belowMinimum_reverts() public {
         _deployVault();
 
+        uint256 belowMin = vault.MIN_DEPOSIT() - 1;
         vm.startPrank(user1);
-        collateralToken.approve(address(vault), 1e4 - 1);
+        collateralToken.approve(address(vault), belowMin);
         vm.expectRevert(Zenji.AmountTooSmall.selector);
-        vault.deposit(1e4 - 1, user1);
+        vault.deposit(belowMin, user1);
         vm.stopPrank();
     }
 

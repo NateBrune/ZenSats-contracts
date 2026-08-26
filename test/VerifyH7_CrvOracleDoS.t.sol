@@ -5,7 +5,7 @@ pragma solidity ^0.8.33;
  * @title VerifyH7_CrvOracleDoS
  *
  * BUG: When the CRV/USD Chainlink oracle becomes stale (>90000s since last update),
- *      deposits and PARTIAL withdrawals from the pmUSD/crvUSD strategy revert.
+ *      deposits and PARTIAL withdrawals from the otherCoin/crvUSD strategy revert.
  *      This happens because _deposit()/_withdraw() unconditionally call _claimAndCompound(),
  *      which calls _swapCrv() when CRV balance >= MIN_HARVEST_THRESHOLD (0.1 CRV), which
  *      calls crvSwapper.swap(), which calls OracleLib._validatedPrice() that reverts
@@ -40,8 +40,8 @@ import { Zenji } from "../src/Zenji.sol";
 import { ZenjiViewHelper } from "../src/ZenjiViewHelper.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
 import {
-    UsdtNgCrvUsdLpStakeDaoStrategy
-} from "../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
+    UsdtCrvUsdLpStakeDaoStrategy
+} from "../src/strategies/lp/UsdtCrvUsdLpStakeDaoStrategy.sol";
 import { IAavePool } from "../src/interfaces/IAavePool.sol";
 import { IFlashLoanSimpleReceiver } from "../src/interfaces/IFlashLoanSimpleReceiver.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
@@ -147,31 +147,31 @@ contract H7MockCurveStableSwap {
 
 contract H7MockCurveStableSwapNG {
     H7MockERC20 public immutable crvUSD;
-    H7MockERC20 public pmUSD;
+    H7MockERC20 public otherCoin;
     H7MockERC20 public lpToken;
     int128 public immutable crvUsdIdx;
-    uint256 public pmUsdIdx;
+    uint256 public otherCoinIdx;
 
     constructor(address _crvUSD, int128 _crvUsdIdx) {
         crvUSD = H7MockERC20(_crvUSD);
         crvUsdIdx = _crvUsdIdx;
-        pmUsdIdx = _crvUsdIdx == int128(0) ? 1 : 0;
+        otherCoinIdx = _crvUsdIdx == int128(0) ? 1 : 0;
     }
 
     function setLpToken(address _lp) external {
         lpToken = H7MockERC20(_lp);
     }
 
-    function setPmUsd(address _pm) external {
-        pmUSD = H7MockERC20(_pm);
+    function setOtherCoin(address _otherCoin) external {
+        otherCoin = H7MockERC20(_otherCoin);
     }
 
-    function add_liquidity(uint256[] calldata amounts, uint256) external returns (uint256) {
+    function add_liquidity(uint256[2] calldata amounts, uint256) external returns (uint256) {
         uint256 c = amounts[uint256(uint128(crvUsdIdx))];
-        uint256 p = amounts[pmUsdIdx];
+        uint256 p = amounts[otherCoinIdx];
         if (c > 0) crvUSD.transferFrom(msg.sender, address(this), c);
-        if (p > 0 && address(pmUSD) != address(0)) {
-            pmUSD.transferFrom(msg.sender, address(this), p);
+        if (p > 0 && address(otherCoin) != address(0)) {
+            otherCoin.transferFrom(msg.sender, address(this), p);
         }
         uint256 total = c + p;
         if (total > 0) lpToken.mint(msg.sender, total);
@@ -184,8 +184,8 @@ contract H7MockCurveStableSwapNG {
         return burn;
     }
 
-    function calc_token_amount(uint256[] calldata amounts, bool) external view returns (uint256) {
-        return amounts[uint256(uint128(crvUsdIdx))] + amounts[pmUsdIdx];
+    function calc_token_amount(uint256[2] calldata amounts, bool) external view returns (uint256) {
+        return amounts[uint256(uint128(crvUsdIdx))] + amounts[otherCoinIdx];
     }
 
     function calc_withdraw_one_coin(uint256 burn, int128) external pure returns (uint256) {
@@ -201,7 +201,7 @@ contract H7MockCurveStableSwapNG {
     }
 
     function coins(uint256 i) external view returns (address) {
-        return i == uint256(uint128(crvUsdIdx)) ? address(crvUSD) : address(pmUSD);
+        return i == uint256(uint128(crvUsdIdx)) ? address(crvUSD) : address(otherCoin);
     }
 
     function balances(uint256) external pure returns (uint256) {
@@ -414,7 +414,7 @@ contract VerifyH7_CrvOracleDoS is Test {
     H7MockERC20 usdt;
     H7MockERC20 crvUSD;
     H7MockERC20 crv;
-    H7MockERC20 pmUsd;
+    H7MockERC20 otherCoin;
     H7MockERC20 lpToken;
     H7MockERC20 aToken;
     H7MockERC20 debtToken;
@@ -433,7 +433,7 @@ contract VerifyH7_CrvOracleDoS is Test {
     H7MockAavePool aavePool;
 
     AaveLoanManager loanManager;
-    UsdtNgCrvUsdLpStakeDaoStrategy strategy;
+    UsdtCrvUsdLpStakeDaoStrategy strategy;
     Zenji vault;
     ZenjiViewHelper viewHelper;
 
@@ -452,20 +452,19 @@ contract VerifyH7_CrvOracleDoS is Test {
         aToken = new H7MockERC20("aWBTC", "aWBTC", 8);
         debtToken = new H7MockERC20("vUSDT", "vUSDT", 6);
 
-        // BaseNgCrvUsdLpStakeDaoStrategy declares crv, pmUSD, and CRVUSD as `public constant`
-        // singleton addresses rather than constructor parameters. The same three mainnet
-        // tokens are shared across all deployed strategy instances and are never expected
-        // to differ between deployments, so baking them in avoids 3 extra storage slots
+        // BaseCurveStakeDaoStrategy declares crv and CRVUSD as `public constant`
+        // singleton addresses rather than constructor parameters. Both mainnet tokens are
+        // shared across all deployed strategy instances and are never expected to differ
+        // between deployments, so baking them in avoids 2 extra storage slots
         // and eliminates misconfiguration risk. Unit tests that run without a mainnet fork
         // must etch mock ERC20 bytecode at those addresses so calls like crv.balanceOf()
-        // don't revert with "call to non-contract". See UsdtNgCrvUsdLpStakeDaoStrategy.t.sol.
+        // don't revert with "call to non-contract".
         bytes memory erc20Code = address(new H7MockERC20("x", "x", 18)).code;
         vm.etch(0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E, erc20Code); // CRVUSD
         vm.etch(0xD533a949740bb3306d119CC777fa900bA034cd52, erc20Code); // CRV
-        vm.etch(0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF, erc20Code); // pmUSD
         crvUSD = H7MockERC20(0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E);
         crv = H7MockERC20(0xD533a949740bb3306d119CC777fa900bA034cd52);
-        pmUsd = H7MockERC20(0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF);
+        otherCoin = new H7MockERC20("OTHER", "OTHER", 18);
 
         collateralOracle = new H7MockOracle(8, 1e8);
         debtOracle = new H7MockOracle(8, 1e8);
@@ -480,7 +479,7 @@ contract VerifyH7_CrvOracleDoS is Test {
         usdtCrvUsdPool = new H7MockCurveStableSwap(address(usdt), address(crvUSD), 0, 1);
         lpPool = new H7MockCurveStableSwapNG(address(crvUSD), 1);
         lpPool.setLpToken(address(lpToken));
-        lpPool.setPmUsd(address(pmUsd));
+        lpPool.setOtherCoin(address(otherCoin));
 
         accountant = new H7MockAccountant(address(crv));
         rewardVault = new H7MockRewardVault(address(lpToken), address(crv), address(accountant));
@@ -512,7 +511,7 @@ contract VerifyH7_CrvOracleDoS is Test {
             3600
         );
 
-        strategy = new UsdtNgCrvUsdLpStakeDaoStrategy(
+        strategy = new UsdtCrvUsdLpStakeDaoStrategy(
             address(usdt),
             predictedVault,
             owner,
@@ -526,7 +525,8 @@ contract VerifyH7_CrvOracleDoS is Test {
             1,
             address(crvUsdOracle),
             address(usdtOracle),
-            address(crvOracle)
+            address(crvOracle),
+            "USDT -> USDT/crvUSD LP Strategy"
         );
 
         vault = new Zenji(

@@ -105,7 +105,7 @@ abstract contract ZenjiStrategyTestBase is ZenjiForkTestBase {
     /// the strategy's LP pool can absorb the single-sided add and an arb can restore it
     /// within MAX_SINGLE_SIDED_EXIT_DISCOUNT (2%). Default = _baseDeposit() which is fine
     /// for non-LP strategies and large/deep LP pools; thin-pool LP strategies (e.g.
-    /// pmUSD/crvUSD with $10M TVL) should override to a smaller amount (1-5% of pool TVL).
+    /// USDT/crvUSD with $10M TVL) should override to a smaller amount (1-5% of pool TVL).
     function _realisticLifecycleDeposit() internal pure virtual returns (uint256) {
         return _baseDeposit();
     }
