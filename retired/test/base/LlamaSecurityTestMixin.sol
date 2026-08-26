@@ -68,37 +68,43 @@ abstract contract LlamaSecurityTestMixin is ZenjiForkTestBase {
 
     // ============ Realistic mainnet lifecycle ============
 
-    address constant PMUSD_CRVUSD_POOL_MIXIN = 0xEcb0F0d68C19BdAaDAEbE24f6752A4Db34e2c2cb;
-    address constant PMUSD_MIXIN = 0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF;
+    address constant USDT_CRVUSD_POOL_MIXIN = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
     address constant CRVUSD_MIXIN = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
 
-    function _pmUsdPoolIndices() internal view returns (int128 iPm, int128 iCrv) {
-        address c0 = ICurveStableSwapNG(PMUSD_CRVUSD_POOL_MIXIN).coins(0);
-        if (c0 == PMUSD_MIXIN) {
-            iPm = 0;
-            iCrv = 1;
-        } else {
-            iPm = 1;
-            iCrv = 0;
-        }
-    }
+    /// @notice Simulate an arbitrageur restoring the USDT/crvUSD pool ratio after the strategy
+    /// added crvUSD single-sided. The arb sells USDT into the pool to buy back the excess
+    /// crvUSD. Pool fees accrue to LP holders (the strategy), which shows up once
+    /// `updateCachedVirtualPrice` is called.
+    ///
+    /// Mirrors `CrvUsdLpStrategyTestBase._arbitragePoolBalance`. Coin ordering (USDT = 0,
+    /// crvUSD = 1) is asserted rather than derived — every live vault wires this pool, and a
+    /// silent index flip would make the arb a no-op instead of a failure.
+    /// Skips silently if the pool is already balanced (small deposits may not move it).
+    function _arbitrateLpPool() internal {
+        address pool = USDT_CRVUSD_POOL_MIXIN;
+        require(
+            ICurveStableSwapNG(pool).coins(1) == CRVUSD_MIXIN, "mixin: unexpected coin ordering"
+        );
+        address usdt_ = ICurveStableSwapNG(pool).coins(0);
 
-    function _arbitrateLlamaPmUsdPool() internal {
-        (int128 iPm, int128 iCrv) = _pmUsdPoolIndices();
-        uint256 pmBal = ICurveStableSwapNG(PMUSD_CRVUSD_POOL_MIXIN).balances(uint128(iPm));
-        uint256 crvBal = ICurveStableSwapNG(PMUSD_CRVUSD_POOL_MIXIN).balances(uint128(iCrv));
-        if (crvBal <= pmBal) return;
-        uint256 excess = crvBal - pmBal;
-        uint256 pmToSwap = excess / 2;
-        if (pmToSwap == 0) return;
+        // balances(0) is USDT (6-dec), balances(1) is crvUSD (18-dec) -- normalise before comparing.
+        uint256 crvBal = ICurveStableSwapNG(pool).balances(1);
+        uint256 usdtBal18 = ICurveStableSwapNG(pool).balances(0) * 1e12;
+        if (crvBal <= usdtBal18) return; // pool not crvUSD-heavy, nothing to arb
+        uint256 usdtToSwap = (crvBal - usdtBal18) / (2 * 1e12);
+        if (usdtToSwap == 0) return;
 
-        address arb = makeAddr("llamaSec_pmArb");
-        deal(PMUSD_MIXIN, arb, pmToSwap);
+        address arb = makeAddr("llamaSec_lpArb");
+        deal(usdt_, arb, usdtToSwap);
         vm.startPrank(arb);
-        IERC20(PMUSD_MIXIN).approve(PMUSD_CRVUSD_POOL_MIXIN, pmToSwap);
-        ICurveStableSwapNG(PMUSD_CRVUSD_POOL_MIXIN).exchange(iPm, iCrv, pmToSwap, 0);
+        // USDT has a non-standard approve (no return value) -- use a low-level call.
+        (bool ok,) =
+            usdt_.call(abi.encodeWithSignature("approve(address,uint256)", pool, usdtToSwap));
+        require(ok, "USDT approve failed");
+        ICurveStableSwapNG(pool).exchange(0, 1, usdtToSwap, 0);
         vm.stopPrank();
 
+        // Refresh the strategy's unit-value cache so balanceOf() reflects post-arb pool state.
         yieldStrategy.updateCachedVirtualPrice();
     }
 
@@ -113,7 +119,7 @@ abstract contract LlamaSecurityTestMixin is ZenjiForkTestBase {
         deal(_collateral(), user1, dep);
         _depositAs(user1, dep);
 
-        _arbitrateLlamaPmUsdPool();
+        _arbitrateLpPool();
         _refreshOracles();
 
         uint256 sharesBefore = vault.balanceOf(user1);

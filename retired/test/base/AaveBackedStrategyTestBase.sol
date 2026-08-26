@@ -7,14 +7,14 @@ import { SafeTransferLib } from "../../src/libraries/SafeTransferLib.sol";
 
 /// @title AaveBackedStrategyTestBase
 /// @notice Mid-level base shared by all Aave-collateralised strategy fork tests
-///         (IPOR vault, PmUsd LP, and any future Aave-backed yield strategy). Encapsulates:
+///         (USDT/crvUSD LP and any future Aave-backed yield strategy). Encapsulates:
 ///           - USDT debt-token / oracle constants
 ///           - The MIN_ROUTABLE_DEBT dust-unwind contract (oversell + reverse-swap)
 ///           - AaveLoanManager access-control surface tests
 ///           - Debt-token decimal-scaling invariant
 ///           - Donation resilience for Aave-side accounting
 ///         Strategy-specific concerns (IPOR plasma vault vs Stake DAO LP, etc.) live in the
-///         next layer down (IporVaultStrategyTestBase, PmUsdAaveStrategyTestBase).
+///         next layer down (CrvUsdLpStrategyTestBase).
 abstract contract AaveBackedStrategyTestBase is ZenjiStrategyTestBase {
     using SafeTransferLib for IERC20;
 

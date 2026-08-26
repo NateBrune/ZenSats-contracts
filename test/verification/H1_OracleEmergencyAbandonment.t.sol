@@ -8,7 +8,7 @@ pragma solidity ^0.8.33;
 ///   = 90000s), BOTH withdrawAll() AND emergencyWithdraw() of the USDT-debt LP strategy revert
 ///   through the SAME oracle-gated path:
 ///     _withdrawAll()/_emergencyWithdraw()
-///       -> _swapYieldAssetToDebt(...) [UsdtNgCrvUsdLpStakeDaoStrategy._crvUsdToUsdt]
+///       -> _swapYieldAssetToDebt(...) [UsdtCrvUsdLpStakeDaoStrategy._crvUsdToUsdt]
 ///       -> CurveUsdtSwapLib.swapCrvUsdToUsdt
 ///       -> _oracleFloor18to6 -> _getOraclePrices -> revert StaleOrInvalidOracle
 ///
@@ -21,8 +21,8 @@ pragma solidity ^0.8.33;
 /// EXPECTED (correct): an emergency that recovers nothing should NOT silently mark step 0 done.
 /// ACTUAL (buggy):     step 0 marked done, LP abandoned, EmergencyYieldRedeemed(0).
 ///
-/// This test reuses the same mock harness as test/UsdtPmUsdCrvUsdStrategy.t.sol (real Zenji
-/// vault + real UsdtNgCrvUsdLpStakeDaoStrategy + real ZenjiAdmin + real CurveUsdtSwapLib;
+/// This test uses a mock harness (real Zenji
+/// vault + real UsdtCrvUsdLpStakeDaoStrategy + real ZenjiAdmin + real CurveUsdtSwapLib;
 /// only the external Curve pools / oracles / Stake DAO vault are mocked). The oracle staleness
 /// revert is REAL audited-code behavior (CurveUsdtSwapLib.StaleOrInvalidOracle).
 
@@ -31,8 +31,8 @@ import { Zenji } from "../../src/Zenji.sol";
 import { ZenjiViewHelper } from "../../src/ZenjiViewHelper.sol";
 import { AaveLoanManager } from "../../src/lenders/AaveLoanManager.sol";
 import {
-    UsdtNgCrvUsdLpStakeDaoStrategy
-} from "../../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
+    UsdtCrvUsdLpStakeDaoStrategy
+} from "../../src/strategies/lp/UsdtCrvUsdLpStakeDaoStrategy.sol";
 import { CurveUsdtSwapLib } from "../../src/libraries/CurveUsdtSwapLib.sol";
 import { IERC20 } from "../../src/interfaces/IERC20.sol";
 import { IAavePool } from "../../src/interfaces/IAavePool.sol";
@@ -41,7 +41,7 @@ import { ERC4626 } from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import { IERC20 as OZ_IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-// ============ Mocks (mirrors of UsdtPmUsdCrvUsdStrategy.t.sol) ============
+// ============ Mocks (external Curve pools / oracles / Stake DAO vault) ============
 
 contract MockERC20 is ERC20 {
     uint8 private immutable _decimals;
@@ -140,36 +140,36 @@ contract MockCurveStableSwap {
     }
 }
 
-/// @notice pmUSD/crvUSD StableSwapNG pool with LP minting.
+/// @notice Legacy 2-coin crvUSD pool with LP minting.
 contract MockCurveStableSwapNG {
     MockERC20 public immutable crvUSD;
-    MockERC20 public pmUSD;
+    MockERC20 public otherCoin;
     MockERC20 public lpToken;
     int128 public immutable crvUsdIdx;
-    uint256 public pmUsdIdx;
+    uint256 public otherCoinIdx;
 
     constructor(address _crvUSD, int128 _crvUsdIdx) {
         crvUSD = MockERC20(_crvUSD);
         crvUsdIdx = _crvUsdIdx;
-        pmUsdIdx = _crvUsdIdx == int128(0) ? 1 : 0;
+        otherCoinIdx = _crvUsdIdx == int128(0) ? 1 : 0;
     }
 
     function setLpToken(address _lpToken) external {
         lpToken = MockERC20(_lpToken);
     }
 
-    function setPmUsd(address _pmUSD) external {
-        pmUSD = MockERC20(_pmUSD);
+    function setOtherCoin(address _otherCoin) external {
+        otherCoin = MockERC20(_otherCoin);
     }
 
-    function add_liquidity(uint256[] calldata amounts, uint256) external returns (uint256) {
+    function add_liquidity(uint256[2] calldata amounts, uint256) external returns (uint256) {
         uint256 crvUsdAmount = amounts[uint256(uint128(crvUsdIdx))];
-        uint256 pmUsdAmount = amounts[pmUsdIdx];
+        uint256 otherCoinAmount = amounts[otherCoinIdx];
         if (crvUsdAmount > 0) crvUSD.transferFrom(msg.sender, address(this), crvUsdAmount);
-        if (pmUsdAmount > 0 && address(pmUSD) != address(0)) {
-            pmUSD.transferFrom(msg.sender, address(this), pmUsdAmount);
+        if (otherCoinAmount > 0 && address(otherCoin) != address(0)) {
+            otherCoin.transferFrom(msg.sender, address(this), otherCoinAmount);
         }
-        uint256 totalMinted = crvUsdAmount + pmUsdAmount;
+        uint256 totalMinted = crvUsdAmount + otherCoinAmount;
         if (totalMinted > 0) lpToken.mint(msg.sender, totalMinted);
         return totalMinted;
     }
@@ -183,8 +183,8 @@ contract MockCurveStableSwapNG {
         return burn_amount;
     }
 
-    function calc_token_amount(uint256[] calldata amounts, bool) external view returns (uint256) {
-        return amounts[uint256(uint128(crvUsdIdx))] + amounts[pmUsdIdx];
+    function calc_token_amount(uint256[2] calldata amounts, bool) external view returns (uint256) {
+        return amounts[uint256(uint128(crvUsdIdx))] + amounts[otherCoinIdx];
     }
 
     function calc_withdraw_one_coin(uint256 burn_amount, int128) external pure returns (uint256) {
@@ -200,7 +200,7 @@ contract MockCurveStableSwapNG {
     }
 
     function coins(uint256 i) external view returns (address) {
-        return i == uint256(uint128(crvUsdIdx)) ? address(crvUSD) : address(pmUSD);
+        return i == uint256(uint128(crvUsdIdx)) ? address(crvUSD) : address(otherCoin);
     }
 
     function balances(uint256) external pure returns (uint256) {
@@ -373,7 +373,7 @@ contract H1_OracleEmergencyAbandonmentTest is Test {
     MockERC20 usdt;
     MockERC20 crvUSD;
     MockERC20 crv;
-    MockERC20 pmUsd;
+    MockERC20 otherCoin;
     MockERC20 lpToken;
     MockERC20 aToken;
     MockERC20 debtToken;
@@ -391,7 +391,7 @@ contract H1_OracleEmergencyAbandonmentTest is Test {
     MockCrvSwapper crvSwapper;
 
     AaveLoanManager loanManager;
-    UsdtNgCrvUsdLpStakeDaoStrategy strategy;
+    UsdtCrvUsdLpStakeDaoStrategy strategy;
     Zenji vault;
     ZenjiViewHelper viewHelper;
 
@@ -407,11 +407,10 @@ contract H1_OracleEmergencyAbandonmentTest is Test {
         bytes memory erc20Code = address(new MockERC20("x", "x", 18)).code;
         vm.etch(0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E, erc20Code); // CRVUSD
         vm.etch(0xD533a949740bb3306d119CC777fa900bA034cd52, erc20Code); // crv
-        vm.etch(0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF, erc20Code); // pmUSD
         crvUSD = MockERC20(0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E);
         crv = MockERC20(0xD533a949740bb3306d119CC777fa900bA034cd52);
-        pmUsd = MockERC20(0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF);
-        lpToken = new MockERC20("pmUSD/crvUSD LP", "LP", 18);
+        otherCoin = new MockERC20("OTHER", "OTHER", 18);
+        lpToken = new MockERC20("USDT/crvUSD LP", "LP", 18);
         aToken = new MockERC20("aWBTC", "aWBTC", 8);
         debtToken = new MockERC20("vUSDT", "vUSDT", 6);
 
@@ -426,7 +425,7 @@ contract H1_OracleEmergencyAbandonmentTest is Test {
         usdtCrvUsdPool = new MockCurveStableSwap(address(usdt), address(crvUSD), 0, 1);
         lpPool = new MockCurveStableSwapNG(address(crvUSD), 1);
         lpPool.setLpToken(address(lpToken));
-        lpPool.setPmUsd(address(pmUsd));
+        lpPool.setOtherCoin(address(otherCoin));
         accountant = new MockAccountant(address(crv));
         rewardVault = new MockRewardVault(address(lpToken), address(crv), address(accountant));
         crvSwapper = new MockCrvSwapper(address(crv), address(crvUSD));
@@ -455,7 +454,7 @@ contract H1_OracleEmergencyAbandonmentTest is Test {
             3600
         );
 
-        strategy = new UsdtNgCrvUsdLpStakeDaoStrategy(
+        strategy = new UsdtCrvUsdLpStakeDaoStrategy(
             address(usdt),
             predictedVault,
             owner,
@@ -469,7 +468,8 @@ contract H1_OracleEmergencyAbandonmentTest is Test {
             1, // lpCrvUsdIndex
             address(crvUsdOracle),
             address(usdtOracle),
-            address(crvOracle)
+            address(crvOracle),
+            "USDT -> USDT/crvUSD LP Strategy"
         );
 
         vault = new Zenji(

@@ -22,7 +22,7 @@ pragma solidity ^0.8.33;
 ///                     and withdrawals for everyone.
 /// ACTUAL (buggy):     deposit(), withdraw(), redeem(), harvestYield() ALL revert; LP stranded.
 ///
-/// This is a real-fork PoC. It deploys the live WBTC + USDT + pmUSD/crvUSD (Stake DAO) vault
+/// This is a real-fork PoC. It deploys the WBTC + USDT + USDT/crvUSD (Stake DAO) vault
 /// against mainnet and warps the crvUSD/USD feed past its 25h staleness window. The revert is
 /// REAL audited-code behaviour (CurveUsdtSwapLib.StaleOrInvalidOracle), not a mock.
 
@@ -35,8 +35,8 @@ import {
 } from "../../src/swappers/base/UniversalRouterV3SingleHopSwapper.sol";
 import { CrvToCrvUsdSwapper } from "../../src/swappers/reward/CrvToCrvUsdSwapper.sol";
 import {
-    UsdtNgCrvUsdLpStakeDaoStrategy
-} from "../../src/strategies/lp/UsdtNgCrvUsdLpStakeDaoStrategy.sol";
+    UsdtCrvUsdLpStakeDaoStrategy
+} from "../../src/strategies/lp/UsdtCrvUsdLpStakeDaoStrategy.sol";
 import { ICurveStableSwapNG } from "../../src/interfaces/ICurveStableSwapNG.sol";
 import { IERC20 } from "../../src/interfaces/IERC20.sol";
 
@@ -44,7 +44,6 @@ contract M02_UsdtVaultOracleFreeze is ZenjiForkTestBase {
     address constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
     address constant CRV = 0xD533a949740bb3306d119CC777fa900bA034cd52;
     address constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
-    address constant PMUSD = 0xC0c17dD08263C16f6b64E772fB9B723Bf1344DdF;
 
     address constant AAVE_POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
     address constant AAVE_A_WBTC = 0x5Ee5bf7ae06D1Be5997A1A72006FE6C607eC6DE8;
@@ -55,9 +54,8 @@ contract M02_UsdtVaultOracleFreeze is ZenjiForkTestBase {
     uint24 constant WBTC_USDT_V3_FEE = 3000;
 
     address constant USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
-    address constant PMUSD_CRVUSD_POOL = 0xEcb0F0d68C19BdAaDAEbE24f6752A4Db34e2c2cb;
-    address constant PMUSD_CRVUSD_GAUGE = 0xF3c43E7D722963b9569d1E39873dF9E2dFE8C087;
-    address constant STAKE_DAO_REWARD_VAULT = 0x7d3CDe9cCf0109423E672c17bD36481CF8CE437D;
+    address constant USDT_CRVUSD_GAUGE = 0x4e6bB6B7447B7B2Aa268C16AB87F4Bb48BF57939;
+    address constant STAKE_DAO_REWARD_VAULT = 0xF980f195A93577DcCe48e91e98124D3B71C4a066;
     address constant CRV_CRVUSD_TRICRYPTO = 0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14;
 
     address constant BTC_USD_ORACLE = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
@@ -70,7 +68,7 @@ contract M02_UsdtVaultOracleFreeze is ZenjiForkTestBase {
 
     UniversalRouterV3SingleHopSwapper public swapper;
     CrvToCrvUsdSwapper public crvSwapper;
-    UsdtNgCrvUsdLpStakeDaoStrategy public strategy;
+    UsdtCrvUsdLpStakeDaoStrategy public strategy;
 
     // ============ Abstract base implementations ============
 
@@ -102,8 +100,8 @@ contract M02_UsdtVaultOracleFreeze is ZenjiForkTestBase {
     }
 
     function _getLpCrvUsdIndex() internal view returns (int128) {
-        address coin0 = ICurveStableSwapNG(PMUSD_CRVUSD_POOL).coins(0);
-        address coin1 = ICurveStableSwapNG(PMUSD_CRVUSD_POOL).coins(1);
+        address coin0 = ICurveStableSwapNG(USDT_CRVUSD_POOL).coins(0);
+        address coin1 = ICurveStableSwapNG(USDT_CRVUSD_POOL).coins(1);
         if (coin0 == CRVUSD) return int128(0);
         if (coin1 == CRVUSD) return int128(1);
         revert("crvUSD index not found");
@@ -123,21 +121,22 @@ contract M02_UsdtVaultOracleFreeze is ZenjiForkTestBase {
             owner, WBTC, USDT, UNIVERSAL_ROUTER, WBTC_USDT_V3_FEE, BTC_USD_ORACLE, USDT_USD_ORACLE, 3_600
         );
 
-        strategy = new UsdtNgCrvUsdLpStakeDaoStrategy(
+        strategy = new UsdtCrvUsdLpStakeDaoStrategy(
             USDT,
             expectedVaultAddress,
             owner,
             USDT_CRVUSD_POOL,
-            PMUSD_CRVUSD_POOL,
+            USDT_CRVUSD_POOL,
             STAKE_DAO_REWARD_VAULT,
             address(crvSwapper),
-            PMUSD_CRVUSD_GAUGE,
+            USDT_CRVUSD_GAUGE,
             0,
             1,
             lpCrvUsdIndex,
             CRVUSD_USD_ORACLE,
             USDT_USD_ORACLE,
-            CRV_USD_ORACLE
+            CRV_USD_ORACLE,
+            "USDT -> USDT/crvUSD LP Strategy"
         );
 
         loanManager = new AaveLoanManager(

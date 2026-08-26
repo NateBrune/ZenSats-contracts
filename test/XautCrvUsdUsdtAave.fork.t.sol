@@ -66,8 +66,7 @@ interface IPoolConfiguratorLike {
 /// @dev XAUT has 6 decimals. Aave eMode category 43 ("XAUt USDC USDT GHO") is activated, but the
 ///      vault is conservatively configured at 60% LTV (AaveLoanManager maxLtvBps = 6000).
 ///
-///      This configuration's distinguishing risk vs. the pmUSD/crvUSD sibling
-///      (XautPmUsdCrvUsdAave): the swap leg (USDT<->crvUSD) and the LP leg (crvUSD single-sided
+///      This configuration's distinguishing risk vs. a separate-pool sibling: the swap leg (USDT<->crvUSD) and the LP leg (crvUSD single-sided
 ///      add/remove) both use the SAME Curve pool (crvUSD/USDT, 0x390f...97BF4). A deposit pays
 ///      the swap fee AND the LP add's implicit swap fee on that one pool; a withdrawal pays the
 ///      LP remove's implicit swap fee AND the swap-back fee on the same pool again — i.e. the
@@ -369,7 +368,7 @@ contract XautCrvUsdUsdtAave is AaveSecurityTestMixin {
     }
 
     /// @notice A 50 XAUT position (~$225K+) can fully exit at the 2% production default.
-    /// Kept modest vs. the pmUSD sibling's 100 XAUT because this pool is hit 4x per round trip.
+    /// Kept modest because this pool is hit 4x per round trip.
     function test_largeDeposit_fullRedeem_succeedsAt2Percent() public {
         bool passed = _runSlippageScenario(2e16, 50e6); // 50 XAUT
         assertTrue(passed, "50 XAUT full redeem should succeed at 2% slippage");
@@ -385,7 +384,7 @@ contract XautCrvUsdUsdtAave is AaveSecurityTestMixin {
 
     /// @notice Binary-searches the largest single-depositor position that can deposit AND fully
     ///         redeem within 1% slippage — the repo-standard capacity methodology (mirrors
-    ///         CrvUsdLpStrategyTestBase.test_capacityReport and the XAUT/pmUSD sibling).
+    ///         CrvUsdLpStrategyTestBase.test_capacityReport).
     /// @dev INFORMATIONAL. Mainnet pool liquidity moves, so the number is a snapshot of the fork
     ///      block, not a constant. Use it to set the vault deposit cap WITH a safety margin —
     ///      never set the cap at the measured value. Run with -vv to read the report.
@@ -590,7 +589,7 @@ contract XautCrvUsdUsdtAave is AaveSecurityTestMixin {
         assertLe(lossBps, 50, "Same-pool swap+LP round trip lost more than 50 bps");
     }
 
-    // ============ Swapper-specific tests (matches XautPmUsdCrvUsdAave patterns) ============
+    // ============ Swapper-specific tests ============
 
     function test_swapperTimelock() public {
         _deployVault();
