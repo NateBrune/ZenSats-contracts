@@ -76,12 +76,10 @@ web_modules/
 # Yarn Integrity file
 .yarn-integrity
 
-# dotenv environment variable files
-.env
-.env.development.local
-.env.test.local
-.env.production.local
-.env.local
+# dotenv environment variable files -- catch-all, so .env.production / .env.bak /
+# .env.old and any other future variant are covered without editing this list.
+.env*
+!.env.example
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
@@ -146,3 +144,15 @@ broadcast/
 # Plamen audit scratchpad
 .plamen-audit/
 .plamen-audit-prior-*/
+
+# Internal audit reports, fix specs and session handoffs. These describe accepted and
+# still-open risks against LIVE deployed vaults (bounded-bleed bounds, keeper revert
+# wedges and their manual recovery, unapplied deposit caps, role concentration), so they
+# are kept local rather than published alongside the source. Re-track individually with
+# `git add -f <file>` once the issues they describe are closed.
+AUDIT_*.md
+ARM4_SKIM_SPEC.md
+ARM4_VERIFICATION_PLAN.md
+COVERAGE_PARTIAL_PROGRESS_PLAN.md
+COVERAGE_REBALANCE_FIX_PLAN.md
+HANDOFF.md
