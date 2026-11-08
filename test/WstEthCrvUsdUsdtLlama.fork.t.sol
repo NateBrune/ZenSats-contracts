@@ -3,6 +3,7 @@ pragma solidity ^0.8.33;
 
 import { console } from "forge-std/Test.sol";
 import { CrvUsdLpStrategyTestBase } from "./base/CrvUsdLpStrategyTestBase.sol";
+import { LivenessTestMixin } from "./base/LivenessTestMixin.sol";
 import {
     ZenjiWstEthLlamaUsdtStakeDao
 } from "../src/implementations/stakedao/ZenjiWstEthLlamaUsdtStakeDao.sol";
@@ -23,7 +24,7 @@ import { Zenji } from "../src/Zenji.sol";
 ///         (Stake DAO reward vault) strategy.
 ///         Swap route: wstETH → WETH via Uniswap V3 (0.01%) → crvUSD via Curve TriCRV.
 ///         Strategy: CrvUsdLpStakeDaoStrategy — single-sided crvUSD → USDT/crvUSD pool → Stake DAO.
-contract WstEthCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
+contract WstEthCrvUsdUsdtLlama is LivenessTestMixin, CrvUsdLpStrategyTestBase {
     /// @dev WstEthOracle composite reports the OLDER feed timestamp; its stETH/ETH leg has a
     ///      24h Chainlink heartbeat, so the collateral staleness window is 90000s.
     function _collateralStalenessWarp() internal pure override returns (uint256) {

@@ -618,9 +618,12 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
     ///      Arm 3 funds its repay from COLLATERAL, not the strategy (Plan B — see
     ///      rebalanceCoverageUp NatSpec for why: D - S is conserved under any strategy-funded
     ///      repay, so only a collateral-funded repay can actually shrink the deficit). It converges
-    ///      in a single call and is guarded by a strict-improvement postcondition
-    ///      (CoverageDidNotImprove) that makes a repeat of the old non-convergent behavior
-    ///      unrepresentable. Operational recovery for a degenerate case (e.g. no swapper
+    ///      in a single call and is guarded by a band postcondition (CoverageNotRestored): the call
+    ///      either leaves coverage >= minStrategyRatio or reverts, rolling back the collateral
+    ///      removal and swap together. This bounds the RATIO only -- the value bound is the
+    ///      MIN_SWAP_OUT_BPS floor (SwapperUnderperformed). The idle-only path keeps the weaker
+    ///      strict-improvement check (CoverageDidNotImprove), since it is only reached with a
+    ///      <= 1-unit residual deficit. Operational recovery for a degenerate case (e.g. no swapper
     ///      configured) remains setIdle(true)/setIdle(false), which drives debt to 0 (coverage
     ///      becomes type(uint256).max, excluded from both guards) and re-levers at parity; measured
     ///      cost ~1 bp at 1 WBTC.
@@ -696,7 +699,14 @@ contract Zenji is ZenjiStorage, IERC4626, Proxy {
         } else if (ratioTooLow) {
             increased = false;
             lastStrategyBalance = ZenjiCoreLib.rebalanceCoverageUp(
-                loanManager, yieldStrategy, debtAsset, collateralAsset, swapper, accumulatedFees, PRECISION
+                loanManager,
+                yieldStrategy,
+                debtAsset,
+                collateralAsset,
+                swapper,
+                accumulatedFees,
+                PRECISION,
+                minStrategyRatio
             );
             newLtv = loanManager.getCurrentLTV();
         } else if (ratioTooHigh) {

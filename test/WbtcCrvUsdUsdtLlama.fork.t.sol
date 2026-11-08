@@ -3,6 +3,7 @@ pragma solidity ^0.8.33;
 
 import { console, stdStorage, StdStorage } from "forge-std/Test.sol";
 import { CrvUsdLpStrategyTestBase } from "./base/CrvUsdLpStrategyTestBase.sol";
+import { LivenessTestMixin } from "./base/LivenessTestMixin.sol";
 import { ZenjiWbtcLlamaUsdtStakeDao } from "../src/implementations/stakedao/ZenjiWbtcLlamaUsdtStakeDao.sol";
 import { LlamaLoanManager } from "../src/lenders/LlamaLoanManager.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
@@ -114,7 +115,7 @@ contract InflatedQuoteSwapper is ISwapper {
 ///         (Stake DAO reward vault) strategy.
 ///         Swap route: WBTC → WETH via Uniswap V3 (0.05%) → crvUSD via Curve TriCRV.
 ///         Strategy: CrvUsdLpStakeDaoStrategy — single-sided crvUSD → USDT/crvUSD pool → Stake DAO.
-contract WbtcCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
+contract WbtcCrvUsdUsdtLlama is LivenessTestMixin, CrvUsdLpStrategyTestBase {
     using stdStorage for StdStorage;
 
     address constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
@@ -873,8 +874,11 @@ contract WbtcCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
             assembly {
                 sel := mload(add(err, 32))
             }
-            if (sel == ZenjiCoreLib.CoverageDidNotImprove.selector) {
-                console.log("postcondition guard: CoverageDidNotImprove REACHED - guard is live and reachable.");
+            if (
+                sel == ZenjiCoreLib.CoverageDidNotImprove.selector
+                    || sel == ZenjiCoreLib.CoverageNotRestored.selector
+            ) {
+                console.log("postcondition guard: arm-3 postcondition REACHED - guard is live and reachable.");
                 assertEq(strategy.balanceOf(), stratAfterLoss, "reverted call must not mutate strategy balance");
                 assertEq(loanManager.getCurrentDebt(), debtAfterLoss, "reverted call must not mutate debt");
             } else {
@@ -933,6 +937,99 @@ contract WbtcCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
         assertEq(loanManager.getCurrentDebt(), debtBefore, "reverted call must not mutate debt");
         assertEq(loanManager.getCurrentCollateral(), loanManager.getCurrentCollateral(), "sanity");
         console.log("SwapperUnderperformed correctly blocked a sandwiched/underperforming arm-3 swap.");
+    }
+
+    /// @notice M-NEW-1 guard: arm 3 must never leave coverage OUTSIDE the deadband as a silent
+    ///         success. Either the call restores the band, or it reverts and mutates nothing.
+    ///
+    /// @dev    The step-3 floor (`SwapperUnderperformed`) is measured against the oracle value of
+    ///         the COLLATERAL SPENT, not against `deficit`, so `received` can legitimately land in
+    ///         `[expectedDebt, deficit)`. Before the fix, `toRepay = min(received, deficit)` landed
+    ///         that shortfall as a real partial repay and the postcondition (`newCoverage >
+    ///         startCoverage`, which reduces to `toRepay > 0`) passed. The full `cDesired` had
+    ///         already been sold, so the position could be left below the band with LTV dragged
+    ///         past `lowerBand` -- and the next tick dispatches to arm 1, whose
+    ///         `enforceCoverageAfterIncrease` guard refuses while coverage is low. That is the
+    ///         deadlock the all-or-nothing removal exists to prevent.
+    ///
+    ///         MEASURED: on this venue the state is NOT reachable, so the band check is
+    ///         defense-in-depth rather than a live bug fix. Two bounds close from opposite sides.
+    ///         Below ~44% strategy loss a floor-clearing shortfall still restores the band (see
+    ///         `test_coverageUp_lossSizeSweep`: a 25% loss ends at 9977 bps). Above it the deficit
+    ///         is large enough that removing `cDesired` would push the position past a health
+    ///         limit before the swap ever runs: first the loan manager's MIN_HEALTH guard
+    ///         (`HealthTooLow`, measured at 40%), then LlamaLend's own "Debt too high" (45%+) --
+    ///         the bounds the step-1b NatSpec already names for this venue. At 30% an exact-floor
+    ///         payout clears the swap floor and still lands in band (measured 9828 bps). This test
+    ///         sweeps across that boundary and asserts the invariant holds at every size, whichever
+    ///         guard happens to be the binding one.
+    function test_coverageUp_neverSilentlyLeavesBandOpen() public {
+        uint256[6] memory losses = [uint256(30), 40, 45, 50, 55, 60];
+        // Iterations that got PAST the swap floor and reached the band postcondition (converged
+        // or CoverageNotRestored). Asserted > 0 below so the sweep cannot go green while every
+        // size is stopped by an earlier guard and the band check is never exercised.
+        uint256 reachedBandCheck;
+        for (uint256 i = 0; i < losses.length; i++) {
+            uint256 snap = vm.snapshot();
+            _deployVault();
+            _depositAs(user1, _baseDeposit());
+            _refreshOracles();
+
+            IERC20 sdShares = IERC20(address(strategy.stakingVault()));
+            uint256 shares = sdShares.balanceOf(address(strategy));
+            vm.prank(address(strategy));
+            sdShares.transfer(makeAddr("bandSweepSink"), (shares * losses[i]) / 100);
+            _refreshOracles();
+
+            UnderperformingSwapper bad = new UnderperformingSwapper(address(swapper), CRVUSD);
+            vm.prank(vault.gov());
+            vault.proposeSwapper(address(bad));
+            vm.warp(block.timestamp + 1 weeks + 1);
+            _refreshOracles();
+            vm.prank(vault.gov());
+            vault.executeSwapper();
+            _refreshOracles();
+
+            // Pay exactly the oracle floor: clears `SwapperUnderperformed` by construction, so any
+            // shortfall that remains can only be caught by the band postcondition. Sized AFTER the
+            // timelock warp -- a week of interest grows the debt, and a floor sized before it
+            // lands just under the contract's `expectedDebt`, so the swap floor fires first and
+            // the band check is never reached (the test then passes vacuously).
+            uint256 deficit = loanManager.getCurrentDebt() - strategy.balanceOf();
+            uint256 c = bad.quoteCollateralForDebt(deficit);
+            uint256 floorOut = (loanManager.getCollateralValue(c) * 9500) / 10000;
+            deal(CRVUSD, address(bad), floorOut * 2 + 1e18);
+            bad.setPayout(floorOut);
+
+            uint256 stratBefore = strategy.balanceOf();
+            uint256 debtBefore = loanManager.getCurrentDebt();
+            uint256 collBefore = loanManager.getCurrentCollateral();
+            uint256 minRatio = vault.PRECISION() - vault.DEADBAND_SPREAD();
+
+            try vault.rebalance() {
+                // Success is only legitimate if coverage is actually back inside the band.
+                uint256 ratioAfter = vault.strategyToDebtRatio();
+                assertGe(ratioAfter, minRatio, "arm 3 reported success with coverage still out of band");
+                console.log("loss %d%%: converged, ratio(bps)=%d", losses[i], ratioAfter / 1e14);
+                reachedBandCheck++;
+            } catch (bytes memory err) {
+                // Any revert is acceptable -- venue guard, oracle floor, or the band postcondition.
+                // What must hold is that NOTHING moved: no collateral spent, no LTV dragged, so the
+                // next tick cannot be handed an out-of-band position by arm 1.
+                assertEq(strategy.balanceOf(), stratBefore, "reverted call mutated strategy balance");
+                assertEq(loanManager.getCurrentDebt(), debtBefore, "reverted call mutated debt");
+                assertEq(loanManager.getCurrentCollateral(), collBefore, "reverted call spent collateral");
+                if (err.length >= 4 && bytes4(err) == ZenjiCoreLib.CoverageNotRestored.selector) {
+                    console.log("loss %d%%: CoverageNotRestored (band postcondition bound)", losses[i]);
+                    reachedBandCheck++;
+                } else {
+                    console.log("loss %d%%: reverted clean, no state change; selector:", losses[i]);
+                    console.logBytes(err);
+                }
+            }
+            vm.revertTo(snap);
+        }
+        assertGt(reachedBandCheck, 0, "no loss size reached the band postcondition -- sweep is vacuous");
     }
 
     /// @notice M-02 guard: a deficit whose sized collateral `c` exceeds the position's total
@@ -1289,6 +1386,12 @@ contract WbtcCrvUsdUsdtLlama is CrvUsdLpStrategyTestBase {
     /// @notice Repeatedly calls `_induceGain` with an exponentially growing chunk size until
     ///         `strategyToDebtRatio()` clears `targetRatio` (or `maxIters` is exhausted). Growing
     ///         geometrically avoids hardcoding a venue-specific crvUSD/debt-asset conversion factor.
+    /// @inheritdoc LivenessTestMixin
+    function _induceLivenessSurplus() internal override returns (bool) {
+        (, bool reached) = _induceGainUntilRatio(vault.PRECISION() + vault.PRECISION() * 20 / 100, 20);
+        return reached;
+    }
+
     function _induceGainUntilRatio(uint256 targetRatio, uint256 maxIters)
         internal
         returns (uint256 totalInduced, bool reached)

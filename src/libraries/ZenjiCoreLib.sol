@@ -61,6 +61,11 @@ library ZenjiCoreLib {
     ///         Distinguishable from SwapperUnderperformed (transient, retry) and the venue's own
     ///         HealthTooLow (opaque).
     error CoverageDeficitTooLarge(uint256 deficit, uint256 collateralRequired);
+    /// @notice Arm 3 ran but coverage is still outside the deadband. Distinct from
+    ///         SwapperUnderperformed (transient, retry) and CoverageDeficitTooLarge (needs an
+    ///         operator): this one means the swap cleared its oracle floor yet still returned too
+    ///         little to restore the band, so the whole call is rolled back. See step 5.
+    error CoverageNotRestored(uint256 achieved, uint256 required);
 
     event EmergencyYieldRedeemed(uint256 debtAssetReceived);
     event EmergencyLoanUnwound(uint256 collateralRecovered, uint256 debtRecovered);
@@ -385,7 +390,8 @@ library ZenjiCoreLib {
         IERC20 collateralAsset,
         ISwapper swapper,
         uint256 accumulatedFees,
-        uint256 precision
+        uint256 precision,
+        uint256 minCoverage
     ) external returns (uint256 newLastStrategyBalance) {
         uint256 debt = loanManager.getCurrentDebt();
         if (debt == 0) return yieldStrategy.balanceOf();
@@ -433,6 +439,9 @@ library ZenjiCoreLib {
             uint256 idleOnlyCoverage = idleOnlyDebt == 0
                 ? type(uint256).max
                 : (idleOnlyStrategyBalance * precision) / idleOnlyDebt;
+            // No band check needed here (unlike step 5): this branch is only reached when the
+            // remaining deficit is <= 1 debt unit, so coverage is within one debt unit of parity
+            // by construction -- inside any non-degenerate deadband.
             if (idleOnlyCoverage <= startCoverage) revert CoverageDidNotImprove();
             return idleOnlyStrategyBalance;
         }
@@ -521,17 +530,36 @@ library ZenjiCoreLib {
             loanManager.repayDebt(toRepay);
         }
 
-        // 5. Postcondition: coverage must have strictly improved, or revert. This bounds the
-        //    RATIO only -- it prevents the old bug class (an operation that looks corrective while
-        //    moving the ratio backwards) but it CANNOT bound value loss: arm 3 never touches S, so
-        //    `newCoverage > startCoverage` reduces to `toRepay > 0` and the collateral spent does
-        //    not appear in it at all. The value bound is the MIN_SWAP_OUT_BPS floor in step 3 --
-        //    do not mistake this check for one.
+        // 5. Postcondition: coverage must be back INSIDE the deadband, not merely improved.
+        //
+        //    This bounds the RATIO only -- it CANNOT bound value loss: arm 3 never touches S, so
+        //    the collateral spent does not appear in it at all. The value bound is the
+        //    MIN_SWAP_OUT_BPS floor in step 3 -- do not mistake this check for one.
+        //
+        //    WHY THE BAND AND NOT `> startCoverage` (audit M-NEW-1). The step-3 floor is applied
+        //    against the ORACLE VALUE OF THE COLLATERAL SPENT, not against `deficit`, so `received`
+        //    can land anywhere in [expectedDebt, deficit) without tripping SwapperUnderperformed --
+        //    `cDesired` is sized from quoteCollateralForDebt, which grosses up by the swapper's
+        //    flat SELF-REPORTED slippage rather than simulating the pool's actual depth. A
+        //    `newCoverage > startCoverage` check passes on that shortfall: it reduces to
+        //    `toRepay > 0`. But the full cDesired has already been sold, and per the measured
+        //    example in step 1b, LTV can fall past lowerBand while coverage is still short. The
+        //    next tick then dispatches to arm 1 (rebalance() checks LTV first), whose
+        //    enforceCoverageAfterIncrease guard refuses while coverage is low -- reproducing the
+        //    exact deadlock the all-or-nothing removal exists to prevent, entered through the swap
+        //    path instead of the sizing path.
+        //
+        //    Reverting rolls back the removal and the swap TOGETHER, so LTV is never dragged and
+        //    arm 1 is never handed an out-of-band position. The failure degrades to the already
+        //    accepted M-02 liveness case (rebalance() reverts until a strategist runs
+        //    setIdle(true)/setIdle(false)), which is legible and recoverable, instead of a silent
+        //    deadlock. A partial repay that DOES restore the band still succeeds -- this rejects
+        //    only the outcome that is actually harmful.
         uint256 newStrategyBalance = yieldStrategy.balanceOf();
         uint256 newDebt = loanManager.getCurrentDebt();
         uint256 newCoverage =
             newDebt == 0 ? type(uint256).max : (newStrategyBalance * precision) / newDebt;
-        if (newCoverage <= startCoverage) revert CoverageDidNotImprove();
+        if (newCoverage < minCoverage) revert CoverageNotRestored(newCoverage, minCoverage);
 
         return newStrategyBalance;
     }

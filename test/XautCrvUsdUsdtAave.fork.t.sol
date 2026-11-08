@@ -3,6 +3,7 @@ pragma solidity ^0.8.33;
 
 import { console, stdStorage, StdStorage } from "forge-std/Test.sol";
 import { AaveSecurityTestMixin } from "./base/AaveSecurityTestMixin.sol";
+import { LivenessTestMixin } from "./base/LivenessTestMixin.sol";
 import { Zenji } from "../src/Zenji.sol";
 import { ZenjiXautAaveUsdtStakeDao } from "../src/implementations/stakedao/ZenjiXautAaveUsdtStakeDao.sol";
 import { AaveLoanManager } from "../src/lenders/AaveLoanManager.sol";
@@ -72,7 +73,7 @@ interface IPoolConfiguratorLike {
 ///      LP remove's implicit swap fee AND the swap-back fee on the same pool again — i.e. the
 ///      pool is hit four times per round trip instead of twice. See
 ///      test_sameLpPool_roundTrip_lossWithinBound below.
-contract XautCrvUsdUsdtAave is AaveSecurityTestMixin {
+contract XautCrvUsdUsdtAave is LivenessTestMixin, AaveSecurityTestMixin {
     using stdStorage for StdStorage;
 
     address constant XAUT = 0x68749665FF8D2d112Fa859AA293F07A622782F38;
@@ -850,6 +851,12 @@ contract XautCrvUsdUsdtAave is AaveSecurityTestMixin {
 
     /// @notice Repeatedly calls `_induceGain` with an exponentially growing chunk size until
     ///         `strategyToDebtRatio()` clears `targetRatio` (or `maxIters` is exhausted).
+    /// @inheritdoc LivenessTestMixin
+    function _induceLivenessSurplus() internal override returns (bool) {
+        (, bool reached) = _induceGainUntilRatio(vault.PRECISION() + vault.PRECISION() * 20 / 100, 20);
+        return reached;
+    }
+
     function _induceGainUntilRatio(uint256 targetRatio, uint256 maxIters)
         internal
         returns (uint256 totalInduced, bool reached)
@@ -1104,7 +1111,13 @@ contract XautCrvUsdUsdtAave is AaveSecurityTestMixin {
         // XAUT supply at "current + a few whole XAUT" so the full skim cannot fit in one shot, but
         // a couple of halving rounds (within the 6-attempt ladder) should.
         uint256 currentSupplyUnderlying = IERC20(AAVE_A_XAUT).totalSupply(); // 6 decimals
-        uint256 currentSupplyWhole = currentSupplyUnderlying / 1e6;
+        // Round UP. Flooring here silently ate the fractional part of the live supply out of the
+        // headroom: at a fork where supply was 13724.9 XAUT a "+1 XAUT" cap left ~0.1 XAUT of
+        // real room, below even the ladder's smallest (collateralOut/64) attempt, so every round
+        // failed and the test reported a full no-op -- a fork-block-dependent flake, not a
+        // contract bug. Ceil guarantees at least `headroomWhole` whole XAUT of room (less only
+        // Aave's accruedToTreasury, which is dust for XAUT).
+        uint256 currentSupplyWhole = (currentSupplyUnderlying + 1e6 - 1) / 1e6;
         uint256 pendingSurplus = strategy.balanceOf() > loanManager.getCurrentDebt()
             ? strategy.balanceOf() - loanManager.getCurrentDebt()
             : 0;
